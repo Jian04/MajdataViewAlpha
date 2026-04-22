@@ -1,6 +1,12 @@
-# MajdataViewAlpha
 
-> 本项目由 Claude Code 和 Codex 辅助完成。
+<h1 style="color: red; font-size: 1.8em;">⚠️ 重要声明</h1>
+<h2 style="color: red;">本项目由 Claude Code 和 Codex 辅助完成。</h2>
+<h2 style="color: red;">本项目的目的是便于大家写出有观感张力的谱面，方便谱师进行还原配置或实现创意且不用依赖剪辑软件。</h2>
+<h2 style="color: red;">本项目基于原版MajdataView和MajdataEdit4.4.0修改而成，一切权利属于原作者。</h2>
+<h2 style="color: red;">请勿宣传或二次分发本工具，否则作者保留追究责任的权利。</h2>
+<h2 style="color: red;">点点Star谢谢喵。</h2>
+
+# MajdataViewAlpha
 
 `MajdataViewAlpha` 是基于原版 `MajdataView` 继续修改和整理出的 Unity 版本。
 
@@ -76,6 +82,17 @@
 1rq5
 ```
 
+### Non-C TouchHold
+
+支持 `B1h`、`E2h` 相关语法。
+
+示例：
+
+```text
+B1h
+E2h
+```
+
 ### Fullscreen
 
 支持全屏和全屏展示两种模式。
@@ -86,14 +103,20 @@
 ## 已知 Bug
 
 - `COLOR` 目前没有恢复默认值的语法。
-- `RP / RQ` 在结束位置和起始位置相差 `0` 或 `1` 的情况下，特效位置半径存在错误。
 - `COLOR` 会影响 Hold 按住时的特效颜色。
-- Edit启动可能不会自启动View
+- `SV` 数值为负数会产生意想不到的效果
+- `RP / RQ` 在结束位置和起始位置相差 `0` 或 `1` 的情况下，特效位置所在半径存在错误，会过于远离圆心。
+- `Non-C TouchHold` 会互相遮盖进度条，看了其他版本的非Ctouch也有类似问题
+- Edit启动可能不会自启动View，需要手动启动
 - 特效过多可能会造成卡顿或视频导出失败
 - 全屏模式导出视频，从谱面预览到播放中间素材消失不自然
+- 右下角有个trial version，不知道是哪个素材自带的
 
 ## 未来计划
 
-- 添加自定义字幕功能
+- 添加自定义字幕功能，可以在谱面内部嵌入字幕出现的时机，省去剪辑加字幕的步骤，初步定稿为左上角
 - 添加内外亮度分别调整功能
+- 添加独立的左右两侧判定和连击数的显示开关
+- 可能会添加touch星星
+- 可能会移除herobrine
 
