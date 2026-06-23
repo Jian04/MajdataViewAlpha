@@ -2,7 +2,6 @@
 <h2 style="color: red;">本项目由 Claude Code 和 Codex 辅助完成。</h2>
 <h2 style="color: red;">本项目的目的是便于大家写出有观感张力的谱面，方便谱师进行还原配置或实现创意且不用依赖剪辑软件。</h2>
 <h2 style="color: red;">本项目基于原版MajdataView和MajdataEdit4.4.0修改而成，一切权利属于原作者。</h2>
-<h2 style="color: red;">请勿宣传或二次分发本工具，否则作者保留追究责任的权利。</h2>
 <h2 style="color: red;">点点Star谢谢喵。</h2>
 
 # MajdataViewAlpha
@@ -275,8 +274,6 @@ tap, each, hold, slide, star, break, touch, touchhold
 
 ## 已知问题与限制
 
-- `RP` / `RQ` 在终点与起点相差 `0` 或 `1` 时，旋转特效半径计算有误。
-- `COLOR` 会影响 Hold 按住时的特效颜色（染色作用于音符本体）。
 - 全屏特效基于最终画面处理，复杂 BGA 可能影响 `Neon`、`Trail` 的前景识别效果；多个高强度全屏特效同时启用会增加视频导出负担。
 - 沿用原版限制：不支持动态比特率 mp3；内置录屏要求 View 分辨率为偶数；高谱面密度 / 超长歌曲在软件渲染下可能吃力。
 - 调试记录与修改约束见 [debug.md](debug.md)。
