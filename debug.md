@@ -153,6 +153,18 @@
 - 录制结束由 All Perfect 动画正常完成触发，超时仅作为兜底。
 - 30 FPS 与 60 FPS 导出必须同步 Unity 捕获帧率和 FFmpeg 输入帧率。
 
+## All Perfect 与判定特效
+
+### 错误
+
+- All Perfect 开始前调用 `NoteEffectManager.ResetAllEffects()`，会让最后一批打击特效和判定特效瞬间消失。
+
+### 正确行为
+
+- 与 4.3.1 一致：最后一个音符对象结束后可以立即显示 All Perfect。
+- 不主动清理场上的打击特效，已有特效按各自 Animator 自然播放结束。
+- `ResetAllEffects()` 只用于明确的暂停、停止或场景重置，不用于 All Perfect 入场。
+
 ## 修改流程
 
 1. 复现并记录准确触发条件。

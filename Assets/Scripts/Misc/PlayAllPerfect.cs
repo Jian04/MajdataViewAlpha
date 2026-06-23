@@ -30,7 +30,6 @@ public class PlayAllPerfect : MonoBehaviour
             return;
 
         sequenceStarted = true;
-        GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>()?.ResetAllEffects();
         Allperfect.SetActive(true);
         StartCoroutine(FinishSequence());
     }
