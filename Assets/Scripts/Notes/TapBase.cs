@@ -38,6 +38,19 @@ namespace Assets.Scripts.Notes
         protected SpriteRenderer lineSpriteRender;
 
         protected SpriteRenderer spriteRenderer;
+        private MaterialPropertyBlock brightnessProperties;
+
+        protected void ApplyExAlpha()
+        {
+            if (!isEX || colorOverrideMaterial == null ||
+                !colorOverrideMaterial.HasProperty("_NoteAlpha"))
+                return;
+
+            var color = exSpriteRender.color;
+            color.a *= colorOverrideMaterial.GetFloat("_NoteAlpha");
+            exSpriteRender.color = color;
+        }
+
         protected void PreLoad()
         {
             var notes = GameObject.Find("Notes").transform;
@@ -46,6 +59,7 @@ namespace Assets.Scripts.Notes
             tapLine.SetActive(false);
             lineSpriteRender = tapLine.GetComponent<SpriteRenderer>();
             spriteRenderer = GetComponent<SpriteRenderer>();
+            brightnessProperties = new MaterialPropertyBlock();
             exSpriteRender = transform.GetChild(0).GetComponent<SpriteRenderer>();
             timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
             objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
@@ -95,6 +109,12 @@ namespace Assets.Scripts.Notes
         // Update is called once per frame
         protected virtual void Update()
         {
+            if (!timeProvider.isStart)
+            {
+                tapLine.SetActive(false);
+                return;
+            }
+
             var distance = GetSvDistance();
             var destScale = distance * 0.4f + 0.51f;
 
@@ -143,7 +163,9 @@ namespace Assets.Scripts.Notes
             if (isBreak)
             {
                 var extra = Math.Max(Mathf.Sin(timeProvider.GetFrame() * 0.17f) * 0.5f, 0);
-                spriteRenderer.material.SetFloat("_Brightness", 0.95f + extra);
+                spriteRenderer.GetPropertyBlock(brightnessProperties);
+                brightnessProperties.SetFloat("_Brightness", 0.95f + extra);
+                spriteRenderer.SetPropertyBlock(brightnessProperties);
             }
         }
         protected void Check(object sender, InputEventArgs arg)

@@ -29,10 +29,12 @@ public class TouchDrop : TouchBase
     private GameObject firework;
     private Animator fireworkEffect;
     private bool isStarted;
+    private bool isTriggered;
+    private bool judgeFinalized;
     private int layer;
     private float moveDuration;
-    bool isTriggered = false;
     private MultTouchHandler multTouchHandler;
+    private NoteEffectManager noteEffectManager;
 
     private float wholeDuration;
 
@@ -48,6 +50,7 @@ public class TouchDrop : TouchBase
         timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
         multTouchHandler = GameObject.Find("MultTouchHandler").GetComponent<MultTouchHandler>();
         objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
+        noteEffectManager = GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>();
         firework = GameObject.Find("FireworkEffect");
         fireworkEffect = firework.GetComponent<Animator>();
 
@@ -74,16 +77,15 @@ public class TouchDrop : TouchBase
 
         justEffect.GetComponent<SpriteRenderer>().sprite = justSprite;
 
-        // ALPHA: apply color override to all 7 fan sprites (4 fans + center point + 2 multTouch borders).
-        // Also tint justEffect (the JUST/绝赞 outline indicator).
+        // Apply COLOR to note sprites only. justEffect is a judgement effect.
         if (colorOverrideMaterial != null)
         {
             for (var fi = 0; fi < 7; fi++)
-                fansSprite[fi].material = colorOverrideMaterial;
-            justEffect.GetComponent<SpriteRenderer>().material = colorOverrideMaterial;
+                fansSprite[fi].sharedMaterial = colorOverrideMaterial;
         }
 
         transform.position = GetAreaPos(startPosition, areaPosition);
+        transform.localScale *= noteScale;
         justEffect.SetActive(false);
         SetfanColor(new Color(1f, 1f, 1f, 0f));
         sensor = GameObject.Find("Sensors")
@@ -108,20 +110,24 @@ public class TouchDrop : TouchBase
             return;
         else if (arg.IsClick)
         {
-            if (!inputManager.IsIdle(arg))
-                return;
-            else
+            if (InputManager.Mode != AutoPlayMode.DJAuto)
+            {
+                if (!inputManager.IsIdle(arg))
+                    return;
                 inputManager.SetBusy(arg);
+            }
             Judge();
             if (isJudged)
             {
+                FinalizeJudge();
                 Destroy(gameObject);
             }
         }
     }
     private void FixedUpdate()
     {
-        if (!isJudged && GetJudgeTiming() <= 0.316667f)
+        var timing = GetJudgeTiming();
+        if (!isJudged && timing <= 0.316667f)
         {
             if (GroupInfo is not null)
             {
@@ -129,6 +135,7 @@ public class TouchDrop : TouchBase
                 {
                     isJudged = true;
                     judgeResult = (JudgeType)GroupInfo.JudgeResult;
+                    FinalizeJudge();
                     Destroy(gameObject);
                 }
             }
@@ -137,10 +144,14 @@ public class TouchDrop : TouchBase
         {
             judgeResult = JudgeType.Miss;
             isJudged = true;
+            FinalizeJudge();
             Destroy(gameObject);
         }
         else if (isJudged)
+        {
+            FinalizeJudge();
             Destroy(gameObject);
+        }
 
         if (GetJudgeTiming() >= 0)
         {
@@ -252,18 +263,31 @@ public class TouchDrop : TouchBase
     {
         if (HttpHandler.IsReloding)
             return;
+
+        FinalizeJudge();
         multTouchHandler.cancelTouch(this);
-        PlayJudgeEffect();
-        if (GroupInfo is not null && judgeResult != JudgeType.Miss)
-            GroupInfo.JudgeResult = judgeResult;
-        objectCounter.ReportResult(this, judgeResult);
-        objectCounter.NextTouch(sensor.Type);
 
         if (isFirework && judgeResult != JudgeType.Miss)
         {
             fireworkEffect.SetTrigger("Fire");
             firework.transform.position = transform.position;
         }
+
+        // Effect instantiation is comparatively expensive. Keep judge state
+        // advancement ahead of it so a dense touch sweep cannot be blocked.
+        PlayJudgeEffect();
+    }
+
+    private void FinalizeJudge()
+    {
+        if (judgeFinalized)
+            return;
+
+        judgeFinalized = true;
+        if (GroupInfo is not null && judgeResult != JudgeType.Miss)
+            GroupInfo.JudgeResult = judgeResult;
+        objectCounter.ReportResult(this, judgeResult);
+        objectCounter.NextTouch(sensor.Type);
         inputManager.UnbindSensor(Check, GetSensor());
     }
     void PlayJudgeEffect()
@@ -316,10 +340,13 @@ public class TouchDrop : TouchBase
             default:
                 break;
         }
+        NoteEffectManager.ApplyJudgeTextAlpha(judgeObj.GetChild(0).GetComponent<SpriteRenderer>());
         if(judgeResult != JudgeType.Miss)
-            Instantiate(tapEffect, transform.position, transform.rotation);
+        {
+            var effect = Instantiate(tapEffect, transform.position, transform.rotation);
+        }
 
-        GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>().PlayFastLate(_obj,flAnim,judgeResult);
+        noteEffectManager.PlayFastLate(_obj,flAnim,judgeResult);
 
         anim.SetTrigger("touch");
     }

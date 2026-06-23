@@ -57,6 +57,8 @@ public class NoteLongDrop : NoteDrop
     protected float judgeDiff = -1;
 
     protected bool isAutoTrigger = false;
+    private ParticleSystemRenderer holdEffectRenderer;
+    private MaterialPropertyBlock holdEffectProperties;
 
     /// <summary>
     /// ����Hold��ʣ�೤��
@@ -69,7 +71,10 @@ public class NoteLongDrop : NoteDrop
 
     protected virtual void PlayHoldEffect()
     {
-        var material = holdEffect.GetComponent<ParticleSystemRenderer>().material;
+        if (holdEffectRenderer == null)
+            holdEffectRenderer = holdEffect.GetComponent<ParticleSystemRenderer>();
+        holdEffectProperties ??= new MaterialPropertyBlock();
+
         Color baseColor;
         switch (judgeResult)
         {
@@ -94,10 +99,10 @@ public class NoteLongDrop : NoteDrop
             default:
                 baseColor = new Color(1f, 0.93f, 0.61f); break;
         }
-        // ALPHA: blend hold particle color toward noteTintColor
-        material.SetColor("_Color", noteTintColor == Color.white
-            ? baseColor
-            : Color.Lerp(baseColor, new Color(noteTintColor.r, noteTintColor.g, noteTintColor.b, baseColor.a), 0.6f));
+        // COLOR changes the note body only, not the hold judgement particle.
+        holdEffectRenderer.GetPropertyBlock(holdEffectProperties);
+        holdEffectProperties.SetColor("_Color", baseColor);
+        holdEffectRenderer.SetPropertyBlock(holdEffectProperties);
         holdEffect.SetActive(true);
     }
     protected virtual void StopHoldEffect()

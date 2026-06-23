@@ -10,6 +10,7 @@ using UnityEngine.UI;
 public class ScreenRecorder : MonoBehaviour
 {
     public float CutoffTime;
+    public int FrameRate = 30;
     public GameObject APObj;
     JsonDataLoader loader;
     ObjectCounter counter;
@@ -18,6 +19,8 @@ public class ScreenRecorder : MonoBehaviour
 
     private bool isRecording;
     private string recordFailureMessage;
+    private static readonly WaitForEndOfFrame WaitForFrameEnd = new();
+    public bool IsRecording => isRecording;
 
     // Start is called before the first frame update
     private void Start()
@@ -54,6 +57,8 @@ public class ScreenRecorder : MonoBehaviour
     {
         print("stop recording");
         isRecording = false;
+        if (timeProvider != null)
+            timeProvider.isStart = false;
     }
 
     private IEnumerator CaptureScreen(string maidata_path)
@@ -69,9 +74,9 @@ public class ScreenRecorder : MonoBehaviour
         if (File.Exists(maidata_path + "\\out.mp4"))
             File.Delete(maidata_path + "\\out.mp4");
 
-        byte[] data;
         var captureRect = new Rect(0, 0, Screen.width, Screen.height);
         var texture = new Texture2D(Screen.width, Screen.height, TextureFormat.RGBA32, false);
+        var data = new byte[Screen.width * Screen.height * 4];
         using (var pipeServer = new NamedPipeServerStream("majdataRec", PipeDirection.Out))
         {
             const string wavpath = "out.wav";
@@ -81,7 +86,8 @@ public class ScreenRecorder : MonoBehaviour
                 File.ReadAllText(Application.streamingAssetsPath + "\\ffarguments.txt").Trim(),
                 Screen.width, Screen.height,
                 wavpath, outputfile,
-                int.MaxValue
+                int.MaxValue,
+                FrameRate
             );
             var startinfo = new ProcessStartInfo(Application.streamingAssetsPath + "\\ffmpeg.exe", arguments);
             startinfo.UseShellExecute = false;
@@ -137,15 +143,13 @@ public class ScreenRecorder : MonoBehaviour
             {
                 do
                 {
-                    yield return new WaitForEndOfFrame();
+                    yield return WaitForFrameEnd;
                     try
                     {
                         texture.ReadPixels(captureRect, 0, 0, false);
-                        texture.Apply(false, false);
-                        data = texture.GetRawTextureData();
+                        texture.GetRawTextureData<byte>().CopyTo(data);
 
                         bw.Write(data, 0, data.Length);
-                        bw.Flush();
                     }
                     catch (System.Exception ex)
                     {
@@ -194,7 +198,7 @@ public class ScreenRecorder : MonoBehaviour
         if (timeProvider != null)
         {
             timeProvider.isStart = false;
-            timeProvider.isRecord = false;
+            timeProvider.RestoreFrameRate();
         }
 
         Time.captureFramerate = 0;

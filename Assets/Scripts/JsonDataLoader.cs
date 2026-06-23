@@ -34,6 +34,7 @@ public class JsonDataLoader : MonoBehaviour
 
     public NoteLoaderStatus State { get; private set; } = NoteLoaderStatus.Idle;
     NoteManager noteManager;
+    AudioTimeProvider timeProvider;
     Task<Majson> jsonLoaderTask = null;
     Majson loadedData = null;
     float ignoreOffset = 0;
@@ -508,6 +509,9 @@ public class JsonDataLoader : MonoBehaviour
     }
     IEnumerator LoadNotes(IEnumerable<SimaiTimingPoint> timingList, float ignoreOffset, double lastNoteTime)
     {
+        if (timeProvider == null)
+            timeProvider = FindAnyObjectByType<AudioTimeProvider>();
+
         noteManager.Refresh();
         noteIndex.Clear();
         touchIndex.Clear();
@@ -520,7 +524,10 @@ public class JsonDataLoader : MonoBehaviour
         sw.Start();
         foreach (var timing in timingList)
         {
-            if (sw.ElapsedMilliseconds >= 2)
+            // Spend more of the loading countdown preparing notes so dense
+            // charts do not keep instantiating objects after playback starts.
+            var frameBudgetMs = timeProvider != null && timeProvider.AudioTime < 0f ? 12 : 2;
+            if (sw.ElapsedMilliseconds >= frameBudgetMs)
             {
                 yield return 0;
                 sw.Restart();
@@ -580,8 +587,8 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
                         // ALPHA: forced stars use "star" key; regular taps use "tap"/"each"/"break"
                         var tapMat = note.isForceStar
-                            ? GetStarMaterial(note.isBreak, timing.noteList.Count > 1, timing.time)
-                            : GetTapMaterial(note.isBreak, timing.noteList.Count > 1, timing.time);
+                            ? GetStarMaterial(note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead)
+                            : GetTapMaterial(note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
                         NDCompo.colorOverrideMaterial = tapMat;
                         if (tapMat != null) NDCompo.noteTintColor = tapMat.GetColor("_NoteColor");
                         NDCompo.noteScale = GetSizeAt(timing.time); // ALPHA: note size
@@ -616,7 +623,8 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
                         NDCompo.isEX = note.isEx;
                         NDCompo.isBreak = note.isBreak;
-                        var holdMat = GetHoldMaterial(note.isBreak, timing.noteList.Count > 1, timing.time); // ALPHA: note color
+                        var holdMat = GetHoldMaterial(
+                            note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
                         NDCompo.colorOverrideMaterial = holdMat;
                         if (holdMat != null) NDCompo.noteTintColor = holdMat.GetColor("_NoteColor");
                         NDCompo.noteScale = GetSizeAt(timing.time); // ALPHA: note size
@@ -639,9 +647,10 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.speed = touchSpeed * timing.HSpeed;
                         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
                         NDCompo.isFirework = note.isHanabi;
-                        var thMat = CreateTintMaterial(GetColorAt("touchhold", timing.time), GetAlphaAt(timing.time)); // ALPHA: note color
+                        var thMat = CreateTintMaterial(GetColorAt("touchhold", timing.time), GetAlphaAt("touchhold", timing.time)); // ALPHA: note color
                         NDCompo.colorOverrideMaterial = thMat;
                         if (thMat != null) NDCompo.noteTintColor = thMat.GetColor("_NoteColor");
+                        NDCompo.noteScale = GetSizeAt(timing.time);
 
                         Array.Copy(customSkin.TouchHold, NDCompo.TouchHoldSprite, 5);
                         NDCompo.TouchPointSprite = customSkin.TouchPoint;
@@ -677,7 +686,8 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
                         NDCompo.isFirework = note.isHanabi;
                         NDCompo.GroupInfo = null;
-                        NDCompo.colorOverrideMaterial = CreateTintMaterial(GetColorAt("touch", timing.time), GetAlphaAt(timing.time)); // ALPHA: note color
+                        NDCompo.colorOverrideMaterial = CreateTintMaterial(GetColorAt("touch", timing.time), GetAlphaAt("touch", timing.time)); // ALPHA: note color
+                        NDCompo.noteScale = GetSizeAt(timing.time);
                     }
 
                     else if (note.noteType == SimaiNoteType.Slide)
@@ -765,7 +775,10 @@ public class JsonDataLoader : MonoBehaviour
             }
             catch (Exception e)
             {
-                UnityEngine.Debug.LogException(e);
+                // The error is already handled and shown in ErrText. Logging it
+                // as an exception triggers Unity's Error Pause and deadlocks
+                // synchronous editor requests while the player is paused.
+                UnityEngine.Debug.LogWarning(e);
                 var errText = GameObject.Find("ErrText");
                 if (errText != null)
                     errText.GetComponent<Text>().text = "在第" + (timing.rawTextPositionY + 1) + "行发现问题：\n" + e.Message;
@@ -894,17 +907,21 @@ public class JsonDataLoader : MonoBehaviour
                 {
                     // 其他普通星星
                     // 额外检查pp,qq,rp,rq
+                    if (ptr >= noteContent.Length)
+                        throw new Exception("Slide缺少目标键\nSLIDE TARGET MISSING");
                     if (noteContent[ptr] == slideTypeChar[0])
                         slideTypeChar += noteContent[ptr++]; // pp or qq
                     else if (slideTypeChar == "r" && (noteContent[ptr] == 'p' || noteContent[ptr] == 'q'))
                         slideTypeChar += noteContent[ptr++]; // rp or rq
+                    if (ptr >= noteContent.Length || !char.IsNumber(noteContent[ptr]))
+                        throw new Exception("Slide缺少目标键\nSLIDE TARGET MISSING");
                     var endPos = noteContent[ptr++];
 
                     slidePart.noteContent = latestStartIndex + slideTypeChar + endPos;
                     latestStartIndex = charIntParse(endPos);
                 }
 
-                if (noteContent[ptr] == '[')
+                if (ptr < noteContent.Length && noteContent[ptr] == '[')
                 {
                     // 如果指定了速度
                     if (specTimeFlag == 0)
@@ -952,13 +969,16 @@ public class JsonDataLoader : MonoBehaviour
                 throw new Exception("组合星星有错误\nwSLIDE CHAIN ERROR");
             }
 
-        subSlide.ForEach(o =>
+        for (var i = 0; i < subSlide.Count; i++)
         {
+            var o = subSlide[i];
             o.isBreak = note.isBreak;
             o.isEx = note.isEx;
+            o.isMonoHead = i == 0 && note.isMonoHead;
+            o.isSlideMono = note.isSlideMono;
             o.isSlideBreak = note.isSlideBreak;
             o.isSlideNoHead = true;
-        });
+        }
         subSlide[0].isSlideNoHead = note.isSlideNoHead;
 
         if (specTimeFlag == 1 || specTimeFlag == 0)
@@ -1140,6 +1160,10 @@ public class JsonDataLoader : MonoBehaviour
         }
 
         WifiCompo.isBreak = note.isSlideBreak;
+        WifiCompo.colorOverrideMaterial = GetSlideMaterial(
+            note.isSlideBreak, timing.time, note.isSlideMono);
+        NDCompo.colorOverrideMaterial = GetStarMaterial(
+            note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
 
         NDCompo.isNoHead = note.isSlideNoHead;
         NDCompo.time = (float)timing.time;
@@ -1281,11 +1305,12 @@ public class JsonDataLoader : MonoBehaviour
         //SliCompo.sortIndex = -7000 + (int)((lastNoteTime - timing.time) * -100) + sort * 5;
         SliCompo.sortIndex = slideLayer;
         slideLayer -= SLIDE_AREA_STEP_MAP[slideShape].Last();
-        var slideMat = GetSlideMaterial(note.isSlideBreak, timing.time); // ALPHA: note color
+        var slideMat = GetSlideMaterial(note.isSlideBreak, timing.time, note.isSlideMono);
         SliCompo.colorOverrideMaterial = slideMat;
         if (slideMat != null) SliCompo.noteTintColor = slideMat.GetColor("_NoteColor");
         // ALPHA: star head uses "star" key (independent from slide arc color)
-        var starMat = GetStarMaterial(note.isSlideBreak, timing.noteList.Count > 1, timing.time);
+        var starMat = GetStarMaterial(
+            note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
         NDCompo.colorOverrideMaterial = starMat;
         if (starMat != null) NDCompo.noteTintColor = starMat.GetColor("_NoteColor");
         NDCompo.noteScale = GetSizeAt(timing.time); // ALPHA: note size
@@ -1630,7 +1655,9 @@ public class JsonDataLoader : MonoBehaviour
         {
             if (!_colorTimeline.ContainsKey(ev.noteType))
                 _colorTimeline[ev.noteType] = new List<(double, string)>();
-            _colorTimeline[ev.noteType].Add((ev.time, ev.color));
+            // "NULL" resets to default (stored as null so GetColorAt returns null → no tint)
+            string colorValue = string.Equals(ev.color, "NULL", StringComparison.OrdinalIgnoreCase) ? null : ev.color;
+            _colorTimeline[ev.noteType].Add((ev.time, colorValue));
         }
         foreach (var kv in _colorTimeline)
             kv.Value.Sort((a, b) => a.time.CompareTo(b.time));
@@ -1675,26 +1702,38 @@ public class JsonDataLoader : MonoBehaviour
     }
 
     // ---- ALPHA: Note alpha timeline ----
-    private List<(double time, float alpha)> _alphaTimeline = new();
+    // Key "" = global; key "tap"/"hold"/etc = per-type. Per-type takes precedence over global.
+    private Dictionary<string, List<(double time, float alpha)>> _alphaTimeline = new();
 
     private void BuildAlphaTimeline(List<AlphaChange> alphaTable)
     {
         _alphaTimeline.Clear();
         if (alphaTable == null) return;
         foreach (var ev in alphaTable)
-            _alphaTimeline.Add((ev.time, ev.alpha));
-        _alphaTimeline.Sort((a, b) => a.time.CompareTo(b.time));
+        {
+            string key = ev.noteType ?? "";
+            if (!_alphaTimeline.ContainsKey(key))
+                _alphaTimeline[key] = new List<(double, float)>();
+            _alphaTimeline[key].Add((ev.time, ev.alpha));
+        }
+        foreach (var kv in _alphaTimeline)
+            kv.Value.Sort((a, b) => a.time.CompareTo(b.time));
     }
 
-    private float GetAlphaAt(double time)
+    private float GetAlphaAt(string noteType, double time)
     {
-        float last = 1f;
-        foreach (var ev in _alphaTimeline)
+        float? Lookup(string key)
         {
-            if (ev.time <= time) last = ev.alpha;
-            else break;
+            if (!_alphaTimeline.TryGetValue(key, out var list)) return null;
+            float? last = null;
+            foreach (var ev in list)
+            {
+                if (ev.time <= time) last = ev.alpha;
+                else break;
+            }
+            return last;
         }
-        return last;
+        return Lookup(noteType) ?? Lookup("") ?? 1f;
     }
 
     private static Shader _tintShader;
@@ -1703,17 +1742,22 @@ public class JsonDataLoader : MonoBehaviour
     /// Creates a new NoteColorTint material instance.
     /// hex: 6-digit "FF8800" or 8-digit "FF880080" (last 2 bytes = opacity 0x00–0xFF).
     /// alpha: additional opacity multiplier from <ALPHA*x> (multiplied with hex alpha).
-    /// srcHue: >= 0 enables hue-rotation (preserves multi-hue gradient of break notes).
-    private Material CreateTintMaterial(string hex, float alpha = 1f, float srcHue = -1f, bool allowCache = true)
+    /// srcHue: 0 enables break-detail preservation without retaining source hues.
+    private Material CreateTintMaterial(
+        string hex,
+        float alpha = 1f,
+        float srcHue = -1f,
+        bool allowCache = true,
+        bool grayscale = false)
     {
-        if (string.IsNullOrEmpty(hex) && alpha >= 0.9999f) return null;
+        if (string.IsNullOrEmpty(hex) && alpha >= 0.9999f && !grayscale) return null;
         if (_tintShader == null) _tintShader = Shader.Find("Sprites/NoteColorTint");
         if (_tintShader == null) { UnityEngine.Debug.LogWarning("[NoteColor] Shader 'Sprites/NoteColorTint' not found"); return null; }
 
         string cacheKey = null;
         if (allowCache)
         {
-            cacheKey = $"{hex}|{alpha:0.####}|{srcHue:0.####}";
+            cacheKey = $"{hex}|{alpha:0.####}|{srcHue:0.####}|{grayscale}";
             if (_tintMaterialCache.TryGetValue(cacheKey, out var cached))
                 return cached;
         }
@@ -1741,6 +1785,7 @@ public class JsonDataLoader : MonoBehaviour
         }
 
         if (alpha < 0.9999f) mat.SetFloat("_NoteAlpha", alpha);
+        if (grayscale) mat.SetFloat("_Grayscale", 1f);
         if (allowCache)
             _tintMaterialCache[cacheKey] = mat;
         return mat;
@@ -1751,47 +1796,57 @@ public class JsonDataLoader : MonoBehaviour
     // Break uses hue-rotation (srcHue=0) to preserve the red→orange→yellow gradient.
     // Fallback order: specific type → shape type → null (no tint).
 
-    private Material GetTapMaterial(bool isBreak, bool isEach, double time)
+    private Material GetTapMaterial(bool isBreak, bool isEach, double time, bool isMono = false)
     {
-        float a = GetAlphaAt(time);
+        if (isMono)
+            return CreateTintMaterial(null,
+                GetAlphaAt(isBreak ? "break" : isEach ? "each" : "tap", time),
+                grayscale: true);
         if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time), a, 0f, false);
-        string color = isEach ? (GetColorAt("each", time) ?? GetColorAt("tap", time))
-                               : GetColorAt("tap", time);
-        return CreateTintMaterial(color, a);
+            return CreateTintMaterial(GetColorAt("break", time), GetAlphaAt("break", time), 0f);
+        string color = isEach ? (GetColorAt("each", time) ?? GetColorAt("tap", time)) : GetColorAt("tap", time);
+        return CreateTintMaterial(color, GetAlphaAt(isEach ? "each" : "tap", time));
     }
 
-    private Material GetHoldMaterial(bool isBreak, bool isEach, double time)
+    private Material GetHoldMaterial(bool isBreak, bool isEach, double time, bool isMono = false)
     {
-        float a = GetAlphaAt(time);
+        if (isMono)
+            return CreateTintMaterial(null,
+                GetAlphaAt(isBreak ? "break" : isEach ? "each" : "hold", time),
+                grayscale: true);
         if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("hold", time), a, 0f, false);
-        string color = isEach ? (GetColorAt("each", time) ?? GetColorAt("hold", time))
-                               : GetColorAt("hold", time);
-        return CreateTintMaterial(color, a);
+            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("hold", time), GetAlphaAt("break", time), 0f);
+        string color = isEach ? (GetColorAt("each", time) ?? GetColorAt("hold", time)) : GetColorAt("hold", time);
+        return CreateTintMaterial(color, GetAlphaAt(isEach ? "each" : "hold", time));
     }
 
-    private Material GetSlideMaterial(bool isBreak, double time)
+    private Material GetSlideMaterial(bool isBreak, double time, bool isMono = false)
     {
-        float a = GetAlphaAt(time);
+        if (isMono)
+            return CreateTintMaterial(null,
+                GetAlphaAt(isBreak ? "break" : "slide", time),
+                grayscale: true);
         if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("slide", time), a, 0f, false);
-        return CreateTintMaterial(GetColorAt("slide", time), a);
+            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("slide", time), GetAlphaAt("break", time), 0f);
+        return CreateTintMaterial(GetColorAt("slide", time), GetAlphaAt("slide", time));
     }
 
     /// Star heads (slide star + forced-star taps). Uses "star" key, falls back to "tap".
-    private Material GetStarMaterial(bool isBreak, bool isEach, double time)
+    private Material GetStarMaterial(bool isBreak, bool isEach, double time, bool isMono = false)
     {
-        float a = GetAlphaAt(time);
+        if (isMono)
+            return CreateTintMaterial(null,
+                GetAlphaAt(isBreak ? "break" : isEach ? "each" : "star", time),
+                grayscale: true);
         if (isBreak)
         {
             string c = GetColorAt("break", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time);
-            return CreateTintMaterial(c, a, 0f, false);
+            return CreateTintMaterial(c, GetAlphaAt("break", time), 0f);
         }
         string color = isEach
             ? (GetColorAt("each", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time))
             : (GetColorAt("star", time) ?? GetColorAt("tap", time));
-        return CreateTintMaterial(color, a);
+        return CreateTintMaterial(color, GetAlphaAt(isEach ? "each" : "star", time));
     }
 
     private int MirrorKeys(int key)

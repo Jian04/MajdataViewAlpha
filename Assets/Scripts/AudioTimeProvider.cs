@@ -3,6 +3,7 @@ using UnityEngine;
 
 public class AudioTimeProvider : MonoBehaviour
 {
+    private const int PlaybackFrameRate = 120;
     public float AudioTime; //notes get this value
     public bool isStart;
     public bool isRecord;
@@ -11,8 +12,18 @@ public class AudioTimeProvider : MonoBehaviour
 
     private float startTime;
     private long ticks;
+    private int previousTargetFrameRate;
 
     public float CurrentSpeed => isRecord ? Time.timeScale : speed;
+    public bool PlaybackStarted => isStart && (isRecord
+        ? Time.time >= startTime
+        : Time.realtimeSinceStartup >= startTime);
+
+    private void Awake()
+    {
+        QualitySettings.vSyncCount = 0;
+        Application.targetFrameRate = PlaybackFrameRate;
+    }
 
     // Update is called once per frame
     private void Update()
@@ -31,7 +42,7 @@ public class AudioTimeProvider : MonoBehaviour
 
         return _audioTime / 16.6667f;
     }
-    public void SetStartTime(long _ticks, float _offset, float _speed, bool _isRecord = false)
+    public void SetStartTime(long _ticks, float _offset, float _speed, bool _isRecord = false, int recordFrameRate = 30)
     {
         ticks = _ticks;
         offset = _offset;
@@ -43,12 +54,17 @@ public class AudioTimeProvider : MonoBehaviour
         {
             startTime = Time.time + 5;
             Time.timeScale = _speed;
-            Time.captureFramerate = 60;
+            previousTargetFrameRate = Application.targetFrameRate;
+            // captureFramerate controls exported time. Do not also throttle
+            // real rendering, otherwise low resolutions cannot render faster.
+            Application.targetFrameRate = -1;
+            Time.captureFramerate = recordFrameRate;
         }
         else
         {
             startTime = Time.realtimeSinceStartup + (float)seconds;
             speed = _speed;
+            Application.targetFrameRate = PlaybackFrameRate;
             Time.captureFramerate = 0;
         }
 
@@ -59,5 +75,14 @@ public class AudioTimeProvider : MonoBehaviour
     {
         offset = 0f;
         isStart = false;
+        RestoreFrameRate();
+    }
+
+    public void RestoreFrameRate()
+    {
+        if (!isRecord)
+            return;
+        Application.targetFrameRate = PlaybackFrameRate;
+        isRecord = false;
     }
 }

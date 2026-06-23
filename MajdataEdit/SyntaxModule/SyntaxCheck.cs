@@ -134,7 +134,10 @@ namespace MajdataEdit.SyntaxModule
             // Strip ALPHA extension tokens before any validation so they don't
             // confuse the BPM/beat/note checkers below.
             simaiStr = System.Text.RegularExpressions.Regex.Replace(
-                simaiStr, @"<(COLOR|SIZE|ALPHA|SV)\*[^>]*>", "");
+                simaiStr,
+                @"<(COLOR|SIZE|ALPHA|SV|ShowJudgeLine|ShowJudgeInfo|ShowComboInfo|OuterBrightness|InnerBrightness|ShowJudgeText|TEXT|Gaussian|Neon|Trail|Fade|Brightness|Saturation|Contrast|Rainbow|Flash|Vignette|Zoom|Glitch|TVNoise)\*[^>]*>",
+                "",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
             if (string.IsNullOrEmpty(simaiStr))
                 return false; // pure token slot — skip note check
@@ -406,6 +409,7 @@ namespace MajdataEdit.SyntaxModule
         /// <param name="noteStr"></param>
         static bool NoteSyntaxCheck(string noteStr,int posX,int posY)
         {
+            noteStr = noteStr.Replace("m", "");
             if (IsTap(noteStr))
                 return true;
             else if (IsHold(noteStr))

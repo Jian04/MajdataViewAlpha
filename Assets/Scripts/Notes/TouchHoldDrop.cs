@@ -8,6 +8,7 @@ public class TouchHoldDrop : NoteLongDrop
     public char touchArea = 'C';
     // ALPHA: set by JsonDataLoader to override fill color
     public Material colorOverrideMaterial;
+    public float noteScale = 1f;
     public GameObject tapEffect;
     public GameObject judgeEffect;
 
@@ -28,6 +29,7 @@ public class TouchHoldDrop : NoteLongDrop
     private float moveDuration;
 
     private float wholeDuration;
+    private NoteEffectManager noteEffectManager;
 
     Sprite[] judgeText;
 
@@ -39,6 +41,7 @@ public class TouchHoldDrop : NoteLongDrop
         displayDuration = 0.2f * wholeDuration;
 
         objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
+        noteEffectManager = GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>();
         var notes = GameObject.Find("Notes").transform;
         noteManager = notes.GetComponent<NoteManager>();
         var originalHoldEffect = holdEffect;
@@ -79,7 +82,7 @@ public class TouchHoldDrop : NoteLongDrop
         // ALPHA: apply color override to all fan sprites including border (index 5)
         if (colorOverrideMaterial != null)
             for (var fi = 0; fi < 6; fi++)
-                fansSprite[fi].material = colorOverrideMaterial;
+                fansSprite[fi].sharedMaterial = colorOverrideMaterial;
 
         var sensorsRoot = GameObject.Find("Sensors");
         var touchSensor = Assets.Scripts.TouchBase.GetSensor(touchArea, startPosition);
@@ -90,6 +93,7 @@ public class TouchHoldDrop : NoteLongDrop
         {
             transform.position = GetAreaPos(startPosition, touchArea);
         }
+        transform.localScale *= noteScale;
         var customSkin = GameObject.Find("Outline").GetComponent<CustomSkin>();
         judgeText = customSkin.JudgeText;
         inputManager.BindSensor(Check, touchSensor);
@@ -309,7 +313,6 @@ public class TouchHoldDrop : NoteLongDrop
                 break;
         }
 
-        print($"TouchHold: {MathF.Round(percent * 100, 2)}%\nTotal Len : {MathF.Round(realityHT * 1000, 2)}ms");
         objectCounter.ReportResult(this, result);
         if (!isJudged)
             objectCounter.NextTouch(sensor.Type);
@@ -342,7 +345,7 @@ public class TouchHoldDrop : NoteLongDrop
         judgeObj.GetChild(0).transform.rotation = Quaternion.Euler(Vector3.zero);
         var anim = obj.GetComponent<Animator>();
 
-        var effects = GameObject.Find("NoteEffects");
+        var effects = noteEffectManager.gameObject;
         var flAnim = _obj.GetComponent<Animator>();
         if (effects == null)
         {
@@ -385,7 +388,8 @@ public class TouchHoldDrop : NoteLongDrop
             default:
                 break;
         }
-        effects.GetComponent<NoteEffectManager>().PlayFastLate(_obj, flAnim, judgeResult);
+        NoteEffectManager.ApplyJudgeTextAlpha(judgeObj.GetChild(0).GetComponent<SpriteRenderer>());
+        noteEffectManager.PlayFastLate(_obj, flAnim, judgeResult);
         anim.SetTrigger("touch");
     }
     protected override void StopHoldEffect()

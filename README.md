@@ -7,116 +7,286 @@
 
 # MajdataViewAlpha
 
-`MajdataViewAlpha` 是基于原版 `MajdataView` 继续修改和整理出的 Unity 版本。
+![based on MajdataView](https://img.shields.io/badge/based%20on-MajdataView-ff69b4)
+![license GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)
 
-仓库地址：
+> 本项目在原版 [MajdataView & MajdataEdit](https://github.com/LingFeng-bbben/MajdataView) 基础上继续修改、扩展语法并重新整理发布，由 Claude Code 和 Codex 辅助完成。
 
-- GitHub: <https://github.com/Jian04/MajdataViewAlpha>
+`MajdataViewAlpha` 是一套 maimai 谱面预览 / 编辑工具：
 
-## 致谢
+- **MajdataView** — Unity 制作的谱面播放器，负责把 Simai 谱面渲染出来并录制视频。
+- **MajdataEdit** — .NET 6 (WPF) 编辑器，负责编写谱面、播放按键音，并通过本地端口 `8013` 驱动 View。
 
-- Original project: [LingFeng-bbben/MajdataView](https://github.com/LingFeng-bbben/MajdataView)
-- Main Programmer of the original project: `bbben`
+仓库地址：<https://github.com/Jian04/MajdataViewAlpha>
 
-感谢原项目作者和原始工程提供的基础框架、编辑器与运行逻辑。  
-本项目是在原版基础上继续修改、扩展语法并重新整理发布。
+---
 
-## 新增语法
+## 下载与使用
+
+到 [Releases](https://github.com/Jian04/MajdataViewAlpha/releases) 下载整包，解压后**直接运行 `MajdataEdit.exe`**，它会自动拉起同目录的 `MajdataView.exe`。
+
+整包关键结构：
+
+```
+MajdataViewAlpha/
+  MajdataEdit.exe         ← 编辑器（入口，自动启动 View）
+  MajdataView.exe         ← 谱面播放器
+  MajdataView_Data/       ← View 运行资源
+  SFX/                    ← 按键音
+  Skin/                   ← 皮肤资源
+  EditorSetting.json      ← 编辑器与音量配置
+  bass.dll / bass_fx.dll  ← BASS 音频库
+```
+
+- **语言切换**：在 MajdataEdit 的设置菜单中切换（中文 / 日本語 / English）。
+- 运行前请确保 `MajdataView` 已启动且端口 `8013` 未被占用。
+
+---
+
+## 从源码构建
+
+仓库即 `alpha/` 目录，包含两个子工程：
+
+- **MajdataView（Unity）**：用 Unity 打开本工程，构建出 `MajdataView.exe`（Windows 独立播放器），拷贝进 release 整包与 `MajdataEdit.exe` 同目录。
+- **MajdataEdit（.NET 6 WPF）**：
+
+  ```powershell
+  cd MajdataEdit
+  dotnet build MajdataEdit.csproj -c Release
+  ```
+
+  产物在 `MajdataEdit/bin/Release/net6.0-windows/`。日常调试用 `-c Debug`。
+  修改 MajdataEdit 的 C# 后**必须重新 `dotnet build`** 才生效，Unity 不会帮它编译。
+
+---
+
+# 功能与语法手册
+
+以下记录 MajdataViewAlpha 相对原版 MajdataView 新增或调整的功能。
+
+## 基本规则
+
+- 扩展指令使用 `<名称*参数>` 格式。
+- 指令在其所在的谱面时间点生效。
+- 小数使用英文句点，例如 `0.5`。
+- 布尔值使用 `True` 或 `False`。
+- 显示与特效语法中的时间单位均为秒。
+
+## 编辑器设置
+
+编辑器设置中增加了以下播放显示选项：
+
+- 内圈背景遮暗程度。
+- 外圈背景遮暗程度。
+- 显示左侧判定统计。
+- 显示右侧 Combo 信息。
+- 播放时显示判定线。
+- 显示判定文字，包括 Perfect、Great、Critical Perfect、Slide 判定牌及 Fast/Late。
+
+谱面编辑框支持中文输入法、行号显示与 Simai / `<>` 扩展语法高亮，波形上带有时间标记和扩展语法持续时间标记，格式刷可统一到指定分拍。
+
+## 音符属性
 
 ### COLOR
 
-支持两种写法：
-
-- 整体写法：对指定时间点后的音符颜色整体修改
-- 分类型写法：按 `tap / each / hold / slide / star / break / touch / touchhold` 分别指定颜色
-
-示例：
+修改后续音符颜色，支持整体写法与按类型写法。
 
 ```text
-<COLOR*FFFFFF>
-<COLOR*tap=FF0000,break=00FFEE>
+<COLOR*FF00FF>
+<COLOR*tap=FF69B4,break=FF4500,slide=00BFFF>
 ```
 
-### SV
-
-支持 true SV 语法，用于控制谱面滚动速度变化。
-
-示例：
+可用类型：
 
 ```text
-<SV*2.0>
-<SV*0.5>
+tap, each, hold, slide, star, break, touch, touchhold
 ```
+
+恢复默认颜色：
+
+```text
+<COLOR*NULL>
+<COLOR*tap=NULL,slide=NULL>
+```
+
+颜色支持 `RRGGBB` 和 `RRGGBBAA`。
 
 ### SIZE
 
-支持音符尺寸缩放语法，用于在指定时间点后整体调整 note 大小。
-
-示例：
+修改后续音符的尺寸倍率。
 
 ```text
 <SIZE*1.5>
 <SIZE*0.8>
+<SIZE*1.0>
 ```
 
 ### ALPHA
 
-支持音符透明度语法，用于在指定时间点后整体调整 note 不透明度。
-
-示例：
+修改后续音符透明度，数值范围建议为 `0.0` 到 `1.0`。
 
 ```text
 <ALPHA*0.5>
+<ALPHA*tap=0.3,slide=0.8>
 <ALPHA*1.0>
 ```
 
-### RQ / RP
+### SV
 
-支持 `rq`、`rp` 相关语法。
-
-示例：
+修改谱面滚动速度倍率（true SV）。
 
 ```text
-1rp5
+<SV*2.0>
+<SV*0.5>
+<SV*1.0>
+```
+
+### m 灰度音符
+
+音符尾缀 `m` 将其灰度化。
+
+```text
+1m
+1hm[8:1]
+1bm-5[8:1]
+1-5m[8:1]
+```
+
+- `1bm-5`：起始击打星灰度化。
+- `1-5m`：Slide 轨道和移动星灰度化，起始击打星保持原色。
+- 编辑器中尾部带 `m` 的 Slide 会整段灰色高亮，便于定位。
+
+## Slide 扩展
+
+支持 `rq`、`rp` 等旋转 Slide 写法。
+
+```text
 1rq5
+1rp5
 ```
 
-### Non-C TouchHold
+终点越靠近起点时，旋转特效半径会相应缩小。
 
-支持 `B1h`、`E2h` 相关语法。
+## 播放显示控制
+
+显示语法格式：
+
+```text
+<名称*(目标值,渐变时间)>
+```
 
 示例：
 
 ```text
-B1h
-E2h
+<ShowJudgeLine*(False,2)>
+<ShowJudgeInfo*(False,1)>
+<ShowComboInfo*(True,0.5)>
+<ShowJudgeText*(False,2)>
+<InnerBrightness*(0.8,3)>
+<OuterBrightness*(0.5,3)>
 ```
 
-### Fullscreen
+支持的名称：
 
-支持全屏和全屏展示两种模式，在设置/编辑器设置/PV/BG显示模式中调整。
+| 名称 | 作用 |
+| --- | --- |
+| `ShowJudgeLine` | 判定线 |
+| `ShowJudgeInfo` | 左侧判定统计 |
+| `ShowComboInfo` | 右侧 Combo 信息 |
+| `ShowJudgeText` | 音符判定文字和 Slide 判定牌（含 Fast/Late） |
+| `InnerBrightness` | 内圈背景遮暗值 |
+| `OuterBrightness` | 外圈背景遮暗值 |
 
-全屏：亮度同步影响整体画面。
-全屏展示：亮度只影响中间画面，四周画面保持全亮。
+## 字幕
 
-## 已知 Bug
+在左上角显示字幕。
 
-- `COLOR` 目前没有恢复默认值的语法。
-- `COLOR` 会影响 Hold 按住时的特效颜色。
-- `SV` 数值为负数会产生意想不到的效果
-- `RP / RQ` 在结束位置和起始位置相差 `0` 或 `1` 的情况下，特效位置所在半径存在错误，会过于远离圆心。
-- `Non-C TouchHold` 会互相遮盖进度条，看了其他版本的非Ctouch也有类似问题
-- Edit启动可能不会自启动View，需要手动启动
-- 特效过多可能会造成卡顿或视频导出失败
-- 全屏模式导出视频，从谱面预览到播放中间素材消失不自然
-- 右下角有个trial version，不知道是哪个素材自带的
+显示指定秒数：
 
-## 未来计划
+```text
+<TEXT*(你好，欢迎观看,2)>
+```
 
-- 添加自定义字幕功能，可以在谱面内部嵌入字幕出现的时机，省去剪辑加字幕的步骤，初步定稿为左上角
-- 添加内外亮度分别调整功能
-- 添加独立的左右两侧判定和连击数的显示开关
-- 可能会添加touch星星
-- 可能会添加开关判定文字
-- 可能会移除herobrine
+一直显示到下一条 TEXT：
 
+```text
+<TEXT*这段文字会持续显示>
+```
+
+清除字幕：
+
+```text
+<TEXT*>
+```
+
+## 视频特效
+
+格式：
+
+```text
+<特效名称*(持续时间,强度)>
+```
+
+特效会在持续时间内自动进入并退出。
+
+| 特效 | 说明 |
+| --- | --- |
+| `Gaussian` | 高斯模糊 |
+| `Neon` | 在音符、圆框等亮色前景边缘生成红、绿、蓝分离残影，强度越高分离距离越大 |
+| `Trail` | 保留移动物体的多段历史残影，建议强度 `0.5`~`1.0` |
+| `Flash` | 正强度白闪，负强度黑闪 |
+| `Fade` | 兼容旧写法，等价于黑闪 |
+| `Zoom` | 画面放大后自动恢复，强度决定最大放大倍率 |
+| `Vignette` | 圆形可视区域向内收缩后展开，圆外变黑（不缩放整张画面，整图缩放由 `Zoom` 负责） |
+| `Glitch` | 横向分段抖动故障效果 |
+| `TVNoise` | 横向电视干扰带、扫描线和水平错位，干扰带沿画面上下移动 |
+| `Brightness` | 增强画面亮度 |
+| `Saturation` | 降低画面饱和度，强度 `1` 时接近黑白 |
+| `Contrast` | 增强画面对比度 |
+| `Rainbow` | 环形动态彩虹染色 |
+
+示例：
+
+```text
+<Gaussian*(2,1.5)>
+<Neon*(3,1)>
+<Flash*(1,-1)>
+<Vignette*(2,0.8)>
+```
+
+多个指令可放在同一时间点叠加：
+
+```text
+<Neon*(3,1)><Trail*(3,0.8)><Glitch*(1,0.5)>
+```
+
+不建议同时叠加过多高强度全屏特效，尤其是在高分辨率视频导出时。
+
+## 录制与显示调整
+
+- 文件菜单提供"导出视频（30 帧）"和"导出视频（60 帧）"两个档位。
+- 60 帧模式会同步设置 Unity 捕获帧率和 FFmpeg 输入帧率，避免音画速度不一致。
+- 正常情况下，All Perfect 动画播放完成后会提前结束录制；谱面末尾最多等待 5 秒作为兜底。
+- BGA 图片与视频按高度铺满并保持原始宽高比，内外背景亮度独立控制。
+- 左下角生成标识为 `Generated by MajdataViewAlpha`。
+
+---
+
+## 已知问题与限制
+
+- `RP` / `RQ` 在终点与起点相差 `0` 或 `1` 时，旋转特效半径计算有误。
+- `COLOR` 会影响 Hold 按住时的特效颜色（染色作用于音符本体）。
+- 全屏特效基于最终画面处理，复杂 BGA 可能影响 `Neon`、`Trail` 的前景识别效果；多个高强度全屏特效同时启用会增加视频导出负担。
+- 沿用原版限制：不支持动态比特率 mp3；内置录屏要求 View 分辨率为偶数；高谱面密度 / 超长歌曲在软件渲染下可能吃力。
+- 调试记录与修改约束见 [debug.md](debug.md)。
+
+---
+
+## 致谢与许可
+
+- 原项目：[LingFeng-bbben/MajdataView](https://github.com/LingFeng-bbben/MajdataView)，主程序作者 **bbben** 等。
+- Simai 由 [Celeca](https://twitter.com/formiku39854) 开发；Hanabi 特效：青山散人。
+
+感谢原作者提供的基础框架、编辑器与运行逻辑。本项目是在其之上的二次修改与扩展。
+
+本项目遵循 **GPL-3.0**（与原版一致）；谱面版权归各自原作者所有。

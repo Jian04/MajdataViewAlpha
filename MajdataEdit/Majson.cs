@@ -17,6 +17,9 @@ internal class Majson
     public List<SizeChange> sizeTable = new();
     // ALPHA: mid-chart note alpha change events (from <ALPHA*x> tokens)
     public List<AlphaChange> alphaTable = new();
+    public List<DisplayChange> displayTable = new();
+    public List<SubtitleChange> subtitleTable = new();
+    public List<EffectChange> effectTable = new();
 }
 
 internal class SvPoint
@@ -49,19 +52,50 @@ internal class SizeChange
 }
 
 /// <summary>
-/// ALPHA: A note-alpha-change event from &lt;ALPHA*x&gt; syntax.
-/// alpha: opacity multiplier for all notes from this time onward (0.0=transparent, 1.0=opaque).
+/// ALPHA: A note-alpha-change event from &lt;ALPHA*x&gt; or &lt;ALPHA*key=x,...&gt; syntax.
+/// noteType: null = global (all types); or one of tap|each|hold|slide|star|break|touch|touchhold.
+/// alpha: opacity multiplier (0.0=transparent, 1.0=opaque).
 /// </summary>
 internal class AlphaChange
 {
     public double time;
+    public string? noteType; // null = global
     public float alpha;
+}
+
+internal class DisplayChange
+{
+    public double time;
+    public string property = "";
+    public float target;
+    public float duration;
+}
+
+internal class SubtitleChange
+{
+    public double time;
+    public string text = "";
+    public float duration = -1f;
+}
+
+internal class EffectChange
+{
+    public double time;
+    public string effect = "";
+    public float duration;
+    public float intensity;
 }
 
 internal class EditRequestjson
 {
     public float audioSpeed;
     public float backgroundCover;
+    public float innerBackgroundCover;
+    public float outerBackgroundCover;
+    public bool showJudgeInfo;
+    public bool showComboInfo;
+    public bool showJudgeLine = true;
+    public bool showJudgeText = true;
     public EditorComboIndicator comboStatusType;
     public EditorPlayMethod editorPlayMethod;
     public EditorControlMethod control;
@@ -71,7 +105,8 @@ internal class EditRequestjson
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
-    public int bgDisplayMode;
+    public float chartLength;
+    public int recordFrameRate = 30;
 }
 
 public enum EditorPlayMethod
@@ -106,7 +141,8 @@ internal enum EditorControlMethod
     OpStart,
     Pause,
     Continue,
-    Record
+    Record,
+    SetDisplay
 }
 
 //this setting is per maidata
@@ -131,6 +167,12 @@ public class EditorSetting
 {
     public bool AutoCheckUpdate = true;
     public float backgroundCover = 0.6f;
+    public float InnerBackgroundCover = -1f;
+    public float OuterBackgroundCover = -1f;
+    public bool ShowJudgeInfo = true;
+    public bool ShowComboInfo = true;
+    public bool ShowJudgeLine = true;
+    public bool ShowJudgeText = true;
     public int ChartRefreshDelay = 1000;
     public EditorComboIndicator comboStatusType = 0;
     public EditorPlayMethod editorPlayMethod;
@@ -162,5 +204,4 @@ public class EditorSetting
     public string SendViewerKey = "Ctrl+Shift+z";
     public float touchSpeed = 7.5f;
     public bool SmoothSlideAnime = false;
-    public int BgDisplayMode = 0;
 }

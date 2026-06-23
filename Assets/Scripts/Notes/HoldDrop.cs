@@ -44,6 +44,7 @@ public class HoldDrop : NoteLongDrop
     private SpriteRenderer lineSpriteRender;
 
     private SpriteRenderer spriteRenderer;
+    private MaterialPropertyBlock brightnessProperties;
 
 
     private void Start()
@@ -62,6 +63,7 @@ public class HoldDrop : NoteLongDrop
 
         timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
         spriteRenderer = GetComponent<SpriteRenderer>();
+        brightnessProperties = new MaterialPropertyBlock();
 
         holdEndRender = transform.GetChild(1).GetComponent<SpriteRenderer>();
 
@@ -91,15 +93,22 @@ public class HoldDrop : NoteLongDrop
             lineSpriteRender.sprite = breakLine;
             holdEndRender.sprite = holdBreakEnd;
             if (isEX) exSpriteRender.color = exEffectBreak;
-            spriteRenderer.material = breakMaterial;
+            spriteRenderer.sharedMaterial = breakMaterial;
         }
 
         // ALPHA: apply color override to hold body, tail cap, and guide arc.
         if (colorOverrideMaterial != null)
         {
-            spriteRenderer.material = colorOverrideMaterial;
-            holdEndRender.material  = colorOverrideMaterial;
-            lineSpriteRender.material = colorOverrideMaterial;
+            spriteRenderer.sharedMaterial = colorOverrideMaterial;
+            holdEndRender.sharedMaterial  = colorOverrideMaterial;
+            lineSpriteRender.sharedMaterial = colorOverrideMaterial;
+        }
+        if (isEX && colorOverrideMaterial != null &&
+            colorOverrideMaterial.HasProperty("_NoteAlpha"))
+        {
+            var exColor = exSpriteRender.color;
+            exColor.a *= colorOverrideMaterial.GetFloat("_NoteAlpha");
+            exSpriteRender.color = exColor;
         }
 
         spriteRenderer.forceRenderingOff = true;
@@ -261,12 +270,18 @@ public class HoldDrop : NoteLongDrop
     private void LateUpdate()
     {
         if (holdAnimStart && colorOverrideMaterial != null)
-            spriteRenderer.material = colorOverrideMaterial;
+            spriteRenderer.sharedMaterial = colorOverrideMaterial;
     }
 
     // Update is called once per frame
     private void Update()
     {
+        if (!timeProvider.isStart)
+        {
+            tapLine.SetActive(false);
+            return;
+        }
+
         var distance = GetSvDistance();
         var destScale = distance * 0.4f + 0.51f;
         if (destScale < 0f)
@@ -300,7 +315,9 @@ public class HoldDrop : NoteLongDrop
             !isJudged)
         {
             var extra = Math.Max(Mathf.Sin(timeProvider.GetFrame() * 0.17f) * 0.5f, 0);
-            spriteRenderer.material.SetFloat("_Brightness", 0.95f + extra);
+            spriteRenderer.GetPropertyBlock(brightnessProperties);
+            brightnessProperties.SetFloat("_Brightness", 0.95f + extra);
+            spriteRenderer.SetPropertyBlock(brightnessProperties);
         }
 
 
@@ -410,8 +427,6 @@ public class HoldDrop : NoteLongDrop
         if (effectManager == null) return;
         effectManager.PlayEffect(startPosition, isBreak, result, noteTintColor);
         effectManager.PlayFastLate(startPosition, result);
-        print($"Hold: {MathF.Round(percent * 100,2)}%\nTotal Len : {MathF.Round(realityHT * 1000,2)}ms");
-
         objectCounter.ReportResult(this, result, isBreak);
         if (!isJudged)
             objectCounter.NextNote(startPosition);
@@ -439,7 +454,7 @@ public class HoldDrop : NoteLongDrop
                 sprRenderer.sprite = holdOnSpr;
             // ALPHA: animator activation can reset the material; re-apply color override
             if (colorOverrideMaterial != null)
-                sprRenderer.material = colorOverrideMaterial;
+                sprRenderer.sharedMaterial = colorOverrideMaterial;
         }
     }
     protected override void StopHoldEffect()
@@ -452,7 +467,7 @@ public class HoldDrop : NoteLongDrop
         sprRenderer.sprite = holdOffSpr;
         // ALPHA: sprite assignment can reset the material; re-apply color override
         if (colorOverrideMaterial != null)
-            sprRenderer.material = colorOverrideMaterial;
+            sprRenderer.sharedMaterial = colorOverrideMaterial;
     }
 
 }

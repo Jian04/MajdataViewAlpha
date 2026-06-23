@@ -132,6 +132,24 @@
   <data name="Brightness" xml:space="preserve">
     <value>明るさ</value>
   </data>
+  <data name="InnerBrightness" xml:space="preserve">
+    <value>内側の暗さ</value>
+  </data>
+  <data name="OuterBrightness" xml:space="preserve">
+    <value>外側の暗さ</value>
+  </data>
+  <data name="ShowJudgeInfo" xml:space="preserve">
+    <value>左側の判定を表示</value>
+  </data>
+  <data name="ShowComboInfo" xml:space="preserve">
+    <value>右側のコンボを表示</value>
+  </data>
+  <data name="ShowJudgeLine" xml:space="preserve">
+    <value>再生中に判定ラインを表示</value>
+  </data>
+  <data name="ShowJudgeText" xml:space="preserve">
+    <value>判定文字を表示</value>
+  </data>
   <data name="Difficulty" xml:space="preserve">
     <value>レベル</value>
   </data>
@@ -433,6 +451,9 @@ Open Browser to download latest update of Majdata?</value>
   <data name="ExportVideo" xml:space="preserve">
     <value>譜面動画を生成</value>
   </data>
+  <data name="ExportVideo60" xml:space="preserve">
+    <value>譜面動画を生成（60 FPS）</value>
+  </data>
   <data name="ComboDisplayAccClassic" xml:space="preserve">
     <value>達成率 (+)</value>
   </data>
@@ -534,5 +555,14 @@ Open Browser to download latest update of Majdata?</value>
   </data>
   <data name="PlayMethodRandom" xml:space="preserve">
     <value>シミュレーション (ランダム)</value>
+  </data>
+  <data name="FormatBrush" xml:space="preserve">
+    <value>拍子ブラシ（最大）</value>
+  </data>
+  <data name="FormatBrush16" xml:space="preserve">
+    <value>拍子ブラシ（16分）</value>
+  </data>
+  <data name="FormatBrush32" xml:space="preserve">
+    <value>拍子ブラシ（32分）</value>
   </data>
 </root>

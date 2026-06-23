@@ -17,6 +17,9 @@ internal class Majson
     public List<SizeChange> sizeTable = new();
     // ALPHA: mid-chart note alpha change events (from <ALPHA*x> tokens)
     public List<AlphaChange> alphaTable = new();
+    public List<DisplayChange> displayTable = new();
+    public List<SubtitleChange> subtitleTable = new();
+    public List<EffectChange> effectTable = new();
 }
 
 /// <summary>
@@ -42,13 +45,38 @@ internal class SizeChange
 }
 
 /// <summary>
-/// ALPHA: A note-alpha-change event from &lt;ALPHA*x&gt; syntax.
-/// alpha: opacity multiplier for all notes (0.0=transparent, 1.0=opaque).
+/// ALPHA: A note-alpha-change event from &lt;ALPHA*x&gt; or &lt;ALPHA*key=x,...&gt; syntax.
+/// noteType: null = global (all types); or one of tap|each|hold|slide|star|break|touch|touchhold.
+/// alpha: opacity multiplier (0.0=transparent, 1.0=opaque).
 /// </summary>
 internal class AlphaChange
 {
     public double time;
+    public string noteType; // null = global
     public float alpha;
+}
+
+public class DisplayChange
+{
+    public double time;
+    public string property;
+    public float target;
+    public float duration;
+}
+
+public class SubtitleChange
+{
+    public double time;
+    public string text;
+    public float duration = -1f;
+}
+
+public class EffectChange
+{
+    public double time;
+    public string effect;
+    public float duration;
+    public float intensity;
 }
 
 internal class SimaiTimingPoint
@@ -80,6 +108,8 @@ internal class SimaiNote
     public bool isFakeRotate = false;
     public bool isForceStar = false;
     public bool isHanabi = false;
+    public bool isMonoHead = false;
+    public bool isSlideMono = false;
     public bool isSlideBreak = false;
     public bool isSlideNoHead = false;
 
@@ -97,6 +127,12 @@ internal class EditRequestjson
 {
     public float audioSpeed;
     public float backgroundCover;
+    public float innerBackgroundCover;
+    public float outerBackgroundCover;
+    public bool showJudgeInfo;
+    public bool showComboInfo;
+    public bool showJudgeLine = true;
+    public bool showJudgeText = true;
     public EditorComboIndicator comboStatusType;
     public EditorPlayMethod editorPlayMethod;
     public EditorControlMethod control;
@@ -106,7 +142,8 @@ internal class EditRequestjson
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
-    public int bgDisplayMode;
+    public float chartLength;
+    public int recordFrameRate = 30;
 }
 
 public enum EditorComboIndicator
@@ -136,7 +173,8 @@ internal enum EditorControlMethod
     OpStart,
     Pause,
     Continue,
-    Record
+    Record,
+    SetDisplay
 }
 
 public enum EditorPlayMethod

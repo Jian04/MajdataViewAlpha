@@ -53,7 +53,6 @@ public class Sensor : MonoBehaviour
                 });
                 IsJudging = false;
             }
-            print($"Sensor:{Type} On");
         }
     }
     public void SetOff(Guid id) 
@@ -77,7 +76,6 @@ public class Sensor : MonoBehaviour
                 });
             }
             Status = nStatus;
-            print($"Sensor:{Type} Off");
         }
     }
     public void Click()
@@ -95,7 +93,6 @@ public class Sensor : MonoBehaviour
                 Status = SensorStatus.On
             });
             IsJudging = false;
-            print($"Sensor:{Type} Click");
             Status = SensorStatus.Off;
         }
     }

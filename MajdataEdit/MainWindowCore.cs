@@ -8,7 +8,6 @@ using System.Runtime.InteropServices;
 using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Markup;
@@ -18,6 +17,7 @@ using System.Windows.Media.Media3D;
 using System.Windows.Threading;
 using DiscordRPC;
 using MajdataEdit.AutoSaveModule;
+using MajdataEdit.Editor;
 using MajdataEdit.SyntaxModule;
 using Microsoft.Win32;
 using Newtonsoft.Json;
@@ -61,10 +61,12 @@ public partial class MainWindow : Window
     private bool isDrawing;
     private bool isLoading;
     private bool isReplaceConformed;
+    private bool chartParsePending;
 
     private bool isSaved = true;
     private EditorControlMethod lastEditorState;
-    private TextSelection? lastFindPosition;
+    private FumenEditorAdapter fumenEditor = null!;
+    private EditorSelection? lastFindPosition;
 
     private double lastMousePointX; //Used for drag scroll
 
@@ -76,46 +78,26 @@ public partial class MainWindow : Window
 
 
     //*UI DRAWING
-    private readonly Timer visualEffectRefreshTimer = new(1);
+    private readonly Timer visualEffectRefreshTimer = new(33);
 
     private WriteableBitmap? WaveBitmap;
 
     //*TEXTBOX CONTROL
     private string GetRawFumenText()
     {
-        var text = new TextRange(FumenContent.Document.ContentStart, FumenContent.Document.ContentEnd).Text!;
-
-        text = text.Replace("\r", "");
-        // 亲爱的bbben在这里对text进行了Trim 引发了行位置不正确的BUG 谨此纪念（
-        return text;
+        return fumenEditor.Text;
     }
 
     private void SetRawFumenText(string content)
     {
         isLoading = true;
-        FumenContent.Document.Blocks.Clear();
-        if (content == null)
-        {
-            isLoading = false;
-            return;
-        }
-
-        var lines = content.Split('\n');
-        foreach (var line in lines)
-        {
-            var paragraph = new Paragraph();
-            paragraph.Inlines.Add(line);
-            FumenContent.Document.Blocks.Add(paragraph);
-        }
-
+        fumenEditor.Text = content ?? string.Empty;
         isLoading = false;
     }
 
     private long GetRawFumenPosition()
     {
-        long pos = new TextRange(FumenContent.Document.ContentStart, FumenContent.CaretPosition).Text.Replace("\r", "")
-            .Length;
-        return pos;
+        return fumenEditor.CaretOffset;
     }
 
     private void SeekTextFromTime()
@@ -131,11 +113,7 @@ public partial class MainWindow : Window
         timingList.Clear();
         timingList.AddRange(SimaiProcess.timinglist);
         var indexOfTheNote = timingList.IndexOf(theNote);
-        var blocks = FumenContent.Document.Blocks.ToList();
-        if (theNote.rawTextPositionY >= blocks.Count) return;
-        var pointer = blocks[theNote.rawTextPositionY].ContentStart
-            .GetPositionAtOffset(theNote.rawTextPositionX);
-        FumenContent.Selection.Select(pointer, pointer);
+        fumenEditor.SelectLineColumn(theNote.rawTextPositionY, theNote.rawTextPositionX);
     }
 
     private void SeekTextFromIndex(int noteGroupIndex)
@@ -143,22 +121,15 @@ public partial class MainWindow : Window
         if (SimaiProcess.notelist.Count > noteGroupIndex + 1 && noteGroupIndex >= 0)
         {
             var theNote = SimaiProcess.notelist[noteGroupIndex];
-            var blocks = FumenContent.Document.Blocks.ToList();
-            if (theNote.rawTextPositionY >= blocks.Count) return;
-            var pointer = blocks[theNote.rawTextPositionY].ContentStart
-                .GetPositionAtOffset(theNote.rawTextPositionX);
-            FumenContent.Selection.Select(pointer, pointer);
+            fumenEditor.SelectLineColumn(theNote.rawTextPositionY, theNote.rawTextPositionX);
         }
     }
 
     public void ScrollToFumenContentSelection(int positionX, int positionY)
     {
         // 这玩意用于其他窗口来滚动Scroll 因为涉及到好多变量都是private的
-        var allBlocks = FumenContent.Document.Blocks.ToList();
-        if (positionY >= allBlocks.Count) return;
-        var pointer = allBlocks[positionY].ContentStart.GetPositionAtOffset(positionX);
-        FumenContent.Focus();
-        FumenContent.Selection.Select(pointer, pointer);
+        fumenEditor.Focus();
+        fumenEditor.SelectLineColumn(positionY, positionX);
         Focus();
 
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING && (bool)FollowPlayCheck.IsChecked!)
@@ -184,9 +155,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (FumenContent.Selection == lastFindPosition)
+        if (lastFindPosition == fumenEditor.Selection)
         {
-            FumenContent.Selection.Text = ReplaceText.Text;
+            fumenEditor.ReplaceSelection(ReplaceText.Text);
             FindAndScroll();
         }
         else
@@ -195,57 +166,18 @@ public partial class MainWindow : Window
         }
     }
 
-    public TextRange? GetTextRangeFromPosition(TextPointer position, string input)
-    {
-        TextRange? textRange = null;
-
-        while (position != null)
-        {
-            if (position.CompareTo(FumenContent.Document.ContentEnd) == 0) break;
-
-            if (position.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
-            {
-                var textRun = position.GetTextInRun(LogicalDirection.Forward);
-                var stringComparison = StringComparison.CurrentCultureIgnoreCase;
-                var indexInRun = textRun.IndexOf(input, stringComparison);
-
-                if (indexInRun >= 0)
-                {
-                    position = position.GetPositionAtOffset(indexInRun);
-                    var nextPointer = position.GetPositionAtOffset(input.Length);
-                    textRange = new TextRange(position, nextPointer);
-
-                    // If a none-WholeWord match is found, directly terminate the loop.
-                    position = position.GetPositionAtOffset(input.Length);
-                    break;
-                }
-
-                // If a match is not found, go over to the next context position after the "textRun".
-                position = position.GetPositionAtOffset(textRun.Length);
-            }
-            else
-            {
-                //If the current position doesn't represent a text context position, go to the next context position.
-                // This can effectively ignore the formatting or embed element symbols.
-                position = position.GetNextContextPosition(LogicalDirection.Forward);
-            }
-        }
-
-        return textRange;
-    }
-
     public void FindAndScroll()
     {
-        var position = GetTextRangeFromPosition(FumenContent.CaretPosition, InputText.Text);
-        if (position == null)
+        var position = fumenEditor.FindNext(InputText.Text);
+        if (position < 0)
         {
             isReplaceConformed = false;
             return;
         }
 
-        FumenContent.Selection.Select(position.Start, position.End);
-        lastFindPosition = FumenContent.Selection;
-        FumenContent.Focus();
+        fumenEditor.Select(position, InputText.Text.Length);
+        lastFindPosition = fumenEditor.Selection;
+        fumenEditor.Focus();
         isReplaceConformed = true;
     }
 
@@ -330,6 +262,7 @@ public partial class MainWindow : Window
         VolumnSetting.IsEnabled = true;
         MenuMuriCheck.IsEnabled = true;
         Menu_ExportRender.IsEnabled = true;
+        Menu_ExportRender60.IsEnabled = true;
         SyntaxCheckButton.IsEnabled = true;
         AutoSaveManager.Of().SetAutoSaveEnable(true);
         SetSavedState(true);
@@ -340,6 +273,7 @@ public partial class MainWindow : Window
     {
         await Task.CompletedTask;
     }
+
     void SetErrCount<T>(T eCount) => Dispatcher.Invoke(() => ErrCount.Content = $"{eCount}");
     private void ReadWaveFromFile()
     {
@@ -521,6 +455,10 @@ public partial class MainWindow : Window
         if (!File.Exists(editorSettingFilename)) CreateEditorSetting();
         var json = File.ReadAllText(editorSettingFilename);
         editorSetting = JsonConvert.DeserializeObject<EditorSetting>(json)!;
+        if (editorSetting.InnerBackgroundCover < 0f)
+            editorSetting.InnerBackgroundCover = editorSetting.backgroundCover;
+        if (editorSetting.OuterBackgroundCover < 0f)
+            editorSetting.OuterBackgroundCover = editorSetting.backgroundCover;
 
         if (RenderOptions.ProcessRenderMode != RenderMode.SoftwareOnly)
             //如果没有通过命令行预先指定渲染模式，则使用设置项的渲染模式
@@ -545,7 +483,6 @@ public partial class MainWindow : Window
         AddGesture(editorSetting.MirrorCcw45Key, "MirrorCcw45");
         FumenContent.FontSize = editorSetting.FontSize;
 
-        ViewerCover.Content = editorSetting.backgroundCover.ToString();
         ViewerSpeed.Content = editorSetting.playSpeed.ToString("F1"); // 转化为形如"7.0", "9.5"这样的速度
         ViewerTouchSpeed.Content = editorSetting.touchSpeed.ToString("F1");
 
@@ -585,11 +522,13 @@ public partial class MainWindow : Window
     {
         Console.WriteLine("TextChanged");
         SyntaxCheck();
-        // 用 InvokeAsync 避免阻塞 UI 线程；DrawWave 由 VisualEffectRefreshTimer 负责，不在此重复
         Dispatcher.InvokeAsync(
             delegate
             {
-                SimaiProcess.Serialize(GetRawFumenText(), GetRawFumenPosition());
+                ghostCusorPositionTime = (float)SimaiProcess.Serialize(
+                    GetRawFumenText(), GetRawFumenPosition());
+                chartParsePending = false;
+                DrawWave();
             }
         );
     }
@@ -664,6 +603,8 @@ public partial class MainWindow : Window
             }
 
             WaveBitmap.Lock();
+            try
+            {
 
             //the process starts
             var backBitmap = new Bitmap(width, height, WaveBitmap.BackBufferStride,
@@ -695,7 +636,8 @@ public partial class MainWindow : Window
                 points.Add(new PointF(x, y));
             }
 
-            graphics.DrawLines(pen, points.ToArray());
+            if (points.Count >= 2)
+                graphics.DrawLines(pen, points.ToArray());
 
             //Draw Bpm lines
             var lastbpm = -1f;
@@ -751,6 +693,8 @@ public partial class MainWindow : Window
                 var x = ((float)(btime / step) - startindex) * linewidth;
                 graphics.DrawLine(pen, x, 0, x, 15);
             }
+
+            DrawAlphaTimeline(graphics, currentTime, deltatime, step, startindex, linewidth, height);
 
             //Draw timing lines
             pen = new Pen(Color.White, 1);
@@ -922,9 +866,97 @@ public partial class MainWindow : Window
 
             //MusicWave.Width = waveLevels.Length * zoominPower;
             WaveBitmap.AddDirtyRect(new Int32Rect(0, 0, WaveBitmap.PixelWidth, WaveBitmap.PixelHeight));
-            WaveBitmap.Unlock();
-            isDrawing = false;
+            }
+            finally
+            {
+                WaveBitmap.Unlock();
+                isDrawing = false;
+            }
         });
+    }
+
+    private static void DrawAlphaTimeline(
+        Graphics graphics,
+        double currentTime,
+        double visibleRange,
+        double step,
+        int startIndex,
+        float lineWidth,
+        int height)
+    {
+        if (step <= 0d || lineWidth <= 0f)
+            return;
+
+        using var labelFont = new Font("Cascadia Mono", 6.5f, System.Drawing.FontStyle.Regular);
+        DrawTimelineEvents(
+            graphics,
+            SimaiProcess.displayTable.Select(item =>
+                (item.time, (double)item.duration,
+                    $"{item.property}:{item.target:0.##}")),
+            currentTime, visibleRange, step, startIndex, lineWidth, 0f, labelFont);
+        DrawTimelineEvents(
+            graphics,
+            SimaiProcess.effectTable.Select(item =>
+                (item.time, (double)item.duration,
+                    $"{item.effect}:{item.intensity:0.##}")),
+            currentTime, visibleRange, step, startIndex, lineWidth, 13f, labelFont);
+
+        var subtitles = SimaiProcess.subtitleTable;
+        for (var i = 0; i < subtitles.Count; i++)
+        {
+            var item = subtitles[i];
+            var duration = item.duration >= 0f
+                ? item.duration
+                : i + 1 < subtitles.Count
+                    ? Math.Max(0d, subtitles[i + 1].time - item.time)
+                    : visibleRange * 2d;
+            DrawTimelineEvents(
+                graphics,
+                new[] { (item.time, duration, $"TEXT:{TrimTimelineLabel(item.text)}") },
+                currentTime, visibleRange, step, startIndex, lineWidth,
+                Math.Max(0f, height - 13f), labelFont);
+        }
+    }
+
+    private static void DrawTimelineEvents(
+        Graphics graphics,
+        IEnumerable<(double Time, double Duration, string Label)> events,
+        double currentTime,
+        double visibleRange,
+        double step,
+        int startIndex,
+        float lineWidth,
+        float y,
+        Font labelFont)
+    {
+        foreach (var item in events)
+        {
+            var endTime = item.Time + Math.Max(0d, item.Duration);
+            if (item.Time > currentTime + visibleRange || endTime < currentTime - visibleRange)
+                continue;
+
+            var x = (float)(item.Time / step - startIndex) * lineWidth;
+            var durationWidth = (float)(Math.Max(0d, item.Duration) / step) * lineWidth;
+            var width = Math.Max(4f, durationWidth);
+            var rectangle = new RectangleF(x, y, width, 12f);
+            using var gradient = new LinearGradientBrush(
+                rectangle,
+                Color.FromArgb(145, 182, 92, 255),
+                Color.FromArgb(0, 182, 92, 255),
+                LinearGradientMode.Horizontal);
+            using var labelBrush = new SolidBrush(Color.FromArgb(225, 235, 214, 255));
+            graphics.FillRectangle(gradient, rectangle);
+            graphics.DrawString(TrimTimelineLabel(item.Label), labelFont, labelBrush,
+                new PointF(x + 2f, y));
+        }
+    }
+
+    private static string TrimTimelineLabel(string text)
+    {
+        const int maxLength = 28;
+        if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
+            return text ?? "";
+        return text.Substring(0, maxLength - 3) + "...";
     }
 
     // This update less frequently. set the time text.
@@ -993,11 +1025,10 @@ public partial class MainWindow : Window
         switch (playMethod)
         {
             case PlayMethod.Record:
+            case PlayMethod.Record60:
                 Bass.BASS_ChannelSetPosition(bgmStream, 0);
-                startAt = DateTime.Now.AddSeconds(5d);
                 //TODO: i18n
                 MessageBox.Show(GetLocalizedString("AskRender"), GetLocalizedString("Attention"));
-                InternalSwitchWindow(false);
                 generateSoundEffectList(0.0, isOpIncluded);
                 var task = new Task(() => renderSoundEffect(5d));
                 try
@@ -1012,7 +1043,9 @@ public partial class MainWindow : Window
                     return;
                 }
 
+                startAt = DateTime.Now.AddSeconds(5d);
                 if (!sendRequestRun(startAt, playMethod)) return;
+                InternalSwitchWindow(false);
                 break;
             case PlayMethod.Op:
                 generateSoundEffectList(0.0, isOpIncluded);
@@ -1198,6 +1231,8 @@ public partial class MainWindow : Window
             startAt = StartAt.Ticks,
             startTime = (float)Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream)),
             audioSpeed = GetPlaybackSpeed(),
+            showJudgeLine = editorSetting.ShowJudgeLine,
+            showJudgeText = editorSetting.ShowJudgeText,
             editorPlayMethod = editorSetting.editorPlayMethod
         };
         var json = JsonConvert.SerializeObject(request);
@@ -1210,6 +1245,25 @@ public partial class MainWindow : Window
 
         lastEditorState = EditorControlMethod.Start;
         return true;
+    }
+
+    internal void SendDisplaySettings()
+    {
+        if (!isPlaying || editorSetting == null)
+            return;
+
+        var request = new EditRequestjson
+        {
+            control = EditorControlMethod.SetDisplay,
+            showJudgeInfo = editorSetting.ShowJudgeInfo,
+            showComboInfo = editorSetting.ShowComboInfo,
+            showJudgeLine = editorSetting.ShowJudgeLine,
+            showJudgeText = editorSetting.ShowJudgeText,
+            innerBackgroundCover = editorSetting.InnerBackgroundCover,
+            outerBackgroundCover = editorSetting.OuterBackgroundCover
+        };
+        WebControl.RequestPOST("http://localhost:8013/",
+            JsonConvert.SerializeObject(request));
     }
 
     private bool sendRequestRun(DateTime StartAt, PlayMethod playMethod)
@@ -1231,6 +1285,9 @@ public partial class MainWindow : Window
         jsonStruct.colorTable = SimaiProcess.colorTable; // ALPHA: note color
         jsonStruct.sizeTable  = SimaiProcess.sizeTable;  // ALPHA: note size
         jsonStruct.alphaTable = SimaiProcess.alphaTable; // ALPHA: note alpha
+        jsonStruct.displayTable = SimaiProcess.displayTable; // ALPHA: display transitions
+        jsonStruct.subtitleTable = SimaiProcess.subtitleTable; // ALPHA: timed subtitles
+        jsonStruct.effectTable = SimaiProcess.effectTable; // ALPHA: screen effects
 
         var json = JsonConvert.SerializeObject(jsonStruct);
         var path = maidataDir + "/majdata.json";
@@ -1244,6 +1301,19 @@ public partial class MainWindow : Window
         else
             request.control = EditorControlMethod.Record;
 
+        float chartLen = 0f;
+        foreach (var tp in jsonStruct.timingList)
+        {
+            chartLen = Math.Max(chartLen, (float)tp.time);
+            foreach (var note in tp.noteList)
+            {
+                if (note.noteType == SimaiNoteType.Slide)
+                    chartLen = Math.Max(chartLen, (float)(note.slideStartTime + note.slideTime));
+                else
+                    chartLen = Math.Max(chartLen, (float)(tp.time + note.holdTime));
+            }
+        }
+
         Dispatcher.Invoke(() =>
         {
             request.jsonPath = path;
@@ -1255,11 +1325,18 @@ public partial class MainWindow : Window
             request.noteSpeed = editorSetting!.playSpeed;
             request.touchSpeed = editorSetting!.touchSpeed;
             request.backgroundCover = editorSetting!.backgroundCover;
+            request.innerBackgroundCover = editorSetting.InnerBackgroundCover;
+            request.outerBackgroundCover = editorSetting.OuterBackgroundCover;
+            request.showJudgeInfo = editorSetting.ShowJudgeInfo;
+            request.showComboInfo = editorSetting.ShowComboInfo;
+            request.showJudgeLine = editorSetting.ShowJudgeLine;
+            request.showJudgeText = editorSetting.ShowJudgeText;
             request.comboStatusType = editorSetting!.comboStatusType;
             request.audioSpeed = GetPlaybackSpeed();
             request.smoothSlideAnime = editorSetting!.SmoothSlideAnime;
-            request.bgDisplayMode = editorSetting!.BgDisplayMode;
             request.editorPlayMethod = editorSetting.editorPlayMethod;
+            request.chartLength = chartLen;
+            request.recordFrameRate = playMethod == PlayMethod.Record60 ? 60 : 30;
         });
 
         json = JsonConvert.SerializeObject(request);
@@ -1269,7 +1346,6 @@ public partial class MainWindow : Window
             MessageBox.Show(GetLocalizedString("PortClear"));
             return false;
         }
-
         lastEditorState = EditorControlMethod.Start;
         return true;
     }
@@ -1380,17 +1456,7 @@ public partial class MainWindow : Window
     private void SwitchFumenOverwriteMode()
     {
         fumenOverwriteMode = !fumenOverwriteMode;
-
-        //修改覆盖模式启用状态
-        // fetch TextEditor from FumenContent
-        var textEditorProperty =
-            typeof(TextBox).GetProperty("TextEditor", BindingFlags.NonPublic | BindingFlags.Instance);
-        var textEditor = textEditorProperty!.GetValue(FumenContent, null);
-
-        // set _OvertypeMode on the TextEditor
-        var overtypeModeProperty = textEditor!.GetType()
-            .GetProperty("_OvertypeMode", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        overtypeModeProperty!.SetValue(textEditor, fumenOverwriteMode, null);
+        FumenContent.TextArea.OverstrikeMode = fumenOverwriteMode;
 
         //修改提示弹窗可见性
         OverrideModeTipsPopup.Visibility = fumenOverwriteMode ? Visibility.Visible : Visibility.Collapsed;
@@ -1555,6 +1621,7 @@ public partial class MainWindow : Window
     {
         Normal,
         Op,
-        Record
+        Record,
+        Record60
     }
 }

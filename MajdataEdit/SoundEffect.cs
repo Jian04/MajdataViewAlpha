@@ -336,21 +336,32 @@ public partial class MainWindow
                     {
                         stobj.hasAnswer = true;
                         stobj.hasTouch = true;
-                        stobj.hasTouchHold = true;
-                        // 计算TouchHold结尾
-                        var targetTime = noteGroup.time + note.holdTime;
-                        var nearIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - targetTime) < 0.001f);
-                        if (nearIndex != -1)
+                        // 只有真正有时长的TouchHold才播放riser并计算结尾。
+                        // 像 [1:0] 这种0时长写法 holdTime 会被解析成0，riser的开始与结束
+                        // 落在同一时刻，排序后Stop可能排在Play之前，导致12.68秒的riser永远停不下来。
+                        if (note.holdTime > 0.00f)
                         {
-                            if (note.isHanabi) waitToBePlayed[nearIndex].hasHanabi = true;
-                            waitToBePlayed[nearIndex].hasAnswer = true;
-                            waitToBePlayed[nearIndex].hasTouchHoldEnd = true;
+                            stobj.hasTouchHold = true;
+                            // 计算TouchHold结尾
+                            var targetTime = noteGroup.time + note.holdTime;
+                            var nearIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - targetTime) < 0.001f);
+                            if (nearIndex != -1)
+                            {
+                                if (note.isHanabi) waitToBePlayed[nearIndex].hasHanabi = true;
+                                waitToBePlayed[nearIndex].hasAnswer = true;
+                                waitToBePlayed[nearIndex].hasTouchHoldEnd = true;
+                            }
+                            else
+                            {
+                                var tHoldRelease = new SoundEffectTiming(targetTime, true, _hasHanabi: note.isHanabi,
+                                    _hasTouchHoldEnd: true);
+                                waitToBePlayed.Add(tHoldRelease);
+                            }
                         }
-                        else
+                        else if (note.isHanabi)
                         {
-                            var tHoldRelease = new SoundEffectTiming(targetTime, true, _hasHanabi: note.isHanabi,
-                                _hasTouchHoldEnd: true);
-                            waitToBePlayed.Add(tHoldRelease);
+                            // 0时长TouchHold退化成普通Touch，烟花照常保留
+                            stobj.hasHanabi = true;
                         }
 
                         break;

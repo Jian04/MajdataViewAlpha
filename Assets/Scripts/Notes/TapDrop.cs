@@ -24,15 +24,16 @@ public class TapDrop : TapBase
             spriteRenderer.sprite = breakSpr;
             lineSpriteRender.sprite = breakLine;
             if (isEX) exSpriteRender.color = exEffectBreak;
-            spriteRenderer.material = breakMaterial;
+            spriteRenderer.sharedMaterial = breakMaterial;
         }
 
         // ALPHA: apply color override to note circle and guide arc.
         if (colorOverrideMaterial != null)
         {
-            spriteRenderer.material = colorOverrideMaterial;
-            lineSpriteRender.material = colorOverrideMaterial;
+            spriteRenderer.sharedMaterial = colorOverrideMaterial;
+            lineSpriteRender.sharedMaterial = colorOverrideMaterial;
         }
+        ApplyExAlpha();
 
         spriteRenderer.forceRenderingOff = true;
         exSpriteRender.forceRenderingOff = true;

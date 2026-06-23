@@ -3,7 +3,6 @@ using Assets.Scripts.Types;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using UnityEditor;
 using UnityEngine;
 #nullable enable
 public class WifiDrop : NoteLongDrop,IFlasher
@@ -37,13 +36,12 @@ public class WifiDrop : NoteLongDrop,IFlasher
     public float fullFadeInTime;
 
     public Material breakMaterial;
+    public Material colorOverrideMaterial;
 
     bool canShine = false;
 
     public List<int> areaStep = new List<int>();
     public bool smoothSlideAnime = false;
-
-    Animator fadeInAnimator = null;
 
     private readonly List<SpriteRenderer> sbRender = new();
 
@@ -57,6 +55,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
     private Vector3 SlidePositionStart;
 
     private bool isDestroying = false;
+    private float lastAudioTime = float.MinValue;
 
     bool isChecking = false;
     bool isFinished { get => _judgeQueues.All(x => x.Count == 0); }
@@ -68,20 +67,15 @@ public class WifiDrop : NoteLongDrop,IFlasher
     public List<List<JudgeArea>> _judgeQueues = new();
     public List<List<JudgeArea>> judgeQueues = new();
     public Dictionary<GameObject, List<Sensor>> triggerSensors = new();
+    private List<List<JudgeArea>> judgeQueueTemplate = new();
 
     private void Start()
     {
-        // 计算Slide淡入时机
-        // 在8.0速时应当提前300ms显示Slide
         fadeInTime = -3.926913f / speed;
-        // Slide完全淡入时机
-        // 正常情况下应为负值；速度过高将忽略淡入
         fullFadeInTime = Math.Min(fadeInTime + 0.2f, 0);
-        var interval = fullFadeInTime - fadeInTime;
-        fadeInAnimator = this.GetComponent<Animator>();
-        fadeInAnimator.speed = 0.2f / interval; //淡入时机与正解帧间隔小于200ms时，加快淡入动画的播放速度; interval永不为0
-        fadeInAnimator.SetTrigger("wifi");
-
+        var fadeAnimator = GetComponent<Animator>();
+        if (fadeAnimator != null)
+            fadeAnimator.enabled = false;
         objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
         timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
         var notes = GameObject.Find("Notes").transform;
@@ -118,17 +112,14 @@ public class WifiDrop : NoteLongDrop,IFlasher
         }
 
         if (isBreak)
-        {
             foreach(var star in star_slide)
             {
                 var renderer = star.GetComponent<SpriteRenderer>();
-                renderer.material = breakMaterial;
-                renderer.material.SetFloat("_Brightness", 0.95f);
+                renderer.sharedMaterial = breakMaterial;
                 var controller = star.AddComponent<BreakShineController>();
                 controller.enabled = true;
                 controller.parent = this;
             }
-        }
 
         slideOK.SetActive(false);
         slideOK.transform.SetParent(transform.parent);
@@ -141,8 +132,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
             if (isBreak)
             {
                 sr.sprite = breakSlide[i];
-                sr.material = breakMaterial;
-                sr.material.SetFloat("_Brightness", 0.95f);
+                sr.sharedMaterial = breakMaterial;
                 var controller = slideBars[i].AddComponent<BreakShineController>();
                 controller.parent = this;
                 controller.enabled = true;
@@ -165,7 +155,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
         sManager = sManagerObj.GetComponent<SensorManager>();
 
         
-        var count = GameObject.Find("Sensors").transform.childCount;
+        var count = sManagerObj.transform.childCount;
         
         for (int i = 0; i < count; i++)
             sensors.Add(sManagerObj.transform.GetChild(i).gameObject);
@@ -176,11 +166,18 @@ public class WifiDrop : NoteLongDrop,IFlasher
             triggerSensors.Add(star, new());
             guids.Add(star, Guid.NewGuid());
         }
-        _judgeQueues = new (judgeQueues);
-        foreach(var queue in _judgeQueues)
+        judgeQueueTemplate = judgeQueues
+            .Select(queue => new List<JudgeArea>(queue))
+            .ToList();
+        ResetJudgeState();
+        // Match SlideDrop: color/alpha/grayscale override is applied last so
+        // neither the default nor break material can replace it.
+        if (colorOverrideMaterial != null)
         {
-            foreach (var area in queue)
-                area.Reset();
+            foreach (var renderer in sbRender)
+                renderer.sharedMaterial = colorOverrideMaterial;
+            foreach (var renderer in spriteRenderer_star)
+                renderer.sharedMaterial = colorOverrideMaterial;
         }
         //for(int i =0; i< 4; i++)
         //{
@@ -296,13 +293,13 @@ public class WifiDrop : NoteLongDrop,IFlasher
             if (second.IsFinished)
             {
                 //HideBar(first.SlideIndex);
-                judgeQueue = judgeQueue.Skip(2).ToList();
+                RemoveJudgeAreas(judgeQueue, 2);
                 return;
             }
             else if (second.On)
             {
                 //HideBar(first.SlideIndex);
-                judgeQueue = judgeQueue.Skip(1).ToList();
+                RemoveJudgeAreas(judgeQueue, 1);
                 return;
             }
         }
@@ -310,7 +307,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
         if (first.IsFinished)
         {
             //HideBar(first.SlideIndex);
-            judgeQueue = judgeQueue.Skip(1).ToList();
+            RemoveJudgeAreas(judgeQueue, 1);
             return;
         }
         if (!isFinished)
@@ -367,7 +364,6 @@ public class WifiDrop : NoteLongDrop,IFlasher
                     judge = JudgeType.Perfect;
             }
 
-            print($"diff : {diff} ms");
             judgeResult = (JudgeType)judge;
             SetJust();
             isJudged = true;
@@ -419,21 +415,23 @@ public class WifiDrop : NoteLongDrop,IFlasher
     // Update is called once per frame
     private void Update()
     {
-        // Wifi Slide淡入期间，不透明度从0到1耗时200ms
+        var audioTime = timeProvider.AudioTime;
+        if (audioTime + 0.001f < lastAudioTime)
+        {
+            ResetJudgeState();
+            RestoreVisualState();
+        }
+        lastAudioTime = audioTime;
+
         var startiming = timeProvider.AudioTime - timeStart;
         if (startiming <= 0f)
         {
-            if (startiming >= -0.05f)
-            {
-                fadeInAnimator.enabled = false;
-                setSlideBarAlpha(1f);
-            }
-            else if (!fadeInAnimator.enabled && startiming >= fadeInTime)
-                fadeInAnimator.enabled = true;
+            RestoreBars();
+            var alpha = Mathf.Clamp01(startiming * (speed / 3f) + 1f);
+            setSlideBarAlpha(alpha);
             return;
         }
 
-        fadeInAnimator.enabled = false;
         setSlideBarAlpha(1f);
         foreach (var star in star_slide)
             star.SetActive(true);
@@ -503,7 +501,9 @@ public class WifiDrop : NoteLongDrop,IFlasher
             case AutoPlayMode.Enable:
             case AutoPlayMode.Random:
                 var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
-                judgeQueues = judgeQueues.Skip((int)(process * (judgeQueues.Count - 1))).ToList();
+                var removeCount = (int)(process * (judgeQueues.Count - 1));
+                if (removeCount > 0)
+                    judgeQueues.RemoveRange(0, Math.Min(removeCount, judgeQueues.Count));
                 HideBar(barIndex);
                 break;
         }
@@ -531,7 +531,69 @@ public class WifiDrop : NoteLongDrop,IFlasher
 
         }
     }
+
+    private static void RemoveJudgeAreas(List<JudgeArea> queue, int count)
+    {
+        count = Math.Min(count, queue.Count);
+        if (count > 0)
+            queue.RemoveRange(0, count);
+    }
     public bool CanShine() => canShine;
+
+    public void RefreshAfterResume()
+    {
+        if (timeProvider.AudioTime + 0.001f < lastAudioTime)
+            ResetJudgeState();
+        RestoreVisualState();
+        lastAudioTime = timeProvider.AudioTime;
+    }
+
+    private void ResetJudgeState()
+    {
+        _judgeQueues = judgeQueueTemplate
+            .Select(queue => new List<JudgeArea>(queue))
+            .ToList();
+        judgeQueues = judgeQueueTemplate
+            .Select(queue => new List<JudgeArea>(queue))
+            .ToList();
+        foreach (var queue in _judgeQueues)
+            foreach (var area in queue)
+                area.Reset();
+        canCheck = false;
+        isChecking = false;
+        isJudged = false;
+        arriveTime = -1f;
+    }
+
+    private void RestoreVisualState()
+    {
+        var now = timeProvider.AudioTime;
+        if (now <= timeStart)
+        {
+            RestoreBars();
+        }
+        else
+        {
+            var process = Mathf.Clamp01((now - time) / LastFor);
+            var hiddenEnd = process > 0f && areaStep.Count > 0
+                ? areaStep[Mathf.Clamp((int)(process * (areaStep.Count - 1)), 0, areaStep.Count - 1)]
+                : -1;
+            for (var i = 0; i < slideBars.Count; i++)
+                if (slideBars[i] != null)
+                    slideBars[i].SetActive(i > hiddenEnd);
+        }
+        foreach (var star in star_slide)
+            if (star != null)
+                star.SetActive(now > timeStart);
+    }
+
+    private void RestoreBars()
+    {
+        foreach (var bar in slideBars)
+            if (bar != null)
+                bar.SetActive(true);
+    }
+
     void DestroySelf()
     {
         foreach (GameObject obj in slideBars)

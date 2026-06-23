@@ -2,6 +2,7 @@
 
 public class LoadJustSprite : MonoBehaviour
 {
+    private SpriteRenderer spriteRenderer;
     public int _0curv1str2wifi;
 
     public int indexOffset;
@@ -10,6 +11,7 @@ public class LoadJustSprite : MonoBehaviour
     // Start is called before the first frame update
     private void Start()
     {
+        spriteRenderer = GetComponent<SpriteRenderer>();
         //gameObject.GetComponent<SpriteRenderer>().sprite = GameObject.Find("Outline").GetComponent<CustomSkin>().Just[_0curv1str2wifi + 3];
         //setR();
     }
@@ -17,6 +19,19 @@ public class LoadJustSprite : MonoBehaviour
     // Update is called once per frame
     private void Update()
     {
+    }
+
+    private void LateUpdate()
+    {
+        if (spriteRenderer == null)
+            spriteRenderer = GetComponent<SpriteRenderer>();
+        if (spriteRenderer != null)
+        {
+            var color = spriteRenderer.color;
+            color.a = NoteEffectManager.JudgeTextAlpha;
+            spriteRenderer.color = color;
+            spriteRenderer.forceRenderingOff = NoteEffectManager.JudgeTextAlpha <= 0.001f;
+        }
     }
 
     public int setR()

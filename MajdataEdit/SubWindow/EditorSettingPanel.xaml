@@ -56,6 +56,8 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid.ColumnDefinitions>
@@ -89,31 +91,38 @@
                  Text="1000" />
 
         <Label Grid.Row="3" Grid.Column="0"
-               Content="{lex:Loc Key=Brightness}" />
-        <TextBox x:Name="ViewerCover"
+               Content="{lex:Loc Key=InnerBrightness}" />
+        <TextBox x:Name="InnerViewerCover"
                  Grid.Row="3" Grid.Column="1"
                  Height="26" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
                  Text="0.6"    
                  MouseWheel="ViewerCover_MouseWheel" />
 
         <Label Grid.Row="4" Grid.Column="0"
+               Content="{lex:Loc Key=OuterBrightness}" />
+        <TextBox x:Name="OuterViewerCover"
+                 Grid.Row="4" Grid.Column="1"
+                 Text="0.6"
+                 MouseWheel="ViewerCover_MouseWheel" />
+
+        <Label Grid.Row="5" Grid.Column="0"
                Content="{lex:Loc Key=Speed}" />
         <TextBox x:Name="ViewerSpeed"
-                 Grid.Row="4" Grid.Column="1"
+                 Grid.Row="5" Grid.Column="1"
                  Text="7.5"
                  MouseWheel="ViewerSpeed_MouseWheel" />
 
-        <Label Grid.Row="5" Grid.Column="0"
+        <Label Grid.Row="6" Grid.Column="0"
                Content="{lex:Loc Key=TouchSpeed}" />
         <TextBox x:Name="ViewerTouchSpeed"
-                 Grid.Row="5" Grid.Column="1"
+                 Grid.Row="6" Grid.Column="1"
                  Text="7.5"
                  MouseWheel="ViewerTouchSpeed_MouseWheel" />
 
-        <Label Grid.Row="6" Grid.Column="0"
+        <Label Grid.Row="7" Grid.Column="0"
                Content="{lex:Loc Key=ComboDisplay}" />
         <ComboBox x:Name="ComboDisplay"
-                  Grid.Row="6" Grid.Column="1">
+                  Grid.Row="7" Grid.Column="1">
             <ComboBoxItem Content="{lex:Loc Key=ComboDisplayNone}" />
             <ComboBoxItem Content="{lex:Loc Key=ComboDisplayCombo}" />
             <ComboBoxItem Content="{lex:Loc Key=ComboDisplayScoreClassic}" />
@@ -126,27 +135,27 @@
             <ComboBoxItem Content="{lex:Loc Key=ComboDisplayCScoreDownDedeluxe}" />
         </ComboBox>
 
-        <Label Grid.Row="7" Grid.Column="0"
+        <Label Grid.Row="8" Grid.Column="0"
        Content="{lex:Loc Key=PlayMethod}" />
         <ComboBox x:Name="PlayMethod"
-          Grid.Row="7" Grid.Column="1">
+          Grid.Row="8" Grid.Column="1">
             <ComboBoxItem Content="{lex:Loc Key=PlayMethodClassic}" />
             <ComboBoxItem Content="{lex:Loc Key=PlayMethodDJAuto}" />
             <ComboBoxItem Content="{lex:Loc Key=PlayMethodRandom}" />
             <ComboBoxItem Content="{lex:Loc Key=PlayMethodDisabled}" />
         </ComboBox>
 
-        <Label Grid.Row="8" Grid.Column="0"
+        <Label Grid.Row="9" Grid.Column="0"
             Content="{lex:Loc Key=SyntaxDisplay}" VerticalAlignment="Top" />
         <ComboBox x:Name="SyntaxCheckLevel"
-            Grid.Row="8" VerticalAlignment="Top" Grid.ColumnSpan="2" Margin="114,1,0,0" SelectedIndex="1">
+            Grid.Row="9" VerticalAlignment="Top" Grid.ColumnSpan="2" Margin="114,1,0,0" SelectedIndex="1">
             <ComboBoxItem Content="{lex:Loc Key=SyntaxCheckLevel1}" />
             <ComboBoxItem Content="{lex:Loc Key=SyntaxCheckLevel2}" />
             <ComboBoxItem Content="{lex:Loc Key=SyntaxCheckLevel3}" />
         </ComboBox>
 
 
-        <StackPanel Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" >
+        <StackPanel Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" >
             <CheckBox x:Name="SmoothSlideAnime" VerticalAlignment="Center" />
             <Label
         Content="{lex:Loc Key=EnableSmoothSlideAnime}" />
@@ -162,23 +171,28 @@
             </Label>
         </StackPanel>
         
-        <Label Grid.Row="10" Grid.Column="0"
-               Content="{lex:Loc Key=BgDisplayMode}" />
-        <ComboBox x:Name="BgDisplayMode"
-                  Grid.Row="10" Grid.Column="1">
-            <ComboBoxItem Content="{lex:Loc Key=BgDisplayMode0}" />
-            <ComboBoxItem Content="{lex:Loc Key=BgDisplayMode1}" />
-            <ComboBoxItem Content="{lex:Loc Key=BgDisplayMode2}" />
-        </ComboBox>
-
         <StackPanel Grid.Row="11" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
+            <CheckBox x:Name="ShowJudgeInfo" VerticalAlignment="Center" />
+            <Label Content="{lex:Loc Key=ShowJudgeInfo}" />
+            <CheckBox x:Name="ShowComboInfo" VerticalAlignment="Center" Margin="12,0,0,0" />
+            <Label Content="{lex:Loc Key=ShowComboInfo}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="12" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
+            <CheckBox x:Name="ShowJudgeLine" VerticalAlignment="Center" />
+            <Label Content="{lex:Loc Key=ShowJudgeLine}" />
+            <CheckBox x:Name="ShowJudgeText" VerticalAlignment="Center" Margin="12,0,0,0" />
+            <Label Content="{lex:Loc Key=ShowJudgeText}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="13" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
             <CheckBox x:Name="AutoUpdate" VerticalAlignment="Center" />
             <Label
             Content="{lex:Loc Key=AutoCheckUpdate}" />
         </StackPanel>
 
         <StackPanel Orientation="Horizontal"
-                    Grid.Row="12" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Center">
+                    Grid.Row="14" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Center">
             <Button x:Name="Save_Button" Content="{lex:Loc Key=Save}"
                     Width="70" Height="28" Margin="0,5,10,5"
                     Foreground="{DynamicResource ButtonForeground}"

@@ -47,7 +47,8 @@ public partial class EditorSettingPanel : Window
 
         RenderModeComboBox.SelectedIndex = window.editorSetting.RenderMode;
 
-        ViewerCover.Text = window.editorSetting.backgroundCover.ToString();
+        InnerViewerCover.Text = window.editorSetting.InnerBackgroundCover.ToString();
+        OuterViewerCover.Text = window.editorSetting.OuterBackgroundCover.ToString();
         ViewerSpeed.Text = window.editorSetting.playSpeed.ToString("F1"); // 转化为形如"7.0", "9.5"这样的速度
         ViewerTouchSpeed.Text = window.editorSetting.touchSpeed.ToString("F1");
         ComboDisplay.SelectedIndex = Array.IndexOf(
@@ -67,7 +68,10 @@ public partial class EditorSettingPanel : Window
         ChartRefreshDelay.Text = window.editorSetting.ChartRefreshDelay.ToString();
         AutoUpdate.IsChecked = window.editorSetting.AutoCheckUpdate;
         SmoothSlideAnime.IsChecked = window.editorSetting.SmoothSlideAnime;
-        BgDisplayMode.SelectedIndex = window.editorSetting.BgDisplayMode;
+        ShowJudgeInfo.IsChecked = window.editorSetting.ShowJudgeInfo;
+        ShowComboInfo.IsChecked = window.editorSetting.ShowComboInfo;
+        ShowJudgeLine.IsChecked = window.editorSetting.ShowJudgeLine;
+        ShowJudgeText.IsChecked = window.editorSetting.ShowJudgeText;
         SyntaxCheckLevel.SelectedIndex = window.editorSetting.SyntaxCheckLevel;
     }
 
@@ -85,9 +89,10 @@ public partial class EditorSettingPanel : Window
 
     private void ViewerCover_MouseWheel(object sender, MouseWheelEventArgs e)
     {
-        var offset = float.Parse(ViewerCover.Text);
+        var textBox = (TextBox)sender;
+        var offset = float.Parse(textBox.Text);
         offset += e.Delta > 0 ? 0.1f : -0.1f;
-        ViewerCover.Text = offset.ToString();
+        textBox.Text = Math.Clamp(offset, 0f, 1f).ToString("0.0");
     }
 
     private void ViewerSpeed_MouseWheel(object sender, MouseWheelEventArgs e)
@@ -109,13 +114,18 @@ public partial class EditorSettingPanel : Window
         var window = (MainWindow)Owner;
         window.editorSetting!.Language = langList[LanguageComboBox.SelectedIndex];
         window.editorSetting!.RenderMode = RenderModeComboBox.SelectedIndex;
-        window.editorSetting!.backgroundCover = float.Parse(ViewerCover.Text);
+        window.editorSetting!.InnerBackgroundCover = Math.Clamp(float.Parse(InnerViewerCover.Text), 0f, 1f);
+        window.editorSetting!.OuterBackgroundCover = Math.Clamp(float.Parse(OuterViewerCover.Text), 0f, 1f);
+        window.editorSetting!.backgroundCover = window.editorSetting.InnerBackgroundCover;
         window.editorSetting!.playSpeed = float.Parse(ViewerSpeed.Text);
         window.editorSetting!.touchSpeed = float.Parse(ViewerTouchSpeed.Text);
         window.editorSetting!.ChartRefreshDelay = int.Parse(ChartRefreshDelay.Text);
         window.editorSetting!.AutoCheckUpdate = (bool) AutoUpdate.IsChecked!;
         window.editorSetting!.SmoothSlideAnime = (bool) SmoothSlideAnime.IsChecked!;
-        window.editorSetting!.BgDisplayMode = BgDisplayMode.SelectedIndex;
+        window.editorSetting!.ShowJudgeInfo = ShowJudgeInfo.IsChecked == true;
+        window.editorSetting!.ShowComboInfo = ShowComboInfo.IsChecked == true;
+        window.editorSetting!.ShowJudgeLine = ShowJudgeLine.IsChecked == true;
+        window.editorSetting!.ShowJudgeText = ShowJudgeText.IsChecked == true;
         window.editorSetting!.editorPlayMethod = (EditorPlayMethod)PlayMethod.SelectedIndex;
         window.editorSetting!.SyntaxCheckLevel = SyntaxCheckLevel.SelectedIndex;
         // window.editorSetting.isComboEnabled = (bool) ComboDisplay.IsChecked!;
@@ -124,10 +134,10 @@ public partial class EditorSettingPanel : Window
         ).GetValue(ComboDisplay.SelectedIndex)!;
         window.SaveEditorSetting();
 
-        window.ViewerCover.Content = window.editorSetting.backgroundCover.ToString();
         window.ViewerSpeed.Content = window.editorSetting.playSpeed.ToString("F1"); // 转化为形如"7.0", "9.5"这样的速度
         window.ViewerTouchSpeed.Content = window.editorSetting.touchSpeed.ToString("F1");
         window.chartChangeTimer.Interval = window.editorSetting.ChartRefreshDelay;
+        window.SendDisplaySettings();
 
 
         saveFlag = true;

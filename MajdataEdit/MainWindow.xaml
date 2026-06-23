@@ -3,6 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:avalonEdit="http://icsharpcode.net/sharpdevelop/avalonedit"
     xmlns:lex="http://wpflocalizeextension.codeplex.com"
     lex:LocalizeDictionary.DesignCulture="zh-CN"
     lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit"
@@ -70,6 +71,8 @@
                 <Separator />
                 <MenuItem x:Name="Menu_ExportRender" Header="{lex:Loc ExportVideo}" Click="Menu_ExportRender_Click"
                           IsEnabled="False" />
+                <MenuItem x:Name="Menu_ExportRender60" Header="{lex:Loc ExportVideo60}" Click="Menu_ExportRender60_Click"
+                          IsEnabled="False" />
 
             </MenuItem>
             <MenuItem x:Name="MenuEdit" Header="{lex:Loc Edit}" IsEnabled="False"
@@ -99,6 +102,10 @@
                           IsEnabled="False" />
                 <MenuItem x:Name="SyntaxCheckButton" Header="{lex:Loc SyntaxDisplay}" Click="SyntaxCheckButton_Click"
                           IsEnabled="False" />
+                <Separator />
+                <MenuItem Header="{lex:Loc FormatBrush}" Click="FormatBrushAuto_MenuItem_Click" />
+                <MenuItem Header="{lex:Loc FormatBrush16}" Click="FormatBrush16_MenuItem_Click" />
+                <MenuItem Header="{lex:Loc FormatBrush32}" Click="FormatBrush32_MenuItem_Click" />
             </MenuItem>
             <MenuItem Header="Majnet" Click="MenuItem_Majnet_Click"
                       Foreground="{DynamicResource ButtonForeground}" Template="{DynamicResource DarkMenuItem}" />
@@ -123,16 +130,18 @@
                   Foreground="{DynamicResource ButtonForeground}" HorizontalContentAlignment="Right"
                   Click="FollowPlayCheck_Click" Background="{DynamicResource ButtonsBackground}"
                   Template="{DynamicResource DarkCheck}" Grid.Row="1" Grid.Column="1" />
-        <RichTextBox x:Name="FumenContent"
-                     Padding="0,5" FontFamily="Consolas"
+        <avalonEdit:TextEditor x:Name="FumenContent"
+                     Padding="2,5" FontFamily="Cascadia Mono"
                      Foreground="#FFE8E8E8" TextChanged="FumenContent_TextChanged"
                      Margin="102,29,10,90" HorizontalScrollBarVisibility="Auto"
                      VerticalScrollBarVisibility="Visible"
-                     SelectionChanged="FumenContent_SelectionChanged" Grid.ColumnSpan="2"
-                     InputMethod.IsInputMethodEnabled="False"
-                     AutoWordSelection="False"
+                     Grid.ColumnSpan="2"
+                     InputMethod.IsInputMethodEnabled="True"
+                     ShowLineNumbers="True"
+                     WordWrap="False"
+                     Background="#B3171717"
                      PreviewKeyDown="FumenContent_OnPreviewKeyDown" Grid.Row="1" Grid.Column="1">
-            <RichTextBox.Resources>
+            <avalonEdit:TextEditor.Resources>
                 <RoutedUICommand x:Key="PlayAndPause" Text="PlayAndPause" />
                 <RoutedUICommand x:Key="SaveFile" Text="SaveFile" />
                 <RoutedUICommand x:Key="StopPlaying" Text="StopPlaying" />
@@ -145,12 +154,9 @@
                 <RoutedUICommand x:Key="Mirror180" Text="Mirror180" />
                 <RoutedUICommand x:Key="Mirror45" Text="Mirror45" />
                 <RoutedUICommand x:Key="MirrorCcw45" Text="MirrorCcw45" />
-            </RichTextBox.Resources>
-            <RichTextBox.Background>
-                <SolidColorBrush Color="#FF171717" Opacity="0.3" />
-            </RichTextBox.Background>
+            </avalonEdit:TextEditor.Resources>
             <!--Bindings are dynamicly added via ReadEditorSetting()-->
-            <RichTextBox.CommandBindings>
+            <avalonEdit:TextEditor.CommandBindings>
                 <CommandBinding Command="{StaticResource PlayAndPause}" CanExecute="PlayAndPause_CanExecute" />
                 <CommandBinding Command="{StaticResource SaveFile}" CanExecute="SaveFile_Command_CanExecute" />
                 <CommandBinding Command="{StaticResource StopPlaying}" CanExecute="StopPlaying_CanExecute" />
@@ -166,9 +172,8 @@
                 <CommandBinding Command="{StaticResource Mirror45}" CanExecute="Mirror45Command_CanExecute" />
                 <CommandBinding Command="{StaticResource MirrorCcw45}" CanExecute="MirrorCcw45Command_CanExecute" />
 
-            </RichTextBox.CommandBindings>
-            <FlowDocument />
-        </RichTextBox>
+            </avalonEdit:TextEditor.CommandBindings>
+        </avalonEdit:TextEditor>
         <Label x:Name="TimeLabel" Content="0:00" HorizontalAlignment="Left" Height="64" Margin="0,16,0,0"
                VerticalAlignment="Top" Width="105" Foreground="White" FontFamily="Bahnschrift Light" FontSize="50"
                VerticalContentAlignment="Center" HorizontalContentAlignment="Center" Grid.Row="1" Grid.ColumnSpan="2" />
@@ -234,13 +239,6 @@
         <Label x:Name="ViewerSpeed" MouseUp="SettingLabel_MouseUp" HorizontalAlignment="Left" Height="24"
                Margin="62,0,0,226" Content="7.0" VerticalAlignment="Bottom" Width="35"
                VerticalContentAlignment="Center" Foreground="{DynamicResource ButtonForeground}"
-               HorizontalContentAlignment="Center" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1" />
-        <Label Content="{lex:Loc Brightness}" MouseUp="SettingLabel_MouseUp" HorizontalAlignment="Left" Height="24"
-               Margin="2,0,0,250" VerticalAlignment="Bottom" Width="60" Foreground="White"
-               RenderTransformOrigin="9.667,-2.284" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1" />
-        <Label x:Name="ViewerCover" MouseUp="SettingLabel_MouseUp" Height="24" Margin="62,0,0,250" Content="0.6"
-               VerticalAlignment="Bottom" VerticalContentAlignment="Center"
-               Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Left" Width="35"
                HorizontalContentAlignment="Center" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1" />
         <Grid x:Name="PlbSpdAdjGrid" HorizontalAlignment="Left" Height="105" Margin="102,289,0,0"
               VerticalAlignment="Top" Width="148" Visibility="Hidden" Grid.Row="1" Grid.Column="1">

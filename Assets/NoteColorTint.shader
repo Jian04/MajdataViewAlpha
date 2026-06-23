@@ -10,8 +10,10 @@ Shader "Sprites/NoteColorTint"
         _Color ("Vertex Tint", Color) = (1,1,1,1)
         _NoteColor ("Note Color Override (a=strength)", Color) = (1,1,1,0)
         _Brightness ("Brightness (for break shine)", Range(0,2)) = 1.0
-        _SrcHue ("Src Hue for rotation (-1=replacement)", Range(-1,1)) = -1.0
+        _TintCoverage ("Tint coverage (0=keep material sat, 1=flat target sat)", Range(0,1)) = 0.0
+        _SrcHue ("Break detail mode (-1=off, 0=on)", Range(-1,0)) = -1.0
         _NoteAlpha ("Note Opacity", Range(0,1)) = 1.0
+        _Grayscale ("Grayscale", Range(0,1)) = 0
         [MaterialToggle] PixelSnap ("Pixel snap", Float) = 0
     }
 
@@ -53,8 +55,10 @@ Shader "Sprites/NoteColorTint"
             fixed4 _Color;
             fixed4 _NoteColor;
             float _Brightness;
+            float _TintCoverage;
             float _SrcHue;
             float _NoteAlpha;
+            float _Grayscale;
 
             // ---- HSV helpers ----
             float3 rgb2hsv(float3 c) {
@@ -100,7 +104,7 @@ Shader "Sprites/NoteColorTint"
                 }
 
                 float strength = _NoteColor.a;
-                if (strength < 0.001) {
+                if (strength < 0.001 && _Grayscale < 0.001) {
                     // Pass-through: premultiply + apply opacity
                     c.rgb *= a * _NoteAlpha * _Brightness;
                     c.a   *= _NoteAlpha;
@@ -114,26 +118,44 @@ Shader "Sprites/NoteColorTint"
                 float3 origHSV = rgb2hsv(rgb);
                 float3 tgtHSV  = rgb2hsv(_NoteColor.rgb);
 
-                // Hue tinting:
-                //   Colored pixels (S > 0.05): hue modified, S and V unchanged.
-                //     → clean, vivid color change, all shading/highlight detail preserved.
-                //   Grey/white pixels (S ≈ 0): untouched — 绝赞 keeps its original texture.
-                //   Dark pixels (V ≈ 0): untouched — black outlines preserved.
+                // Two tinting paths selected by target saturation:
                 //
-                //   _SrcHue < 0  → pure hue replacement: all colored pixels → targetH.
-                //                   Best for single-color notes (tap, hold, slide…).
-                //   _SrcHue >= 0 → hue rotation: shift by (targetH − srcH).
-                //                   Preserves the multi-hue gradient of break notes
-                //                   (red→orange→yellow shifts as a coherent palette).
+                // CHROMATIC path (tgtS > 0.15): hue replacement.
+                //   Colored pixels (satGate): hue → targetH, S and V unchanged.
+                //   White highlights (S≈0) and black outlines (V≈0): untouched.
+                //
+                // ACHROMATIC path (tgtS < 0.05): brightness scaling.
+                //   Uses tgtV as a multiplier: V=0→black (×0), V=0.5→no change (×1), V=1→brighten (×2).
+                //   Applies via darkGuard so very-dark outline pixels stay dark.
+                //   Enables black (#000000), white (#FFFFFF), and gray notes.
+                //
                 float satGate   = smoothstep(0.05, 0.25, origHSV.y);
                 float darkGuard = smoothstep(0.04, 0.16, origHSV.z);
+                float isGray    = 1.0 - smoothstep(0.05, 0.20, tgtHSV.y); // 1 = achromatic target
 
-                float useRotate = step(0.0, _SrcHue);
-                float hueShift  = tgtHSV.x - max(0.0, _SrcHue);
-                float newH      = lerp(tgtHSV.x, frac(origHSV.x + hueShift), useRotate);
-                float3 hueTinted = hsv2rgb(float3(newH, origHSV.y, origHSV.z));
-                float  blendStr  = darkGuard * strength * satGate;
-                rgb = lerp(rgb, hueTinted, blendStr);
+                // Break textures encode much of their pattern in red/yellow hue
+                // differences. Convert those differences into value contrast so the
+                // pattern remains visible without leaking the original colors.
+                float preserveBreakDetail = step(0.0, _SrcHue);
+                float sourceLuma = dot(rgb, float3(0.299, 0.587, 0.114));
+                float detailValue = origHSV.z * lerp(0.55, 1.05, saturate(sourceLuma));
+                float tintedValue = lerp(origHSV.z, saturate(detailValue), preserveBreakDetail);
+                // Saturation: keep the source's saturation VARIATION (material/texture
+                // detail) instead of flattening every pixel to the target saturation.
+                // _TintCoverage lerps source->target: 0 = pure source sat (old hue mode,
+                // best material), 1 = flat target sat (washes material). Default 0.6.
+                float tintedSat = saturate(lerp(origHSV.y, tgtHSV.y, _TintCoverage));
+                float3 hueTinted = hsv2rgb(float3(tgtHSV.x, tintedSat, tintedValue));
+                float3 chromaOut = lerp(rgb, hueTinted, darkGuard * strength * satGate);
+
+                // Achromatic path: scale brightness (×2*tgtV, clamped)
+                // V=0→×0 (black), V=0.5→×1 (unchanged), V=1→×2 (brighten)
+                float3 brightened = clamp(rgb * (tgtHSV.z * 2.0), 0.0, 1.0);
+                float3 grayOut    = lerp(rgb, brightened, darkGuard * strength);
+
+                rgb = lerp(chromaOut, grayOut, isGray);
+                float luma = dot(rgb, float3(0.299, 0.587, 0.114));
+                rgb = lerp(rgb, luma.xxx, saturate(_Grayscale));
 
                 // Premultiply + opacity before Blend One OneMinusSrcAlpha output
                 c.rgb = rgb * a * _NoteAlpha * _Brightness;

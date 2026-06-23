@@ -9,6 +9,7 @@ namespace Assets.Scripts
         public bool isFirework;
         // ALPHA: set by JsonDataLoader to override fill color
         public Material colorOverrideMaterial;
+        public float noteScale = 1f;
 
         public GameObject tapEffect;
         public GameObject judgeEffect;

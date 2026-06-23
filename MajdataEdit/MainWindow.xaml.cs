@@ -5,12 +5,12 @@ using System.Media;
 using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using DiscordRPC.Logging;
 using MajdataEdit.AutoSaveModule;
+using MajdataEdit.Editor;
 using Microsoft.Win32;
 using Un4seen.Bass;
 using MajdataEdit.SyntaxModule;
@@ -26,6 +26,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        fumenEditor = new FumenEditorAdapter(FumenContent);
+        FumenContent.TextArea.TextView.LineTransformers.Add(new SimaiColorizer());
+        FumenContent.TextArea.Caret.PositionChanged += FumenContent_SelectionChanged;
+        FumenContent.Options.AllowToggleOverstrikeMode = false;
         if (Environment.GetCommandLineArgs().Contains("--ForceSoftwareRender"))
         {
             MessageBox.Show("正在以软件渲染模式运行\nソフトウェア・レンダリング・モードで動作\nBooting as software rendering mode.");
@@ -225,34 +229,34 @@ public partial class MainWindow : Window
         TogglePlayAndPause(PlayMethod.Record);
     }
 
+    private void Menu_ExportRender60_Click(object sender, RoutedEventArgs e)
+    {
+        TogglePlayAndPause(PlayMethod.Record60);
+    }
+
     private void MirrorLeftRight_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        var result = Mirror.NoteMirrorHandle(FumenContent.Selection.Text, Mirror.HandleType.LRMirror);
-        FumenContent.Selection.Text = result;
+        fumenEditor.ReplaceSelection(Mirror.NoteMirrorHandle(fumenEditor.SelectedText, Mirror.HandleType.LRMirror));
     }
 
     private void MirrorUpDown_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        var result = Mirror.NoteMirrorHandle(FumenContent.Selection.Text, Mirror.HandleType.UDMirror);
-        FumenContent.Selection.Text = result;
+        fumenEditor.ReplaceSelection(Mirror.NoteMirrorHandle(fumenEditor.SelectedText, Mirror.HandleType.UDMirror));
     }
 
     private void Mirror180_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        var result = Mirror.NoteMirrorHandle(FumenContent.Selection.Text, Mirror.HandleType.HalfRotation);
-        FumenContent.Selection.Text = result;
+        fumenEditor.ReplaceSelection(Mirror.NoteMirrorHandle(fumenEditor.SelectedText, Mirror.HandleType.HalfRotation));
     }
 
     private void Mirror45_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        var result = Mirror.NoteMirrorHandle(FumenContent.Selection.Text, Mirror.HandleType.Rotation45);
-        FumenContent.Selection.Text = result;
+        fumenEditor.ReplaceSelection(Mirror.NoteMirrorHandle(fumenEditor.SelectedText, Mirror.HandleType.Rotation45));
     }
 
     private void MirrorCcw45_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        var result = Mirror.NoteMirrorHandle(FumenContent.Selection.Text, Mirror.HandleType.CcwRotation45);
-        FumenContent.Selection.Text = result;
+        fumenEditor.ReplaceSelection(Mirror.NoteMirrorHandle(fumenEditor.SelectedText, Mirror.HandleType.CcwRotation45));
     }
 
     private void BPMtap_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -260,6 +264,26 @@ public partial class MainWindow : Window
         var tap = new BPMtap();
         tap.Owner = this;
         tap.Show();
+    }
+
+    private void FormatBrushAuto_MenuItem_Click(object? sender, RoutedEventArgs e)
+        => ApplyBeatFormatBrush(null);
+
+    private void FormatBrush16_MenuItem_Click(object? sender, RoutedEventArgs e)
+        => ApplyBeatFormatBrush(16);
+
+    private void FormatBrush32_MenuItem_Click(object? sender, RoutedEventArgs e)
+        => ApplyBeatFormatBrush(32);
+
+    private void ApplyBeatFormatBrush(int? targetBeat)
+    {
+        if (!fumenEditor.HasSelection)
+            return;
+
+        var original = fumenEditor.SelectedText;
+        var transformed = BeatFormatBrush.Transform(original, targetBeat);
+        if (!string.Equals(original, transformed, StringComparison.Ordinal))
+            fumenEditor.ReplaceSelection(transformed);
     }
 
     private void MenuItem_InfomationEdit_Click(object? sender, RoutedEventArgs e)
@@ -541,15 +565,16 @@ public partial class MainWindow : Window
         esp.Owner = this;
         esp.ShowDialog();
     }
+
     #endregion
 
     #region RichTextbox events
 
-    private void FumenContent_SelectionChanged(object sender, RoutedEventArgs e)
+    private void FumenContent_SelectionChanged(object? sender, EventArgs e)
     {
-        NoteNowText.Content = "" + (
-            new TextRange(FumenContent.Document.ContentStart, FumenContent.CaretPosition).Text.Replace("\r", "")
-                .Count(o => o == '\n') + 1) + " 行";
+        NoteNowText.Content = $"{fumenEditor.CurrentLine} 行";
+        if (chartParsePending)
+            return;
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING && (bool)FollowPlayCheck.IsChecked!)
             return;
         //TODO:这个应该换成用fumen text position来在已经serialized的timinglist里面找。。 然后直接去掉这个double的返回和position的入参。。。
@@ -575,13 +600,16 @@ public partial class MainWindow : Window
         if (!isPlaying) DrawWave();
     }
 
-    private void FumenContent_TextChanged(object sender, TextChangedEventArgs e)
+    private void FumenContent_TextChanged(object? sender, EventArgs e)
     {
         if (GetRawFumenText() == "" || isLoading) return;
         SetSavedState(false);
+        chartParsePending = true;
         if (chartChangeTimer.Interval < 33)
         {
-            SimaiProcess.Serialize(GetRawFumenText(), GetRawFumenPosition());
+            ghostCusorPositionTime = (float)SimaiProcess.Serialize(
+                GetRawFumenText(), GetRawFumenPosition());
+            chartParsePending = false;
             DrawWave();
         }
         else
@@ -590,6 +618,7 @@ public partial class MainWindow : Window
             chartChangeTimer.Start();
         }
     }
+
 
     private void FumenContent_OnPreviewKeyDown(object sender, KeyEventArgs e)
     {

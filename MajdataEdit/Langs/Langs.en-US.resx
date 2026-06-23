@@ -132,6 +132,24 @@
   <data name="Brightness" xml:space="preserve">
     <value>Bright</value>
   </data>
+  <data name="InnerBrightness" xml:space="preserve">
+    <value>Inner dimming</value>
+  </data>
+  <data name="OuterBrightness" xml:space="preserve">
+    <value>Outer dimming</value>
+  </data>
+  <data name="ShowJudgeInfo" xml:space="preserve">
+    <value>Show left judgement</value>
+  </data>
+  <data name="ShowComboInfo" xml:space="preserve">
+    <value>Show right combo</value>
+  </data>
+  <data name="ShowJudgeLine" xml:space="preserve">
+    <value>Show judge line during playback</value>
+  </data>
+  <data name="ShowJudgeText" xml:space="preserve">
+    <value>Show judgement text</value>
+  </data>
   <data name="Difficulty" xml:space="preserve">
     <value>Level</value>
   </data>
@@ -407,6 +425,9 @@ Click OK to start render.</value>
   <data name="ExportVideo" xml:space="preserve">
     <value>Export Video</value>
   </data>
+  <data name="ExportVideo60" xml:space="preserve">
+    <value>Export Video (60 FPS)</value>
+  </data>
   <data name="ComboDisplayAccClassic" xml:space="preserve">
     <value>Achievement (+) (Classic)</value>
   </data>
@@ -504,5 +525,14 @@ Click OK to start render.</value>
   </data>
   <data name="SyntaxWarning" xml:space="preserve">
     <value>[Warning] The chart should end with "E" : "{0}"({1}L,{2}C)</value>
+  </data>
+  <data name="FormatBrush" xml:space="preserve">
+    <value>Beat Brush (Highest)</value>
+  </data>
+  <data name="FormatBrush16" xml:space="preserve">
+    <value>Beat Brush (1/16)</value>
+  </data>
+  <data name="FormatBrush32" xml:space="preserve">
+    <value>Beat Brush (1/32)</value>
   </data>
 </root>

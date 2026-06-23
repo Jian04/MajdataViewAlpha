@@ -32,6 +32,9 @@ internal static class SimaiProcess
     public static List<SizeChange> sizeTable = new();
     // ALPHA: note alpha change events from <ALPHA*x> tokens
     public static List<AlphaChange> alphaTable = new();
+    public static List<DisplayChange> displayTable = new();
+    public static List<SubtitleChange> subtitleTable = new();
+    public static List<EffectChange> effectTable = new();
 
     /// <summary>
     ///     Reset all the data in the static class.
@@ -50,6 +53,9 @@ internal static class SimaiProcess
         colorTable = new List<ColorChange>();
         sizeTable = new List<SizeChange>();
         alphaTable = new List<AlphaChange>();
+        displayTable = new List<DisplayChange>();
+        subtitleTable = new List<SubtitleChange>();
+        effectTable = new List<EffectChange>();
     }
 
     /// <summary>
@@ -150,6 +156,9 @@ internal static class SimaiProcess
         var colorPoints  = new List<ColorChange>(); // ALPHA: note color
         var sizePoints   = new List<SizeChange>();  // ALPHA: note size
         var alphaPoints  = new List<AlphaChange>(); // ALPHA: note alpha
+        var displayPoints = new List<DisplayChange>(); // ALPHA: display transitions
+        var subtitlePoints = new List<SubtitleChange>(); // ALPHA: timed subtitles
+        var effectPoints = new List<EffectChange>(); // ALPHA: screen effects
         try
         {
             float bpm = 0;
@@ -229,6 +238,66 @@ internal static class SimaiProcess
                     continue;
                 }
 
+                // ALPHA display controls use the same <> pass as COLOR/SV/SIZE/ALPHA.
+                if (text[i] == '<' && !haveNote)
+                {
+                    var tokenEnd = text.IndexOf('>', i + 1);
+                    if (tokenEnd >= 0)
+                    {
+                        var token = text.Substring(i + 1, tokenEnd - i - 1);
+                        if (token.StartsWith("SV*", StringComparison.OrdinalIgnoreCase) &&
+                            float.TryParse(token.Substring(3).Trim(),
+                                System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                out var svMultiplier))
+                        {
+                            svPoints.Add(new SvPoint { time = time, multiplier = svMultiplier });
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                        if (token.StartsWith("HS*", StringComparison.OrdinalIgnoreCase) &&
+                            float.TryParse(token.Substring(3).Trim(),
+                                System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                out var hSpeed))
+                        {
+                            curHSpeed = hSpeed;
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                        if (TryParseScreenEffect(token, time, out var effectChange))
+                        {
+                            if (!string.IsNullOrEmpty(effectChange.effect))
+                                effectPoints.Add(effectChange);
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                        if (TryParseSubtitleChange(token, time, out var subtitleChange))
+                        {
+                            subtitlePoints.Add(subtitleChange);
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                        if (TryParseDisplayChange(token, time, out var displayChange))
+                        {
+                            if (!string.IsNullOrEmpty(displayChange.property))
+                                displayPoints.Add(displayChange);
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                    }
+                }
+
                 if (text[i] == 'H')
                     //Get HS
                 {
@@ -292,29 +361,42 @@ internal static class SimaiProcess
                         i++;
                         Xcount++;
                     }
-                    // nc_s is either a bare hex "FF8800" or "tap=FF8800,each=00FF88"
-                    if (!nc_s.Contains('='))
+                    // nc_s is either "NULL", a bare hex "FF8800", or "tap=FF8800,each=00FF88"
+                    var nc_trimmed = nc_s.Trim();
+                    string[] allNoteTypes = { "tap", "each", "hold", "slide", "star", "break", "touch", "touchhold" };
+                    if (string.Equals(nc_trimmed, "NULL", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Reset all note types to default color
+                        foreach (var t in allNoteTypes)
+                            colorPoints.Add(new ColorChange { time = time, noteType = t, color = "NULL" });
+                    }
+                    else if (!nc_trimmed.Contains('='))
                     {
                         // bare color — apply to all note types
-                        var color = nc_s.Trim().TrimStart('#');
+                        var color = nc_trimmed.TrimStart('#');
                         if (color.Length == 6 || color.Length == 8)
                         {
-                            string[] allTypes = { "tap", "each", "hold", "slide", "star", "break", "touch", "touchhold" };
-                            foreach (var t in allTypes)
+                            foreach (var t in allNoteTypes)
                                 colorPoints.Add(new ColorChange { time = time, noteType = t, color = color });
                         }
                     }
                     else
                     {
-                        foreach (var pair in nc_s.Split(','))
+                        foreach (var pair in nc_trimmed.Split(','))
                         {
                             var kv = pair.Trim().Split('=');
                             if (kv.Length == 2)
                             {
                                 var noteType = kv[0].Trim();
-                                var color    = kv[1].Trim().TrimStart('#');
-                                if (color.Length == 6 || color.Length == 8)
-                                    colorPoints.Add(new ColorChange { time = time, noteType = noteType, color = color });
+                                var colorStr = kv[1].Trim();
+                                if (string.Equals(colorStr, "NULL", StringComparison.OrdinalIgnoreCase))
+                                    colorPoints.Add(new ColorChange { time = time, noteType = noteType, color = "NULL" });
+                                else
+                                {
+                                    var color = colorStr.TrimStart('#');
+                                    if (color.Length == 6 || color.Length == 8)
+                                        colorPoints.Add(new ColorChange { time = time, noteType = noteType, color = color });
+                                }
                             }
                         }
                     }
@@ -360,11 +442,24 @@ internal static class SimaiProcess
                         i++;
                         Xcount++;
                     }
-                    if (float.TryParse(na_s, System.Globalization.NumberStyles.Float,
+                    var na_trimmed = na_s.Trim();
+                    if (na_trimmed.Contains('='))
+                    {
+                        // per-type: <ALPHA*tap=0.5,hold=0.8>
+                        foreach (var pair in na_trimmed.Split(','))
+                        {
+                            var kv = pair.Trim().Split('=');
+                            if (kv.Length == 2 && float.TryParse(kv[1].Trim(),
+                                    System.Globalization.NumberStyles.Float,
+                                    System.Globalization.CultureInfo.InvariantCulture, out var ptAlpha))
+                                alphaPoints.Add(new AlphaChange { time = time, noteType = kv[0].Trim(), alpha = Math.Clamp(ptAlpha, 0f, 1f) });
+                        }
+                    }
+                    else if (float.TryParse(na_trimmed, System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture, out var naAlpha))
                     {
-                        naAlpha = Math.Clamp(naAlpha, 0f, 1f);
-                        alphaPoints.Add(new AlphaChange { time = time, alpha = naAlpha });
+                        // global: <ALPHA*0.5>
+                        alphaPoints.Add(new AlphaChange { time = time, noteType = null, alpha = Math.Clamp(naAlpha, 0f, 1f) });
                     }
                     continue;
                 }
@@ -413,6 +508,9 @@ internal static class SimaiProcess
             colorTable = colorPoints; // ALPHA: note color
             sizeTable  = sizePoints;  // ALPHA: note size
             alphaTable = alphaPoints; // ALPHA: note alpha
+            displayTable = displayPoints; // ALPHA: display transitions
+            subtitleTable = subtitlePoints; // ALPHA: timed subtitles
+            effectTable = effectPoints; // ALPHA: screen effects
             return requestedTime;
         }
         catch (Exception e)
@@ -426,6 +524,148 @@ internal static class SimaiProcess
     {
         notelist.Sort((x, y) => x.time.CompareTo(y.time));
         for (var i = 0; i < notelist.Count; i++) notelist[i].havePlayed = false;
+    }
+
+    private static bool TryParseDisplayChange(string token, double time, out DisplayChange change)
+    {
+        change = new DisplayChange();
+        var separator = token.IndexOf('*');
+        if (separator <= 0)
+            return false;
+
+        var canonicalProperty = token.Substring(0, separator).Trim().ToUpperInvariant() switch
+        {
+            "SHOWJUDGELINE" => "ShowJudgeLine",
+            "SHOWJUDGEINFO" => "ShowJudgeInfo",
+            "SHOWCOMBOINFO" => "ShowComboInfo",
+            "OUTERBRIGHTNESS" => "OuterBrightness",
+            "INNERBRIGHTNESS" => "InnerBrightness",
+            "SHOWJUDGETEXT" => "ShowJudgeText",
+            _ => null
+        };
+        if (canonicalProperty == null)
+            return false;
+
+        var body = token.Substring(separator + 1).Trim();
+        if (body.Length < 5 || body[0] != '(' || body[^1] != ')')
+            return true;
+
+        var values = body.Substring(1, body.Length - 2).Split(',');
+        if (values.Length != 2 ||
+            !float.TryParse(values[1].Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var duration))
+            return true;
+
+        float target;
+        if (canonicalProperty.StartsWith("Show", StringComparison.Ordinal))
+        {
+            if (!bool.TryParse(values[0].Trim(), out var enabled))
+                return true;
+            target = enabled ? 1f : 0f;
+        }
+        else if (!float.TryParse(values[0].Trim(), System.Globalization.NumberStyles.Float,
+                     System.Globalization.CultureInfo.InvariantCulture, out target))
+        {
+            return true;
+        }
+
+        change = new DisplayChange
+        {
+            time = time,
+            property = canonicalProperty,
+            target = Math.Clamp(target, 0f, 1f),
+            duration = Math.Max(0f, duration)
+        };
+        return true;
+    }
+
+    private static bool TryParseSubtitleChange(string token, double time, out SubtitleChange change)
+    {
+        change = new SubtitleChange();
+        if (!token.StartsWith("TEXT*", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var body = token.Substring(5).Trim();
+        var duration = -1f;
+        var content = body;
+
+        if (body.Length >= 3 && body[0] == '(' && body[^1] == ')')
+        {
+            var inner = body.Substring(1, body.Length - 2);
+            var separator = inner.LastIndexOf(',');
+            if (separator >= 0 &&
+                float.TryParse(inner.Substring(separator + 1).Trim(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var parsedDuration))
+            {
+                content = inner.Substring(0, separator).Trim();
+                duration = Math.Max(0f, parsedDuration);
+            }
+            else
+            {
+                content = inner;
+            }
+        }
+
+        change = new SubtitleChange
+        {
+            time = time,
+            text = content,
+            duration = duration
+        };
+        return true;
+    }
+
+    private static bool TryParseScreenEffect(string token, double time, out EffectChange change)
+    {
+        change = new EffectChange();
+        var separator = token.IndexOf('*');
+        if (separator <= 0)
+            return false;
+
+        var effect = token.Substring(0, separator).Trim().ToUpperInvariant() switch
+        {
+            "GAUSSIAN" => "Gaussian",
+            "NEON" => "Neon",
+            "TRAIL" => "Trail",
+            "FADE" => "Flash",
+            "BRIGHTNESS" => "Brightness",
+            "SATURATION" => "Saturation",
+            "CONTRAST" => "Contrast",
+            "RAINBOW" => "Rainbow",
+            "FLASH" => "Flash",
+            "VIGNETTE" => "Vignette",
+            "ZOOM" => "Zoom",
+            "GLITCH" => "Glitch",
+            "TVNOISE" => "TVNoise",
+            _ => null
+        };
+        if (effect == null)
+            return false;
+
+        var body = token.Substring(separator + 1).Trim();
+        if (body.Length < 5 || body[0] != '(' || body[^1] != ')')
+            return true;
+
+        var values = body.Substring(1, body.Length - 2).Split(',');
+        if (values.Length != 2 ||
+            !float.TryParse(values[0].Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var duration) ||
+            !float.TryParse(values[1].Trim(), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var intensity))
+            return true;
+
+        change = new EffectChange
+        {
+            time = time,
+            effect = effect,
+            duration = Math.Max(0f, duration),
+            intensity = token.StartsWith("FADE*", StringComparison.OrdinalIgnoreCase)
+                ? -Math.Abs(intensity)
+                : intensity
+        };
+        return true;
     }
 
     private static bool isNote(char noteText)
@@ -452,6 +692,7 @@ internal static class SimaiProcess
 
 internal class SimaiTimingPoint
 {
+    private bool notesParsed;
     public float currentBpm = -1;
     public bool havePlayed;
     public float HSpeed = 1f;
@@ -474,10 +715,18 @@ internal class SimaiTimingPoint
 
     public List<SimaiNote> getNotes()
     {
-        if (noteList.Count != 0) return noteList;
+        if (notesParsed || noteList.Count != 0)
+        {
+            notesParsed = true;
+            return noteList;
+        }
 
         var simaiNotes = new List<SimaiNote>();
-        if (notesContent == "") return simaiNotes;
+        if (notesContent == "")
+        {
+            notesParsed = true;
+            return simaiNotes;
+        }
         try
         {
             var dummy = 0;
@@ -485,7 +734,9 @@ internal class SimaiTimingPoint
             {
                 simaiNotes.Add(getSingleNote(notesContent[0].ToString()));
                 simaiNotes.Add(getSingleNote(notesContent[1].ToString()));
-                return simaiNotes;
+                noteList = simaiNotes;
+                notesParsed = true;
+                return noteList;
             }
 
             if (notesContent.Contains('/'))
@@ -496,22 +747,28 @@ internal class SimaiTimingPoint
                         simaiNotes.AddRange(getSameHeadSlide(note));
                     else
                         simaiNotes.Add(getSingleNote(note));
-                return simaiNotes;
+                noteList = simaiNotes;
+                notesParsed = true;
+                return noteList;
             }
 
             if (notesContent.Contains('*'))
             {
                 simaiNotes.AddRange(getSameHeadSlide(notesContent));
-                return simaiNotes;
+                noteList = simaiNotes;
+                notesParsed = true;
+                return noteList;
             }
 
             simaiNotes.Add(getSingleNote(notesContent));
             noteList = simaiNotes;
-            return simaiNotes;
+            notesParsed = true;
+            return noteList;
         }
         catch
         {
             noteList = new List<SimaiNote>();
+            notesParsed = true;
             return noteList;
         }
     }
@@ -554,7 +811,6 @@ internal class SimaiTimingPoint
         }
 
         if (noteText.Contains('f')) simaiNote.isHanabi = true;
-
         //hold
         if (noteText.Contains('h'))
         {
@@ -593,6 +849,33 @@ internal class SimaiTimingPoint
                 noteText = noteText.Replace("?", "");
             }
             //Console.WriteLine("Slide:" + simaiNote.startPosition + " TimeLastFor:" + simaiNote.slideTime);
+        }
+
+        if (noteText.Contains('m'))
+        {
+            if (simaiNote.noteType == SimaiNoteType.Slide)
+            {
+                var slidePathIndex = noteText.IndexOfAny(new[]
+                {
+                    '-', '^', 'v', '<', '>', 'p', 'q', 's', 'z', 'V', 'w'
+                });
+                var monoIndex = noteText.IndexOf('m');
+                if (monoIndex >= 0 && monoIndex < slidePathIndex)
+                {
+                    // 1bm-5: only the starting note is monochrome.
+                    simaiNote.isMonoHead = true;
+                }
+                else
+                {
+                    // 1-5m: only the slide body and moving star are monochrome.
+                    simaiNote.isSlideMono = true;
+                }
+            }
+            else
+            {
+                simaiNote.isMonoHead = true;
+            }
+            noteText = noteText.Replace("m", "");
         }
 
         //break
@@ -793,6 +1076,8 @@ internal class SimaiNote
     public bool isFakeRotate;
     public bool isForceStar;
     public bool isHanabi;
+    public bool isMonoHead;
+    public bool isSlideMono;
     public bool isSlideBreak;
     public bool isSlideNoHead;
 

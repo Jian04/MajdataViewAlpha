@@ -58,12 +58,14 @@ public class SlideDrop : NoteLongDrop, IFlasher
 
 
     private readonly List<GameObject> slideBars = new();
+    private readonly List<SpriteRenderer> slideBarRenderers = new();
 
     private readonly List<Vector3> slidePositions = new();
     private readonly List<Quaternion> slideRotations = new();
     private GameObject slideOK;
 
     private SpriteRenderer spriteRenderer_star;
+    private float currentSlideBarAlpha = -1f;
 
     public int endPosition;
 
@@ -120,12 +122,12 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 slideOK.transform.position += new Vector3(Mathf.Sin(angel) * 0.27f, Mathf.Cos(angel) * -0.27f);
             }
         }
+        AdjustReverseArcJudgeEffectRadius();
         spriteRenderer_star = star_slide.GetComponent<SpriteRenderer>();
 
         if (isBreak)
         {
-            spriteRenderer_star.material = breakMaterial;
-            spriteRenderer_star.material.SetFloat("_Brightness", 0.95f);
+            spriteRenderer_star.sharedMaterial = breakMaterial;
             var controller = star_slide.AddComponent<BreakShineController>();
             controller.enabled = true;
             controller.parent = this;
@@ -157,14 +159,14 @@ public class SlideDrop : NoteLongDrop, IFlasher
         foreach (var gm in slideBars)
         {
             var sr = gm.GetComponent<SpriteRenderer>();
+            slideBarRenderers.Add(sr);
             sr.color = new Color(1f, 1f, 1f, 0f);
             sr.sortingOrder = sortIndex--;
             sr.sortingLayerName = "Slide";
             if (isBreak)
             {
                 sr.sprite = spriteBreak;
-                sr.material = breakMaterial;
-                sr.material.SetFloat("_Brightness", 0.95f);
+                sr.sharedMaterial = breakMaterial;
                 var controller = gm.AddComponent<BreakShineController>();
                 controller.parent = this;
                 controller.enabled = true;
@@ -184,9 +186,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
         // ALPHA: apply color override to star and all slide bars
         if (colorOverrideMaterial != null)
         {
-            spriteRenderer_star.material = colorOverrideMaterial;
-            foreach (var gm in slideBars)
-                gm.GetComponent<SpriteRenderer>().material = colorOverrideMaterial;
+            spriteRenderer_star.sharedMaterial = colorOverrideMaterial;
+            foreach (var renderer in slideBarRenderers)
+                renderer.sharedMaterial = colorOverrideMaterial;
         }
 
         timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
@@ -276,6 +278,25 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
 
     }
+
+    private void AdjustReverseArcJudgeEffectRadius()
+    {
+        if (!isReverse || string.IsNullOrEmpty(slideType) || !slideType.StartsWith("ppqq"))
+            return;
+
+        int keyDistance = Math.Abs(startPosition - endPosition);
+        keyDistance = Math.Min(keyDistance, 8 - keyDistance);
+        keyDistance = Mathf.Clamp(keyDistance, 1, 4);
+
+        // Adjacent rp/rq endpoints overshoot the ring the most. Pull close
+        // endpoints further inward while leaving long arcs almost unchanged.
+        float radiusScale = Mathf.Lerp(0.76f, 0.94f, (keyDistance - 1) / 3f);
+        var position = slideOK.transform.position;
+        slideOK.transform.position = new Vector3(
+            position.x * radiusScale,
+            position.y * radiusScale,
+            position.z);
+    }
     /// <summary>
     /// Connection Slide
     /// <para>强制完成该Slide</para>
@@ -302,7 +323,6 @@ public class SlideDrop : NoteLongDrop, IFlasher
         var allSensors = judgeQueue.SelectMany(x => x.GetSensorTypes())
                                    .GroupBy(x => x)
                                    .Select(x => x.Key);
-        var a = judgeQueue.Select(x => x.GetSensorTypes()).ToList();
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
         boundSensors.AddRange(allSensors);
         foreach (var sensor in allSensors)
@@ -493,14 +513,14 @@ public class SlideDrop : NoteLongDrop, IFlasher
             if (second.IsFinished)
             {
                 HideBar(first.SlideIndex);
-                judgeQueue = judgeQueue.Skip(2).ToList();
+                RemoveJudgeAreas(2);
                 isChecking = false;
                 return;
             }
             else if (second.On)
             {
                 HideBar(first.SlideIndex);
-                judgeQueue = judgeQueue.Skip(1).ToList();
+                RemoveJudgeAreas(1);
                 isChecking = false;
                 return;
             }
@@ -509,7 +529,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         if (first.IsFinished)
         {
             HideBar(first.SlideIndex);
-            judgeQueue = judgeQueue.Skip(1).ToList();
+            RemoveJudgeAreas(1);
             isChecking = false;
             return;
         }
@@ -612,7 +632,6 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 else
                     judge = JudgeType.Perfect;
             }            
-            print($"Slide diff : {MathF.Round(diff * 1000,2)} ms");
             judgeResult = judge ?? JudgeType.Miss;
             SetJust();
             isJudged = true;
@@ -817,7 +836,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
             case AutoPlayMode.Enable:
             case AutoPlayMode.Random:
                 var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
-                judgeQueue = judgeQueue.Skip((int)(process * (judgeQueue.Count - 1))).ToList();
+                RemoveJudgeAreas((int)(process * (judgeQueue.Count - 1)));
                 HideBar(barIndex);
                 break;
         }
@@ -825,7 +844,20 @@ public class SlideDrop : NoteLongDrop, IFlasher
    
     private void setSlideBarAlpha(float alpha)
     {
-        foreach (var gm in slideBars) gm.GetComponent<SpriteRenderer>().color = new Color(1f, 1f, 1f, alpha);
+        if (Mathf.Approximately(currentSlideBarAlpha, alpha))
+            return;
+
+        currentSlideBarAlpha = alpha;
+        var color = new Color(1f, 1f, 1f, alpha);
+        foreach (var renderer in slideBarRenderers)
+            renderer.color = color;
+    }
+
+    private void RemoveJudgeAreas(int count)
+    {
+        count = Math.Min(count, judgeQueue.Count);
+        if (count > 0)
+            judgeQueue.RemoveRange(0, count);
     }
     private void applyStarRotation(Quaternion newRotation)
     {

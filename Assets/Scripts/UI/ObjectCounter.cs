@@ -38,6 +38,7 @@ public class ObjectCounter : MonoBehaviour
     private Text statusScore;
     private Text table;
     private Text judgeResultCount;
+    private Text judgeResultText;
 
     private EditorComboIndicator textMode = EditorComboIndicator.Combo;
 
@@ -72,6 +73,7 @@ public class ObjectCounter : MonoBehaviour
     {
         notes = GameObject.Find("Notes").GetComponent<NoteManager>();
         judgeResultCount = GameObject.Find("JudgeResultCount").GetComponent<Text>();
+        judgeResultText = GameObject.Find("JudgeResultText").GetComponent<Text>();
         table = GameObject.Find("ObjectCount").GetComponent<Text>();
         rate = GameObject.Find("ObjectRate").GetComponent<Text>();
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
@@ -647,6 +649,32 @@ public class ObjectCounter : MonoBehaviour
         statusScore.gameObject.SetActive(isActive && (isPtsClassic || isPtsNormDeluxe));
         statusAchievement.gameObject.SetActive(isActive && (isAccClassic || isAccDeluxe));
         statusDXScore.gameObject.SetActive(isActive && isPtsDeluxe);
+    }
+
+    public void SetSideDisplays(bool showJudge, bool showCombo)
+    {
+        judgeResultCount.gameObject.SetActive(showJudge);
+        judgeResultText.gameObject.SetActive(showJudge);
+        table.gameObject.SetActive(showCombo);
+        rate.gameObject.SetActive(showCombo);
+        ComboSetActive(textMode);
+    }
+
+    public void SetSideDisplayAlpha(float judgeAlpha, float comboAlpha)
+    {
+        SetTextAlpha(judgeResultCount, judgeAlpha);
+        SetTextAlpha(judgeResultText, judgeAlpha);
+        SetTextAlpha(table, comboAlpha);
+        SetTextAlpha(rate, comboAlpha);
+    }
+
+    private static void SetTextAlpha(Text text, float alpha)
+    {
+        if (text == null)
+            return;
+
+        text.gameObject.SetActive(true);
+        text.canvasRenderer.SetAlpha(Mathf.Clamp01(alpha));
     }
 
     private int FiSumScore()

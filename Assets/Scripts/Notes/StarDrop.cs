@@ -38,7 +38,7 @@ public class StarDrop : TapBase
                 lineSpriteRender.sprite = breakLine;
                 spriteRenderer.sprite = breakSpr_Double;
                 if (isEX) exSpriteRender.color = exEffectBreak;
-                spriteRenderer.material = breakMaterial;
+                spriteRenderer.sharedMaterial = breakMaterial;
             }
         }
         else
@@ -58,16 +58,17 @@ public class StarDrop : TapBase
                 lineSpriteRender.sprite = breakLine;
                 spriteRenderer.sprite = breakSpr;
                 if (isEX) exSpriteRender.color = exEffectBreak;
-                spriteRenderer.material = breakMaterial;
+                spriteRenderer.sharedMaterial = breakMaterial;
             }
         }
 
         // ALPHA: apply color override to star circle and guide arc.
         if (colorOverrideMaterial != null)
         {
-            spriteRenderer.material = colorOverrideMaterial;
-            lineSpriteRender.material = colorOverrideMaterial;
+            spriteRenderer.sharedMaterial = colorOverrideMaterial;
+            lineSpriteRender.sharedMaterial = colorOverrideMaterial;
         }
+        ApplyExAlpha();
 
         spriteRenderer.forceRenderingOff = true;
         exSpriteRender.forceRenderingOff = true;
@@ -89,6 +90,12 @@ public class StarDrop : TapBase
     // Update is called once per frame
     protected override void Update()
     {
+        if (!timeProvider.isStart)
+        {
+            tapLine.SetActive(false);
+            return;
+        }
+
         var songSpeed = timeProvider.CurrentSpeed;
         var distance = GetSvDistance();
         var destScale = distance * 0.4f + 0.51f;
