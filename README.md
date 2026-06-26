@@ -378,6 +378,7 @@ tap, each, hold, slide, star, break, touch, touchhold
 - 配置库谱面来源：[Maichart-Converts](https://github.com/Neskol/Maichart-Converts)（作者 Neskol 等）
 - Simai：Celeca
 - Hanabi 特效：青山散人
+- 仿官谱歌曲封面制作：筱崎文音
 
 感谢原作者提供的基础框架、编辑器和运行逻辑。MajdataViewAlpha 是在原项目基础上的二次修改与扩展。
 
