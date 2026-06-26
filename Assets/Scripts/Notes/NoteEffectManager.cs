@@ -13,6 +13,11 @@ public class NoteEffectManager : MonoBehaviour
     private readonly Animator[] greatAnimators = new Animator[8];
     private readonly Animator[] goodAnimators = new Animator[8];
     private readonly Quaternion[] tapBaseRots = new Quaternion[8];
+    private readonly Vector3[] tapBasePositions = new Vector3[8];
+    private readonly Vector3[] greatBasePositions = new Vector3[8];
+    private readonly Vector3[] goodBasePositions = new Vector3[8];
+    private readonly Vector3[] judgeBasePositions = new Vector3[8];
+    private readonly Vector3[] fastLateBasePositions = new Vector3[8];
     private readonly SpriteRenderer[][] tapEffectRenderers = new SpriteRenderer[8][];
     private readonly SpriteRenderer[] judgeTextRenderers = new SpriteRenderer[8];
     private readonly SpriteRenderer[] judgeBreakTextRenderers = new SpriteRenderer[8];
@@ -39,23 +44,28 @@ public class NoteEffectManager : MonoBehaviour
         for (var i = 0; i < 8; i++)
         {
             judgeEffects[i] = judgeEffectParent.transform.GetChild(i).gameObject;
+            judgeBasePositions[i] = judgeEffects[i].transform.position;
             judgeAnimators[i] = judgeEffects[i].GetComponent<Animator>();
             judgeTextRenderers[i] = judgeEffects[i].transform.GetChild(0).GetChild(0).GetComponent<SpriteRenderer>();
             judgeBreakTextRenderers[i] = judgeEffects[i].transform.GetChild(0).GetChild(1).GetComponent<SpriteRenderer>();
 
             fastLateEffects[i] = flParent.transform.GetChild(i).gameObject;
+            fastLateBasePositions[i] = fastLateEffects[i].transform.position;
             fastLateAnims[i] = fastLateEffects[i].GetComponent<Animator>();
             fastLateTextRenderers[i] = fastLateEffects[i].transform.GetChild(0).GetChild(0).GetComponent<SpriteRenderer>();
 
             goodEffects[i] = goodEffectParent.transform.GetChild(i).gameObject;
+            goodBasePositions[i] = goodEffects[i].transform.position;
             greatAnimators[i] = goodEffects[i].GetComponent<Animator>();
             goodEffects[i].SetActive(false);
 
             greatEffects[i] = greatEffectParent.transform.GetChild(i).gameObject;
+            greatBasePositions[i] = greatEffects[i].transform.position;
             greatAnimators[i] = greatEffects[i].GetComponent<Animator>();
             greatEffects[i].SetActive(false);
 
             tapEffects[i] = tapEffectParent.transform.GetChild(i).gameObject;
+            tapBasePositions[i] = tapEffects[i].transform.position;
             tapAnimators[i] = tapEffects[i].GetComponent<Animator>();
             tapEffectRenderers[i] = tapEffects[i].GetComponentsInChildren<SpriteRenderer>(true);
             tapEffects[i].SetActive(false);
@@ -84,10 +94,10 @@ public class NoteEffectManager : MonoBehaviour
     }
 
     // Update is called once per frame
-    public void PlayEffect(int position, bool isBreak, JudgeType judge = JudgeType.Perfect, Color noteColor = default, Quaternion? overrideRotation = null)
+    public void PlayEffect(int position, bool isBreak, JudgeType judge = JudgeType.Perfect, Color noteColor = default, Quaternion? overrideRotation = null, Vector3? overridePosition = null)
     {
         var pos = position - 1;
-        tapEffects[pos].transform.rotation = overrideRotation ?? tapBaseRots[pos];
+        ApplyEffectTransform(pos, overridePosition, overrideRotation);
 
         // COLOR only affects notes. These objects are reused, so also clear any
         // tint left by an earlier colored note.
@@ -169,9 +179,11 @@ public class NoteEffectManager : MonoBehaviour
     /// </summary>
     /// <param name="position"></param>
     /// <param name="judge"></param>
-    public void PlayFastLate(int position,JudgeType judge)
+    public void PlayFastLate(int position,JudgeType judge, Vector3? overridePosition = null, Quaternion? overrideRotation = null)
     {
         var pos = position - 1;
+        fastLateEffects[pos].transform.position = overridePosition ?? fastLateBasePositions[pos];
+        fastLateEffects[pos].transform.rotation = overrideRotation ?? tapBaseRots[pos];
         if ((int)judge is (0 or 7))
         {
             fastLateEffects[pos].SetActive(false);
@@ -250,6 +262,30 @@ public class NoteEffectManager : MonoBehaviour
             guard = renderer.gameObject.AddComponent<JudgeTextRendererGuard>();
         guard.Renderer = renderer;
         guard.Apply();
+    }
+
+    private void ApplyEffectPosition(int pos, Vector3? overridePosition)
+    {
+        ApplyEffectTransform(pos, overridePosition, null);
+    }
+
+    private void ApplyEffectTransform(int pos, Vector3? overridePosition, Quaternion? overrideRotation)
+    {
+        var tapTransform = tapEffects[pos].transform;
+        var greatTransform = greatEffects[pos].transform;
+        var goodTransform = goodEffects[pos].transform;
+        var judgeTransform = judgeEffects[pos].transform;
+
+        tapTransform.position = overridePosition ?? tapBasePositions[pos];
+        greatTransform.position = overridePosition ?? greatBasePositions[pos];
+        goodTransform.position = overridePosition ?? goodBasePositions[pos];
+        judgeTransform.position = overridePosition ?? judgeBasePositions[pos];
+
+        var rotation = overrideRotation ?? tapBaseRots[pos];
+        tapTransform.rotation = rotation;
+        greatTransform.rotation = rotation;
+        goodTransform.rotation = rotation;
+        judgeTransform.rotation = rotation;
     }
 }
 

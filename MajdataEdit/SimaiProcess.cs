@@ -9,6 +9,8 @@ internal static class SimaiProcess
     public static string? title;
     public static string? artist;
     public static string? designer;
+    public static string? wholeBpm;
+    public static string? clockCount;
     public static string? other_commands;
     public static float first;
     public static string[] fumens = new string[7];
@@ -44,6 +46,8 @@ internal static class SimaiProcess
         title = "";
         artist = "";
         designer = "";
+        wholeBpm = "";
+        clockCount = "";
         first = 0;
         fumens = new string[7];
         levels = new string[7];
@@ -78,6 +82,10 @@ internal static class SimaiProcess
                     artist = GetValue(maidataTxt[i]);
                 else if (maidataTxt[i].StartsWith("&des="))
                     designer = GetValue(maidataTxt[i]);
+                else if (maidataTxt[i].StartsWith("&wholebpm=", StringComparison.OrdinalIgnoreCase))
+                    wholeBpm = GetValue(maidataTxt[i]);
+                else if (maidataTxt[i].StartsWith("&clock_count=", StringComparison.OrdinalIgnoreCase))
+                    clockCount = GetValue(maidataTxt[i]);
                 else if (maidataTxt[i].StartsWith("&first="))
                     first = float.Parse(GetValue(maidataTxt[i]));
                 else if (maidataTxt[i].StartsWith("&lv_") || maidataTxt[i].StartsWith("&inote_"))
@@ -93,7 +101,7 @@ internal static class SimaiProcess
                             for (; i < maidataTxt.Length; i++)
                             {
                                 if (i < maidataTxt.Length)
-                                    if (maidataTxt[i].StartsWith("&"))
+                                    if (IsMaidataCommandLine(maidataTxt[i]))
                                         break;
                                 TheNote += maidataTxt[i] + "\n";
                             }
@@ -126,7 +134,7 @@ internal static class SimaiProcess
             "&artist=" + artist,
             "&first=" + first,
             "&des=" + designer,
-            other_commands!
+            BuildOtherCommandsForSave()
         };
         for (var i = 0; i < levels.Length; i++)
             if (levels[i] != null && levels[i] != "")
@@ -142,6 +150,118 @@ internal static class SimaiProcess
         return varline.Substring(varline.IndexOf("=") + 1);
     }
 
+    public static string GetWholeBpmText()
+    {
+        if (!string.IsNullOrWhiteSpace(wholeBpm))
+            return wholeBpm.Trim();
+
+        var commandValue = GetOtherCommandValue("wholebpm");
+        if (!string.IsNullOrWhiteSpace(commandValue))
+            return commandValue.Trim();
+
+        foreach (var timing in timinglist)
+        {
+            if (timing.currentBpm > 0f)
+                return FormatBpm(timing.currentBpm);
+        }
+        return "";
+    }
+
+    public static string GetDesignerText(int difficultyIndex)
+    {
+        if (!string.IsNullOrWhiteSpace(designer))
+            return designer.Trim();
+
+        var commandValue = GetOtherCommandValue("des_" + (difficultyIndex + 1));
+        if (!string.IsNullOrWhiteSpace(commandValue))
+            return commandValue.Trim();
+
+        return designer ?? "";
+    }
+
+    public static string GetClockCountText()
+    {
+        if (!string.IsNullOrWhiteSpace(clockCount))
+            return clockCount.Trim();
+
+        var commandValue = GetOtherCommandValue("clock_count");
+        return string.IsNullOrWhiteSpace(commandValue) ? "" : commandValue.Trim();
+    }
+
+    private static string BuildOtherCommandsForSave()
+    {
+        var lines = new List<string>();
+        if (!string.IsNullOrWhiteSpace(other_commands))
+        {
+            foreach (var line in other_commands.Split(
+                         new[] { "\r\n", "\n" },
+                         StringSplitOptions.None))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("&wholebpm=", StringComparison.OrdinalIgnoreCase) ||
+                    trimmed.StartsWith("&clock_count=", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (trimmed.Length > 0)
+                    lines.Add(trimmed);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(wholeBpm))
+            lines.Add("&wholebpm=" + wholeBpm.Trim());
+        if (!string.IsNullOrWhiteSpace(clockCount))
+            lines.Add("&clock_count=" + clockCount.Trim());
+
+        return string.Join("\n", lines);
+    }
+
+    private static string GetOtherCommandValue(string key)
+    {
+        if (string.IsNullOrWhiteSpace(other_commands))
+            return "";
+
+        var prefix = "&" + key + "=";
+        foreach (var line in other_commands.Split(
+                     new[] { "\r\n", "\n" },
+                     StringSplitOptions.None))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return trimmed.Substring(prefix.Length);
+        }
+        return "";
+    }
+
+    private static string FormatBpm(float bpm)
+    {
+        return Math.Abs(bpm - MathF.Round(bpm)) < 0.001f
+            ? MathF.Round(bpm).ToString("0")
+            : bpm.ToString("0.###");
+    }
+
+    private static bool IsMaidataCommandLine(string line)
+    {
+        if (!line.StartsWith("&"))
+            return false;
+
+        // Editor-only section markers belong to the chart body even when
+        // placed at the start of a line.
+        if (IsEditorSectionMarker(line))
+            return false;
+
+        return true;
+    }
+
+    private static bool IsEditorSectionMarker(string line)
+    {
+        if (line.Length >= 5 &&
+            string.Equals(line.Substring(0, 5), "&NULL", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return line.Length >= 7 &&
+               line[0] == '&' &&
+               line.Substring(1, 6).All(Uri.IsHexDigit);
+    }
+
     /// <summary>
     ///     This method serialize the fumen data and load it into the static class.
     /// </summary>
@@ -150,6 +270,7 @@ internal static class SimaiProcess
     /// <returns>the song time at the position</returns>
     public static double Serialize(string text, long position = 0)
     {
+        text = StripBlockComments(text);
         var _notelist = new List<SimaiTimingPoint>();
         var _timinglist = new List<SimaiTimingPoint>();
         var svPoints     = new List<SvPoint>();    // ALPHA: true SV
@@ -198,6 +319,25 @@ internal static class SimaiProcess
                 }
 
                 if (i - 1 < position) requestedTime = time;
+
+                if (text[i] == '&' && !haveNote)
+                {
+                    var markerLength = i + 4 < text.Length &&
+                                       string.Equals(text.Substring(i + 1, 4), "NULL",
+                                           StringComparison.OrdinalIgnoreCase)
+                        ? 5
+                        : i + 6 < text.Length &&
+                          text.Substring(i + 1, 6).All(Uri.IsHexDigit)
+                            ? 7
+                            : 0;
+                    if (markerLength > 0)
+                    {
+                        i += markerLength - 1;
+                        Xcount += markerLength - 1;
+                        noteTemp = "";
+                        continue;
+                    }
+                }
                 if (text[i] == '(')
                     //Get bpm
                 {
@@ -520,6 +660,32 @@ internal static class SimaiProcess
         }
     }
 
+    private static string StripBlockComments(string text)
+    {
+        var result = text.ToCharArray();
+        var inComment = false;
+        for (var i = 0; i < result.Length; i++)
+        {
+            if (!inComment && i + 1 < result.Length && result[i] == '|' && result[i + 1] == '*')
+            {
+                inComment = true;
+                result[i] = result[i + 1] = ' ';
+                i++;
+                continue;
+            }
+            if (inComment && i + 1 < result.Length && result[i] == '*' && result[i + 1] == '|')
+            {
+                result[i] = result[i + 1] = ' ';
+                inComment = false;
+                i++;
+                continue;
+            }
+            if (inComment && result[i] != '\r' && result[i] != '\n')
+                result[i] = ' ';
+        }
+        return new string(result);
+    }
+
     public static void ClearNoteListPlayedState()
     {
         notelist.Sort((x, y) => x.time.CompareTo(y.time));
@@ -541,6 +707,7 @@ internal static class SimaiProcess
             "OUTERBRIGHTNESS" => "OuterBrightness",
             "INNERBRIGHTNESS" => "InnerBrightness",
             "SHOWJUDGETEXT" => "ShowJudgeText",
+            "COMBODISPLAY" => "ComboDisplay",
             _ => null
         };
         if (canonicalProperty == null)
@@ -557,7 +724,13 @@ internal static class SimaiProcess
             return true;
 
         float target;
-        if (canonicalProperty.StartsWith("Show", StringComparison.Ordinal))
+        if (canonicalProperty == "ComboDisplay")
+        {
+            if (!TryParseComboDisplay(values[0].Trim(), out var mode))
+                return true;
+            target = (float)mode;
+        }
+        else if (canonicalProperty.StartsWith("Show", StringComparison.Ordinal))
         {
             if (!bool.TryParse(values[0].Trim(), out var enabled))
                 return true;
@@ -573,10 +746,49 @@ internal static class SimaiProcess
         {
             time = time,
             property = canonicalProperty,
-            target = Math.Clamp(target, 0f, 1f),
+            target = canonicalProperty == "ComboDisplay" ? target : Math.Clamp(target, 0f, 1f),
             duration = Math.Max(0f, duration)
         };
         return true;
+    }
+
+    private static bool TryParseComboDisplay(string value, out EditorComboIndicator mode)
+    {
+        mode = EditorComboIndicator.None;
+        var normalized = value.Trim().Replace(" ", "").Replace("_", "");
+        if (int.TryParse(normalized, out var numeric) &&
+            Enum.IsDefined(typeof(EditorComboIndicator), numeric))
+        {
+            mode = (EditorComboIndicator)numeric;
+            return true;
+        }
+
+        var aliases = new Dictionary<string, EditorComboIndicator>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["NONE"] = EditorComboIndicator.None,
+            ["OFF"] = EditorComboIndicator.None,
+            ["COMBO"] = EditorComboIndicator.Combo,
+            ["SCORE"] = EditorComboIndicator.ScoreClassic,
+            ["SCORECLASSIC"] = EditorComboIndicator.ScoreClassic,
+            ["ACHIEVEMENT"] = EditorComboIndicator.AchievementClassic,
+            ["ACC"] = EditorComboIndicator.AchievementClassic,
+            ["ACHIEVEMENTCLASSIC"] = EditorComboIndicator.AchievementClassic,
+            ["ACCDOWN"] = EditorComboIndicator.AchievementDownClassic,
+            ["ACHIEVEMENTDOWNCLASSIC"] = EditorComboIndicator.AchievementDownClassic,
+            ["DXACC"] = EditorComboIndicator.AchievementDeluxe,
+            ["ACHIEVEMENTDELUXE"] = EditorComboIndicator.AchievementDeluxe,
+            ["DXACCDOWN"] = EditorComboIndicator.AchievementDownDeluxe,
+            ["ACHIEVEMENTDOWNDELUXE"] = EditorComboIndicator.AchievementDownDeluxe,
+            ["DXSCORE"] = EditorComboIndicator.ScoreDeluxe,
+            ["SCOREDELUXE"] = EditorComboIndicator.ScoreDeluxe,
+            ["CSCORE"] = EditorComboIndicator.CScoreDedeluxe,
+            ["CSCOREDEDX"] = EditorComboIndicator.CScoreDedeluxe,
+            ["CSCOREDEDXDOWN"] = EditorComboIndicator.CScoreDownDedeluxe
+        };
+        if (aliases.TryGetValue(normalized, out mode))
+            return true;
+
+        return Enum.TryParse(value, true, out mode);
     }
 
     private static bool TryParseSubtitleChange(string token, double time, out SubtitleChange change)
@@ -787,6 +999,11 @@ internal class SimaiTimingPoint
             var note2text = note1.startPosition + item;
             var note2 = getSingleNote(note2text);
             note2.isSlideNoHead = true;
+            note2.isBreak = false;
+            note2.isEx = note1.isEx;
+            note2.isMonoHead = false;
+            note2.isSlideMono = false;
+            note2.isSlideBreak = false;
             simaiNotes.Add(note2);
         }
 

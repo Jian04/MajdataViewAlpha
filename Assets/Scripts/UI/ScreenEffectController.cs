@@ -62,7 +62,6 @@ public class ScreenEffectController : MonoBehaviour
         zoomEffects = CreateTrack("Zoom", true);
         glitchEffects = CreateTrack("Glitch", false);
         tvNoiseEffects = CreateTrack("TVNoise", false);
-
         enabled = effects.Count > 0;
         if (!enabled)
         {

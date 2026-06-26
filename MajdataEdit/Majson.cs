@@ -6,9 +6,12 @@ internal class Majson
     public string designer = "default";
     public string difficulty = "EZ";
     public int diffNum = 0;
+    public string filePath = "";
     public string level = "1";
+    public int songDetailStyle = 0;
     public List<SimaiTimingPoint> timingList = new();
     public string title = "default";
+    public string wholeBpm = "";
     // ALPHA: true SV table
     public List<SvPoint> svTable = new();
     // ALPHA: mid-chart note color change events
@@ -105,8 +108,14 @@ internal class EditRequestjson
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
+    public string skin = "dx";
+    public int songDetailStyle = 0;
+    public bool previewFlow;
+    public float previewTimelineTime;
+    public bool showAllPerfect = true;
     public float chartLength;
     public int recordFrameRate = 30;
+    public string? previewJson;
 }
 
 public enum EditorPlayMethod
@@ -142,7 +151,8 @@ internal enum EditorControlMethod
     Pause,
     Continue,
     Record,
-    SetDisplay
+    SetDisplay,
+    Preview
 }
 
 //this setting is per maidata
@@ -173,6 +183,9 @@ public class EditorSetting
     public bool ShowComboInfo = true;
     public bool ShowJudgeLine = true;
     public bool ShowJudgeText = true;
+    public bool ShowAllPerfect = true;
+    public int SongDetailStyle = 0;
+    public string Skin = "dx";
     public int ChartRefreshDelay = 1000;
     public EditorComboIndicator comboStatusType = 0;
     public EditorPlayMethod editorPlayMethod;
@@ -188,6 +201,9 @@ public class EditorSetting
     public float Default_Touch_Level = 0.7f;
     public float DefaultSlideAccuracy = 0.2f;
     public float FontSize = 12;
+    public int EditorFontPreset = 1;
+    public bool EditorLightTheme = false;
+    public string EditorTheme = ThemeManager.DefaultTheme;
     public string IncreasePlaybackSpeedKey = "Ctrl+p";
     public string Language = "en-US";
     public string Mirror180Key = "Ctrl+l";

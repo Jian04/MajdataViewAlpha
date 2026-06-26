@@ -26,6 +26,14 @@ internal sealed class FumenEditorAdapter
     }
 
     public int CurrentLine => editor.Document.GetLineByOffset(CaretOffset).LineNumber;
+    public int CurrentColumn
+    {
+        get
+        {
+            var line = editor.Document.GetLineByOffset(CaretOffset);
+            return CaretOffset - line.Offset;
+        }
+    }
     public string SelectedText => editor.SelectedText;
     public bool HasSelection => editor.SelectionLength > 0;
     public EditorSelection Selection

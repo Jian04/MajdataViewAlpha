@@ -83,7 +83,8 @@ public class StarDrop : TapBase
             inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
             sensorPos = (SensorType)(startPosition - 1);
-            inputManager.BindArea(Check, sensorPos);
+            if (!previewOnly)
+                inputManager.BindArea(Check, sensorPos);
         }
         State = NoteStatus.Initialized;
     }
@@ -99,15 +100,14 @@ public class StarDrop : TapBase
         var songSpeed = timeProvider.CurrentSpeed;
         var distance = GetSvDistance();
         var destScale = distance * 0.4f + 0.51f;
+        if (!isNoHead)
+            UpdateTapLineRotation(distance);
 
         switch (State)
         {
             case NoteStatus.Initialized:
                 if (destScale >= 0f)
                 {
-
-                    if(!isNoHead)
-                        tapLine.transform.rotation = Quaternion.Euler(0, 0, -22.5f + -45f * (startPosition - 1));
                     State = NoteStatus.Pending;
                     goto case NoteStatus.Pending;
                 }

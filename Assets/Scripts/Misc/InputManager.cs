@@ -221,6 +221,27 @@ public class InputManager : MonoBehaviour
         var button = buttons.Find(x => x.Type == target);
         return button.IsJudging;
     }
+    public void ResetInputState(bool clearBindings = false)
+    {
+        foreach (var id in triggerSensors.Keys.ToList())
+            Untrigger(id);
+        triggerSensors.Clear();
+
+        foreach (var sensor in sensors)
+            if (sensor != null)
+            {
+                sensor.ResetState();
+                if (clearBindings)
+                    sensor.ClearEventHandlers();
+            }
+        foreach (var button in buttons)
+        {
+            button.IsJudging = false;
+            button.Status = SensorStatus.Off;
+            if (clearBindings)
+                button.ClearEventHandlers();
+        }
+    }
     void Untrigger(int id)
     {
         if (triggerSensors.Count() == 0 || !triggerSensors.ContainsKey(id))

@@ -22,6 +22,8 @@ public partial class Infomation : Window
         SimaiProcess.title = TitleTextbox.Text;
         SimaiProcess.artist = ArtistTextbox.Text;
         SimaiProcess.designer = DesignTextbox.Text;
+        SimaiProcess.wholeBpm = BpmTextbox.Text;
+        SimaiProcess.clockCount = ClockCountTextbox.Text;
         SimaiProcess.other_commands = OtherTextbox.Text;
         Close();
     }
@@ -31,6 +33,8 @@ public partial class Infomation : Window
         TitleTextbox.Text = SimaiProcess.title;
         ArtistTextbox.Text = SimaiProcess.artist;
         DesignTextbox.Text = SimaiProcess.designer;
+        BpmTextbox.Text = SimaiProcess.GetWholeBpmText();
+        ClockCountTextbox.Text = SimaiProcess.GetClockCountText();
         OtherTextbox.Text = SimaiProcess.other_commands;
         LoadImageFromDefault();
         RenderOptions.SetBitmapScalingMode(SaltImage, BitmapScalingMode.HighQuality);

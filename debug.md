@@ -114,6 +114,39 @@
 - 自建 sprite 给 VideoPlayer/MaterialOverride 用时，rect 必须等于贴图尺寸，否则 UV 不是 0~1，视频会被裁切放大。
 - 不要把 BGA 尺寸耦合到遮罩物体（BackgroundCover/1080Circle_Rev）的 bounds，按相机高度对齐即可。
 
+## 歌曲信息封面缓存 (songdetail_master.png)
+
+### 架构
+
+- Master 难度(diffNum==4)播放时,`MajdataEdit.MainWindowCore.EnsureSongDetailCache` 用 System.Drawing 把 DxBase + 封面 + DxOverlay + 动态文字烤成 `<谱面目录>/songdetail_master.png`。
+- Unity `SongDetailTemplateView.TryApplyCachedCard` 优先读这张 PNG 贴到卡面;不走实时渲染(实时渲染观感不对,已弃用)。
+- 视觉基准:`dist/songdetail_preview_*.png`(341×588,和烤图同坐标系)。
+
+### 错误
+
+- 谱师整行被省略号截断、字体偏宽:`DrawFitText` 用 `MeasureString(text, font, rect.Size, fmt)` 且 `fmt.Trimming = EllipsisCharacter`,测量的是**截断后**的宽度。17px 时报 w≈204≤215 直接判定"放得下"并 break,于是用满 17px 画了截断版,自适应缩放从未触发。(Aileron OTF 其实加载正常,排除字体加载嫌疑。)
+- 等级超大且未转换:`14.9` 原样画出,且 scale-to-box 用 AddString 的紧致 bounds 反向放大;没有 `LV` 前缀、没有小数→`+` 转换。
+
+### 修复
+
+- `DrawFitText` 改用 `StringFormat.GenericTypographic`(去掉边距 padding)+ `NoWrap` 测**单行紧排宽度**,`width <= rect.Width` 才停;绘制用 `NoWrap | NoClip`、不带 Trimming。谱师落在 ~13px 单行铺满,和预览一致。
+- 等级:`LV` 前缀**已烤进 DxOverlay 模板**,代码只画数字(Allerta 50px≈36px cap)+ `+`(25px,顶对齐),不要再画 LV(否则和模板重叠变粗)。数字左缘锚定 `box.Left+43`(≈x264,贴 LV 右侧),垂直居中 box 中线(≈y377);`SplitLevelForCache` 加小数→`+`(整数部分,小数 ≥0.6 显示 `+`)。灰紫描边 `Pen` 宽度 5f(对齐预览,比初版 2f 粗)。
+- 落地前先用 PowerShell + System.Drawing 原型对拍 `songdetail_preview`,像素级吻合后再改 C#。
+
+### 缓存与失效
+
+- 不再每次播放都重烤。`EnsureSongDetailCache` 先用 `BuildSongDetailSignature`(版本号 + 标题/曲师/谱师/等级/BPM + 封面路径/修改时间/大小,`` 分隔)和 `songdetail_master.sig` 比对,签名一致就直接返回,跳过整个合成。
+- 签名比对只是读一个小文本文件 + 字符串比较,不渲染,**不卡**;只有信息或封面真变了才重烤。
+- 关闭 WPF "谱面信息"(`Infomation`)对话框后调用 `InvalidateSongDetailCache()` 删掉 `.sig`,强制下次播放重烤一次(PNG 先留着避免封面瞬间空缺)。
+- 渲染逻辑改动时把 `SongDetailCacheVersion` +1,旧缓存签名自动失效、重烤一次。
+
+### 约束
+
+- System.Drawing 自适应字号**不要**用带 `rect.Size` + `EllipsisCharacter` 的 `MeasureString`,会把截断宽度当成"放得下"。用 `GenericTypographic` 测单行紧排宽度。
+- 不要在播放路径里无条件重烤封面;按签名跳过,信息变更(尤其关闭谱面信息对话框)才失效。
+- 等级 glyph 用固定字号(50/25)按相对位置摆,不要 scale-to-box 放大紧致 bounds(会爆大)。
+- 坐标系是 341×588;等级组中心 ≈ (277.5, 377),`+` 顶部 ≈ y358。改前后都和 `dist/songdetail_preview_*.png` 比对。
+
 ## `m` 灰度语法
 
 ### 最终规则
@@ -134,16 +167,19 @@
 
 - 修改 BASS 暂停 API 曾导致 Edit 请求线程等待 View 响应并卡死。
 - View 报错时使用异常日志会触发 Unity Error Pause，造成同步 HTTP 请求死锁。
+- **拖动后立刻播放，开头一批 note 全掉**。根因是 codex 把 View `HttpHandler.Start` 从原版的「先 `SetStartTime` → 异步 `LoadJson`」改成了「同步 `LoadJsonImmediate` 把整谱实例化完 → 才 `SetStartTime`」。而 Edit 端 Normal play 先在主线程 `Bass.BASS_ChannelPlay`、再后台发包，BGM 已经在跑。View 同步加载耗时 X 使 `startAt` 过期 X，`AudioTimeProvider.Update` 第一帧 `AudioTime = offset + X` 直接快进，跳过 `[offset, offset+X]` 这段已加载的 note → 瞬间判 Miss。X 随谱面规模/封面烤图波动，故「有概率、拖到密集段更明显」。在 `startTime` 数值上修修补补治不了本质（codex 试了几十次）。OpStart/Record 走 Edit 端 5 秒倒计时缓冲，X 被吸收，不中招。
 
 ### 修复
 
 - 保留当前稳定的音频暂停/继续链路，未经完整测试不要替换 BASS API。
 - 可展示给用户的谱面错误使用普通警告和 `ErrText`，不要触发 Unity Error Pause。
+- 掉 note：只把 `Start` case 回退到原版顺序——**先 `timeProvider.SetStartTime`，再异步 `loader.LoadJson`（不是 `LoadJsonImmediate`）**。ALPHA 表/封面在异步 `LoadJson` 的 `Update` 分支里同样会做，功能不丢。只改 Normal play 这一处，OpStart/Record 不动。
 
 ### 约束
 
 - HTTP 处理不能在主线程异常暂停时阻塞请求线程。
 - 修改 Pause、Continue、Stop 前必须同时检查 Edit 音频位置、View 时间轴和 HTTP 响应。
+- 播放路径必须「先设时间基准、再（异步）加载 note」。绝不能在 `SetStartTime` 之前同步加载整谱，否则 `startAt` 会过期、开头 note 被 `AudioTime` 快进跳过。
 
 ## 性能与录制
 
@@ -164,6 +200,28 @@
 - 与 4.3.1 一致：最后一个音符对象结束后可以立即显示 All Perfect。
 - 不主动清理场上的打击特效，已有特效按各自 Animator 自然播放结束。
 - `ResetAllEffects()` 只用于明确的暂停、停止或场景重置，不用于 All Perfect 入场。
+
+## 音符实时预览 (待机界面)
+
+### 架构
+
+- 写谱时光标所在音符槽在 View 待机界面静态渲染:WPF `NotePreviewModule` 把光标处 note 组展开(残缺 slide → 8 个端点),`MainWindowCore` debounce(120ms)后以 `EditorControlMethod.Preview` 发包。
+- View `HttpHandler.Preview` 用 `loader.LoadJson(previewJson, -999f, previewOnly:true)` 加载;`previewOnly` 的 note 在 `TapBase` 等里跳过 `FixedUpdate` 判定、`Check`、`OnDestroy` 的 `NextNote`,是**不推进判定队列的惰性 note**。
+
+### 错误
+
+- 开头预览转场(OpStart)非从头播放时,老版 `NOTE DESIGN` 静态字幕有概率闪出。根因:`HideLegacySongDetailTexts` 用 `FindObjectsByType<Text>` 全场景按文字内容扫,而该 API **跳过未激活对象**;`CanvasSongDetail` 在 `LoadJsonImmediate` 时若恰为未激活,字幕没被隐藏,随后 `PlaySongDetail` 激活面板时露出。
+- 预览时快速拖动并播放,有概率判定区被占位、note 全漏。根因:WPF `NotePreviewTimer_Elapsed` 在定时器线程 POST,与 UI 线程的播放启动存在 TOCTOU;漏网的 Preview 在 Start 之后到达 View,`ClearLoadedNotes` 抹掉真实谱面并注入惰性预览 note,`noteIndex` 永不前进 → 后续 `CanJudge` 全 false。
+
+### 修复
+
+- `SongDetailTemplateView.HideLegacyCardTexts` 改为锚定 `designerState.parent`(卡片 TextWrapper 的**原始**父级,`ConfigureText` 会把受管文字重挂到 cardImage,实时父级不可靠),用 `GetComponentsInChildren<Text>(true)`(含未激活)只隐藏非受管字幕,记录到 `legacyHiddenTexts`;`ResetOriginal` 再恢复。确定性,不再依赖时机。
+- View 侧权威闸门:`HttpHandler` 加 `liveChartActive`,Start/OpStart/Record 置 true、Stop 置 false;`Preview` case 开头若 `liveChartActive` 直接 `break`(在 `ClearLoadedNotes` 之前)。无论 WPF 跨线程时序如何,迟到的 Preview 都无法污染正在播放的谱面。`isStart` 不能区分预览/播放(`SetPreviewTime` 也置 `isStart=true`),故用显式标志。
+
+### 约束
+
+- Preview 只在待机界面有效;一旦有真实谱面活动(含暂停),View 必须丢弃 Preview,不得 `ClearLoadedNotes`。
+- 隐藏卡片字幕用子树遍历(含未激活),不要用 `FindObjectsByType`(跳过未激活)或按文字内容全场景扫。
 
 ## 修改流程
 

@@ -45,6 +45,8 @@ public class HoldDrop : NoteLongDrop
 
     private SpriteRenderer spriteRenderer;
     private MaterialPropertyBlock brightnessProperties;
+    private bool holdLineFlipped;
+    private bool holdLineRotationInitialized;
 
 
     private void Start()
@@ -123,10 +125,13 @@ public class HoldDrop : NoteLongDrop
         inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
         sensorPos = (SensorType)(startPosition - 1);
-        inputManager.BindArea(Check, sensorPos);
+        if (!previewOnly)
+            inputManager.BindArea(Check, sensorPos);
     }
     private void FixedUpdate()
     {
+        if (previewOnly)
+            return;
         var timing = GetJudgeTiming();
         var remainingTime = GetRemainingTime();
 
@@ -194,6 +199,8 @@ public class HoldDrop : NoteLongDrop
     }
     void Check(object sender, InputEventArgs arg)
     {
+        if (previewOnly)
+            return;
         if (arg.Type != sensor.Type)
             return;
         else if (isJudged || !noteManager.CanJudge(gameObject, startPosition))
@@ -306,8 +313,7 @@ public class HoldDrop : NoteLongDrop
         }
 
 
-        transform.rotation = Quaternion.Euler(0, 0, -22.5f + -45f * (startPosition - 1));
-        tapLine.transform.rotation = transform.rotation;
+        UpdateHoldLineRotation(distance);
         holdEffect.transform.position = getPositionFromDistance(4.8f);
 
         if (isBreak &&
@@ -366,9 +372,27 @@ public class HoldDrop : NoteLongDrop
         tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
         exSpriteRender.size = spriteRenderer.size;
     }
+
+    private void UpdateHoldLineRotation(float distance)
+    {
+        var shouldFlip = State == NoteStatus.Running && distance < 0f;
+        if (holdLineRotationInitialized && holdLineFlipped == shouldFlip)
+            return;
+
+        holdLineRotationInitialized = true;
+        holdLineFlipped = shouldFlip;
+        var position = shouldFlip ? (startPosition + 3) % 8 + 1 : startPosition;
+        var rotation = Quaternion.Euler(0, 0, -22.5f + -45f * (position - 1));
+        transform.rotation = rotation;
+        tapLine.transform.rotation = rotation;
+    }
     private void OnDestroy()
     {
-        if (HttpHandler.IsReloding)
+        if (inputManager != null)
+            inputManager.UnbindArea(Check, sensorPos);
+        if (manager != null && sensor != null)
+            manager.SetSensorOff(sensor.Type, guid);
+        if (previewOnly || HttpHandler.IsReloding)
             return;
         var realityHT = LastFor - 0.3f - (judgeDiff / 1000f);
         var percent = MathF.Min(1, (realityHT - playerIdleTime) / realityHT);
@@ -432,7 +456,6 @@ public class HoldDrop : NoteLongDrop
             objectCounter.NextNote(startPosition);
 
         manager.SetSensorOff(sensor.Type, guid);
-        inputManager.UnbindArea(Check, sensorPos);
     }
     protected override void PlayHoldEffect()
     {

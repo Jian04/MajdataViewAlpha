@@ -37,6 +37,13 @@ public class SensorManager : MonoBehaviour
     {
         GetSensor(t).SetOff(id);
     }
+    public void ResetAllSensors()
+    {
+        foreach (var sensor in sensors)
+            if (sensor != null)
+                sensor.ResetState();
+    }
+
     public SensorStatus GetSensorStatus(SensorType t) => sensors[(int)t].Status;
     public Sensor[] GetSensors(SensorGroup g) => sensors.Where(x => x.Group == g).ToArray();
     public Sensor GetSensor(SensorType t) => sensors[(int)t];

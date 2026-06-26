@@ -325,8 +325,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
                                    .Select(x => x.Key);
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
         boundSensors.AddRange(allSensors);
-        foreach (var sensor in allSensors)
-            inputManager.BindSensor(Check, sensor);
+        if (!previewOnly)
+            foreach (var sensor in allSensors)
+                inputManager.BindSensor(Check, sensor);
     }
     void GetSensors(RectTransform[] sensors)
     {
@@ -362,6 +363,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
     }
     private void FixedUpdate()
     {
+        if (previewOnly)
+            return;
         if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
             return;
 
@@ -476,6 +479,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
     /// </summary>
     public void Check()
     {
+        if (previewOnly)
+            return;
         if (isFinished || !canCheck)
             return;
         else if (isChecking)
@@ -744,8 +749,14 @@ public class SlideDrop : NoteLongDrop, IFlasher
     }
     void OnDestroy()
     {
-        if (isDestroying || HttpHandler.IsReloding)
+        if (isDestroying)
             return;
+        isDestroying = true;
+        foreach (var sensor in boundSensors)
+            inputManager?.UnbindSensor(Check, sensor);
+        if (previewOnly || HttpHandler.IsReloding)
+            return;
+        ClearTriggeredSensor();
         if (ConnectInfo.Parent != null)
             Destroy(ConnectInfo.Parent);
         if(star_slide != null)
@@ -774,10 +785,6 @@ public class SlideDrop : NoteLongDrop, IFlasher
             // 如果不是组内最后一个 那么也要将判定条删掉
             Destroy(slideOK);
         }
-        foreach (var sensor in boundSensors)
-            inputManager.UnbindSensor(Check, sensor);
-        ClearTriggeredSensor();
-        isDestroying = true;
     }
     /// <summary>
     /// 更新引导Star状态

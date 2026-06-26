@@ -6,9 +6,12 @@ internal class Majson
     public string designer = "default";
     public string difficulty = "EZ";
     public int diffNum = 0;
+    public string filePath = "";
     public string level = "1";
+    public int songDetailStyle = 0;
     public List<SimaiTimingPoint> timingList = new();
     public string title = "default";
+    public string wholeBpm = "";
     // ALPHA: true SV — global scroll velocity table
     public List<SvPoint> svTable = new();
     // ALPHA: mid-chart note color change events (from <COLOR*...> tokens)
@@ -142,8 +145,14 @@ internal class EditRequestjson
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
+    public string skin = "dx";
+    public bool previewFlow;
+    public float previewTimelineTime;
+    public bool showAllPerfect = true;
+    public int songDetailStyle = 0;
     public float chartLength;
     public int recordFrameRate = 30;
+    public string previewJson;
 }
 
 public enum EditorComboIndicator
@@ -174,7 +183,8 @@ internal enum EditorControlMethod
     Pause,
     Continue,
     Record,
-    SetDisplay
+    SetDisplay,
+    Preview
 }
 
 public enum EditorPlayMethod

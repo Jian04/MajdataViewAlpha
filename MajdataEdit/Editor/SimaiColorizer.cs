@@ -13,7 +13,6 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Bpm = new(@"\([^)]+\)", RegexOptions.Compiled);
     private static readonly Regex Beat = new(@"\{[^}]+\}", RegexOptions.Compiled);
-    private static readonly Regex Comment = new(@"\|\|.*$", RegexOptions.Compiled);
 
     private static readonly SolidColorBrush TokenBrush = Brush("#D7A7FF");
     private static readonly SolidColorBrush BpmBrush = Brush("#55D6FF");
@@ -25,9 +24,14 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
     private static readonly SolidColorBrush BreakBrush = Brush("#FF704D");
     private static readonly SolidColorBrush MonoBrush = Brush("#A9B0BA");
     private static readonly SolidColorBrush CommentBrush = Brush("#727985");
+    private static readonly SolidColorBrush SectionMarkerBrush = Brush("#39D9D0");
+    private readonly List<TextSpan> markerSpans = new();
+    private readonly List<TextSpan> commentSpans = new();
+    private object? cachedVersion;
 
     protected override void ColorizeLine(DocumentLine line)
     {
+        RefreshDocumentSpans();
         var text = CurrentContext.Document.GetText(line);
         var occupied = new bool[text.Length];
 
@@ -38,8 +42,92 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
         foreach (var slot in SplitRanges(text, ','))
             ColorizeSlot(line, text, slot.Start, slot.Length, occupied);
 
-        ApplyMatches(line, text, Comment, CommentBrush, occupied, true);
+        ApplyForegroundSpans(line, markerSpans, SectionMarkerBrush, occupied);
+        ApplyForegroundSpans(line, commentSpans, CommentBrush, occupied);
     }
+
+    private void RefreshDocumentSpans()
+    {
+        var document = CurrentContext.Document;
+        if (ReferenceEquals(cachedVersion, document.Version))
+            return;
+
+        cachedVersion = document.Version;
+        markerSpans.Clear();
+        commentSpans.Clear();
+
+        var text = document.Text;
+        for (var i = 0; i < text.Length;)
+        {
+            if (i + 1 < text.Length && text[i] == '|' && text[i + 1] == '*')
+            {
+                var end = text.IndexOf("*|", i + 2, StringComparison.Ordinal);
+                end = end < 0 ? text.Length : end + 2;
+                commentSpans.Add(new TextSpan(i, end - i));
+                i = end;
+                continue;
+            }
+            if (i + 1 < text.Length && text[i] == '|' && text[i + 1] == '|')
+            {
+                var end = text.IndexOf('\n', i + 2);
+                end = end < 0 ? text.Length : end;
+                commentSpans.Add(new TextSpan(i, end - i));
+                i = end;
+                continue;
+            }
+            if (text[i] == '&' && TryReadTintMarker(text, i, out var color, out var length))
+            {
+                markerSpans.Add(new TextSpan(i, length));
+                i += length;
+                continue;
+            }
+            i++;
+        }
+    }
+
+    private static bool TryReadTintMarker(
+        string text,
+        int start,
+        out string color,
+        out int length)
+    {
+        color = "";
+        length = 0;
+        if (start + 5 <= text.Length &&
+            string.Equals(text.Substring(start, 5), "&NULL", StringComparison.OrdinalIgnoreCase))
+        {
+            length = 5;
+            return true;
+        }
+        if (start + 7 > text.Length)
+            return false;
+
+        var candidate = text.Substring(start + 1, 6);
+        if (!candidate.All(Uri.IsHexDigit))
+            return false;
+        color = candidate;
+        length = 7;
+        return true;
+    }
+
+    private void ApplyForegroundSpans(
+        DocumentLine line,
+        IEnumerable<TextSpan> spans,
+        SolidColorBrush brush,
+        bool[] occupied)
+    {
+        var lineStart = line.Offset;
+        var lineEnd = line.EndOffset;
+        foreach (var span in spans)
+        {
+            var start = Math.Max(lineStart, span.Start);
+            var end = Math.Min(lineEnd, span.Start + span.Length);
+            if (end > start)
+                Apply(line, start - lineStart, end - start, brush, occupied, true);
+        }
+    }
+
+    private readonly record struct TextSpan(int Start, int Length);
 
     private void ColorizeSlot(DocumentLine line, string text, int start, int length, bool[] occupied)
     {
@@ -120,6 +208,10 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
                 Apply(line, start, pathIndex, MonoBrush, occupied, true);
             else
                 Apply(line, start, length, MonoBrush, occupied, true);
+
+            foreach (var index in breakIndexes)
+                if (!monoHeadOnly || index < pathIndex)
+                    Apply(line, start + index, 1, MonoBrush, occupied, true);
         }
     }
 
@@ -130,7 +222,7 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
         var braceDepth = 0;
         for (var i = 0; i < text.Length; i++)
         {
-            if (text[i] == '<')
+            if (text[i] == '<' && IsAlphaTokenStart(text, i))
             {
                 angleDepth++;
                 continue;

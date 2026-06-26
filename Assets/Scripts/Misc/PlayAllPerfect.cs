@@ -1,56 +1,45 @@
 using Assets.Scripts.Types;
-using System.Collections;
 using UnityEngine;
 
 #nullable enable
 public class PlayAllPerfect : MonoBehaviour
 {
     private GameObject Allperfect;
-    private Animator allPerfectAnimator;
     private AudioTimeProvider timeProvider;
     private JsonDataLoader loader;
-    private bool sequenceStarted;
+    private bool showAllPerfect = true;
 
     private void Start()
     {
         loader = FindAnyObjectByType<JsonDataLoader>();
         timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
         Allperfect = GameObject.Find("CanvasAllPerfect");
-        allPerfectAnimator = Allperfect.GetComponent<Animator>();
         Allperfect.SetActive(false);
     }
 
     private void Update()
     {
-        if (loader == null)
+        if (!showAllPerfect || Allperfect == null || timeProvider == null)
             return;
-        if (loader.State is not (NoteLoaderStatus.Idle or NoteLoaderStatus.Finished))
-            return;
-        if (!timeProvider.isStart || transform.childCount != 0 || Allperfect == null || sequenceStarted)
+        if (loader != null && loader.State is not (NoteLoaderStatus.Idle or NoteLoaderStatus.Finished))
             return;
 
-        sequenceStarted = true;
-        Allperfect.SetActive(true);
-        StartCoroutine(FinishSequence());
+        // Keep the original 4.3.1 behavior: View only reveals the AP canvas.
+        // Audio timing and stop timing stay owned by MajdataEdit.
+        if (timeProvider.isStart && transform.childCount == 0)
+            Allperfect.SetActive(true);
     }
 
-    private IEnumerator FinishSequence()
+    public void Configure(bool visible)
     {
-        // Stop on the actual final animation frame rather than maintaining
-        // a second hard-coded duration that can drift from the clip.
-        yield return null;
-        if (allPerfectAnimator != null)
-        {
-            while (allPerfectAnimator.GetCurrentAnimatorStateInfo(0).normalizedTime < 1f)
-                yield return null;
-        }
-        Allperfect.SetActive(false);
+        showAllPerfect = visible;
+        if (!showAllPerfect && Allperfect != null)
+            Allperfect.SetActive(false);
+    }
 
-        if (!timeProvider.isRecord)
-            yield break;
-
-        var recorder = GameObject.Find("ScreenRecorder")?.GetComponent<ScreenRecorder>();
-        if (recorder != null && recorder.IsRecording)
-            recorder.StopRecording();
+    public void PreviewNow()
+    {
+        if (showAllPerfect && Allperfect != null)
+            Allperfect.SetActive(true);
     }
 }

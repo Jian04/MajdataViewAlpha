@@ -9,6 +9,7 @@ public class AudioTimeProvider : MonoBehaviour
     public bool isRecord;
     public float offset;
     private float speed;
+    private bool previewFixedTime;
 
     private float startTime;
     private long ticks;
@@ -28,6 +29,9 @@ public class AudioTimeProvider : MonoBehaviour
     // Update is called once per frame
     private void Update()
     {
+        if (previewFixedTime)
+            return;
+
         if (isStart)
         {
             if (isRecord)
@@ -44,6 +48,7 @@ public class AudioTimeProvider : MonoBehaviour
     }
     public void SetStartTime(long _ticks, float _offset, float _speed, bool _isRecord = false, int recordFrameRate = 30)
     {
+        previewFixedTime = false;
         ticks = _ticks;
         offset = _offset;
         AudioTime = offset;
@@ -73,9 +78,23 @@ public class AudioTimeProvider : MonoBehaviour
 
     public void ResetStartTime()
     {
+        previewFixedTime = false;
         offset = 0f;
         isStart = false;
         RestoreFrameRate();
+    }
+
+    public void SetPreviewTime(float previewTime)
+    {
+        RestoreFrameRate();
+        previewFixedTime = true;
+        isRecord = false;
+        isStart = true;
+        offset = previewTime;
+        AudioTime = previewTime;
+        speed = 1f;
+        Time.captureFramerate = 0;
+        Application.targetFrameRate = PlaybackFrameRate;
     }
 
     public void RestoreFrameRate()

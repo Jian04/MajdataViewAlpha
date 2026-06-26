@@ -1,6 +1,8 @@
 ﻿using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
@@ -50,6 +52,7 @@ public partial class MainWindow : Window
     private readonly short[][] waveRaws = new short[3][];
     public Timer chartChangeTimer = new(1000); // 谱面变更延迟解析]\
     private readonly Timer currentTimeRefreshTimer = new(100);
+    private readonly Timer notePreviewTimer = new(120);
 
     public DiscordRpcClient DCRPCclient = new("1068882546932326481");
 
@@ -62,9 +65,30 @@ public partial class MainWindow : Window
     private bool isLoading;
     private bool isReplaceConformed;
     private bool chartParsePending;
+    private bool suppressLevelTextChange;
+    private bool immediateWaveRefreshQueued;
+    private object? timelineDisplaySource;
+    private object? timelineEffectSource;
+    private object? timelineSubtitleSource;
+    private readonly List<TimelineOverlayItem> timelineOverlayCache = new();
+    // Small lead-in for a fresh Normal play: send the chart to the View first, wait
+    // this long so it can load, then start the BGM and the View clock from the same
+    // instant. Without it the BGM started before the View finished loading, startAt
+    // went stale by the send+load time, and the View fast-forwarded past (and missed)
+    // the first notes — the "scrub back then play drops notes" bug.
+    private const double PlaybackLeadIn = 0.2d;
+    private double? flowTimelineCursor;
+    private bool flowPreviewActive;
+    private DateTime flowPreviewStartedAt;
+    private double flowPreviewStartTime;
+    private int flowPreviewGeneration;
+    private int notePreviewGeneration;
+    private string? lastNotePreviewKey;
+    private const double RecordingIntroDuration = 5d;
+    private const double AllPerfectDuration = 4d;
 
     private bool isSaved = true;
-    private EditorControlMethod lastEditorState;
+    private EditorControlMethod lastEditorState = EditorControlMethod.Stop;
     private FumenEditorAdapter fumenEditor = null!;
     private EditorSelection? lastFindPosition;
 
@@ -249,9 +273,11 @@ public partial class MainWindow : Window
 
         LevelSelector.SelectedItem = LevelSelector.Items[0];
         ReadSetting();
+        chartParsePending = true;
         SetRawFumenText(SimaiProcess.fumens[selectedDifficulty]);
-        SeekTextFromTime();
         SimaiProcess.Serialize(GetRawFumenText());
+        SeekTextFromTime();
+        chartParsePending = false;
         FumenContent.Focus();
         DrawWave();
 
@@ -272,6 +298,33 @@ public partial class MainWindow : Window
     internal async void SyntaxCheck()
     {
         await Task.CompletedTask;
+    }
+
+    private double GetTimeFromParsedPosition(int line, int column)
+    {
+        if (SimaiProcess.timinglist.Count == 0)
+            return GetTimelinePosition();
+
+        var low = 0;
+        var high = SimaiProcess.timinglist.Count - 1;
+        var best = 0;
+        while (low <= high)
+        {
+            var middle = low + (high - low) / 2;
+            var point = SimaiProcess.timinglist[middle];
+            var beforeCaret = point.rawTextPositionY < line ||
+                              point.rawTextPositionY == line && point.rawTextPositionX <= column;
+            if (beforeCaret)
+            {
+                best = middle;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+        return SimaiProcess.timinglist[best].time;
     }
 
     void SetErrCount<T>(T eCount) => Dispatcher.Invoke(() => ErrCount.Content = $"{eCount}");
@@ -482,6 +535,7 @@ public partial class MainWindow : Window
         AddGesture(editorSetting.Mirror45Key, "Mirror45");
         AddGesture(editorSetting.MirrorCcw45Key, "MirrorCcw45");
         FumenContent.FontSize = editorSetting.FontSize;
+        ApplyEditorAppearance();
 
         ViewerSpeed.Content = editorSetting.playSpeed.ToString("F1"); // 转化为形如"7.0", "9.5"这样的速度
         ViewerTouchSpeed.Content = editorSetting.touchSpeed.ToString("F1");
@@ -494,6 +548,30 @@ public partial class MainWindow : Window
     public void SaveEditorSetting()
     {
         File.WriteAllText(editorSettingFilename, JsonConvert.SerializeObject(editorSetting, Formatting.Indented));
+    }
+
+    internal void ApplyEditorAppearance()
+    {
+        if (editorSetting == null)
+            return;
+
+        var theme = ThemeManager.LoadThemeByName(editorSetting.EditorTheme);
+        ThemeManager.ApplyApplicationResources(theme);
+        FumenContent.FontWeight = FontWeights.Normal;
+        FumenContent.FontFamily = editorSetting.EditorFontPreset switch
+        {
+            0 => new System.Windows.Media.FontFamily("Consolas"),
+            1 => new System.Windows.Media.FontFamily("Cascadia Code"),
+            2 => new System.Windows.Media.FontFamily("Cascadia Mono"),
+            3 => new System.Windows.Media.FontFamily("Microsoft YaHei UI"),
+            4 => new System.Windows.Media.FontFamily("Noto Sans SC, Microsoft YaHei UI"),
+            5 => new System.Windows.Media.FontFamily("NSimSun, SimSun"),
+            6 => new System.Windows.Media.FontFamily("DengXian, Microsoft YaHei UI"),
+            7 => new System.Windows.Media.FontFamily("Noto Serif SC, SimSun"),
+            8 => new System.Windows.Media.FontFamily("Global Monospace, Consolas"),
+            _ => new System.Windows.Media.FontFamily("Cascadia Code, Consolas")
+        };
+        ThemeManager.ApplyEditor(FumenContent, theme);
     }
 
     private void AddGesture(string keyGusture, string command)
@@ -521,16 +599,135 @@ public partial class MainWindow : Window
     private void ChartChangeTimer_Elapsed(object? sender, ElapsedEventArgs e)
     {
         Console.WriteLine("TextChanged");
+        QueueImmediateWaveRefresh();
         SyntaxCheck();
-        Dispatcher.InvokeAsync(
-            delegate
-            {
-                ghostCusorPositionTime = (float)SimaiProcess.Serialize(
-                    GetRawFumenText(), GetRawFumenPosition());
-                chartParsePending = false;
-                DrawWave();
-            }
-        );
+    }
+
+    private void QueueImmediateWaveRefresh()
+    {
+        if (immediateWaveRefreshQueued)
+            return;
+
+        immediateWaveRefreshQueued = true;
+        Dispatcher.InvokeAsync(() =>
+        {
+            immediateWaveRefreshQueued = false;
+            if (isLoading || string.IsNullOrEmpty(GetRawFumenText()))
+                return;
+            ghostCusorPositionTime = (float)SimaiProcess.Serialize(
+                GetRawFumenText(), GetRawFumenPosition());
+            chartParsePending = false;
+            DrawWave();
+        }, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private void QueueNotePreview()
+    {
+        if (isLoading || isPlaying || lastEditorState != EditorControlMethod.Stop)
+            return;
+
+        notePreviewGeneration++;
+        notePreviewTimer.Stop();
+        notePreviewTimer.Start();
+    }
+
+    private void CancelNotePreview()
+    {
+        notePreviewGeneration++;
+        notePreviewTimer.Stop();
+        lastNotePreviewKey = null;
+    }
+
+    private void NotePreviewTimer_Elapsed(object? sender, ElapsedEventArgs e)
+    {
+        string? requestJson = null;
+        var generation = notePreviewGeneration;
+        Dispatcher.Invoke(() =>
+        {
+            if (generation == notePreviewGeneration &&
+                !isLoading && !isPlaying && lastEditorState == EditorControlMethod.Stop)
+                requestJson = BuildNotePreviewRequestJson();
+        });
+
+        if (!string.IsNullOrEmpty(requestJson) &&
+            generation == notePreviewGeneration &&
+            !isLoading && !isPlaying && lastEditorState == EditorControlMethod.Stop)
+            WebControl.RequestPOST("http://localhost:8013/", requestJson);
+    }
+
+    private string? BuildNotePreviewRequestJson()
+    {
+        var group = NotePreviewModule.ExtractNoteGroupAtCaret(GetRawFumenText(), (int)GetRawFumenPosition());
+        var previewNotes = NotePreviewModule.ExpandPreview(group);
+        var previewKey = string.Join("/", previewNotes);
+        if (string.Equals(previewKey, lastNotePreviewKey, StringComparison.Ordinal))
+            return null;
+
+        lastNotePreviewKey = previewKey;
+        var request = new EditRequestjson
+        {
+            control = EditorControlMethod.Preview,
+            noteSpeed = editorSetting?.playSpeed ?? 7f,
+            touchSpeed = editorSetting?.touchSpeed ?? 7.5f,
+            smoothSlideAnime = editorSetting?.SmoothSlideAnime ?? false,
+            skin = editorSetting?.Skin ?? "dx",
+            songDetailStyle = editorSetting?.SongDetailStyle ?? 0,
+            editorPlayMethod = EditorPlayMethod.Disabled,
+            previewJson = BuildNotePreviewMajsonJson(previewNotes)
+        };
+        return JsonConvert.SerializeObject(request);
+    }
+
+    private string? BuildNotePreviewMajsonJson(List<string> previewNotes)
+    {
+        if (previewNotes == null || previewNotes.Count == 0)
+            return null;
+
+        var content = string.Join("/", previewNotes);
+        // Put preview notes slightly after the preview clock. Touch/hold notes
+        // at exactly 0s can be consumed before the user sees them.
+        var timing = new SimaiTimingPoint(0.01d, 0, 0, content, 120f);
+        timing.noteList = timing.getNotes();
+        if (timing.noteList.Count == 0)
+        {
+            var validBranches = previewNotes
+                .SelectMany(note => note.Split('/'))
+                .Where(IsPreviewBranchParseable)
+                .Distinct()
+                .ToList();
+            if (validBranches.Count == 0)
+                return null;
+
+            content = string.Join("/", validBranches);
+            timing = new SimaiTimingPoint(0.01d, 0, 0, content, 120f);
+            timing.noteList = timing.getNotes();
+            if (timing.noteList.Count == 0)
+                return null;
+        }
+
+        var majson = new Majson
+        {
+            title = SimaiProcess.title ?? "",
+            artist = SimaiProcess.artist ?? "",
+            designer = selectedDifficulty >= 0 ? SimaiProcess.GetDesignerText(selectedDifficulty) : "",
+            difficulty = selectedDifficulty >= 0 ? SimaiProcess.GetDifficultyText(selectedDifficulty) : "",
+            diffNum = Math.Max(0, selectedDifficulty),
+            level = selectedDifficulty >= 0 && selectedDifficulty < SimaiProcess.levels.Length
+                ? SimaiProcess.levels[selectedDifficulty]
+                : "1",
+            wholeBpm = SimaiProcess.GetWholeBpmText()
+        };
+        majson.songDetailStyle = editorSetting?.SongDetailStyle ?? 0;
+        majson.timingList.Add(timing);
+        return JsonConvert.SerializeObject(majson);
+    }
+
+    private static bool IsPreviewBranchParseable(string branch)
+    {
+        if (string.IsNullOrWhiteSpace(branch))
+            return false;
+        var timing = new SimaiTimingPoint(0.01d, 0, 0, branch, 120f);
+        return timing.getNotes().Count > 0;
     }
 
     private void DrawFFT()
@@ -538,7 +735,7 @@ public partial class MainWindow : Window
         Dispatcher.InvokeAsync(() =>
         {
             //Scroll WaveView
-            var currentTime = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
+            var currentTime = GetTimelinePosition();
             //MusicWave.Margin = new Thickness(-currentTime / sampleTime * zoominPower, Margin.Left, MusicWave.Margin.Right, Margin.Bottom);
             //MusicWaveCusor.Margin = new Thickness(-currentTime / sampleTime * zoominPower, Margin.Left, MusicWave.Margin.Right, Margin.Bottom);
 
@@ -579,8 +776,10 @@ public partial class MainWindow : Window
 
     private void InitWave()
     {
-        var width = (int)Width - 2;
-        var height = (int)MusicWave.Height;
+        // Keep the original editor coordinate system. DrawWave, the center
+        // cursor and mouse scrolling were all designed around window width.
+        var width = Math.Max(1, (int)Width - 2);
+        var height = Math.Max(1, (int)MusicWave.Height);
         WaveBitmap = new WriteableBitmap(width, height, 72, 72, PixelFormats.Pbgra32, null);
         MusicWave.Source = WaveBitmap;
     }
@@ -610,10 +809,9 @@ public partial class MainWindow : Window
             var backBitmap = new Bitmap(width, height, WaveBitmap.BackBufferStride,
                 PixelFormat.Format32bppArgb, WaveBitmap.BackBuffer);
             var graphics = Graphics.FromImage(backBitmap);
-            var currentTime = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
+            var currentTime = GetTimelinePosition();
 
             graphics.Clear(Color.FromArgb(100, 0, 0, 0));
-
             var resample = (int)deltatime - 1;
             if (resample > 1 && resample <= 3) resample = 1;
             if (resample > 3) resample = 2;
@@ -625,9 +823,14 @@ public partial class MainWindow : Window
             var linewidth = backBitmap.Width / (float)(stopindex - startindex);
             var pen = new Pen(Color.Green, linewidth);
             var points = new List<PointF>();
+            if (startindex < 0)
+            {
+                var zeroX = (0 - startindex) * linewidth;
+                graphics.DrawLine(pen, 0f, height / 2f, Math.Min(width, zeroX), height / 2f);
+            }
             for (var i = startindex; i < stopindex; i = i + 1)
             {
-                if (i < 0) i = 0;
+                if (i < 0) continue;
                 if (i >= waveLevels.Length - 1) break;
 
                 var x = (i - startindex) * linewidth;
@@ -694,8 +897,6 @@ public partial class MainWindow : Window
                 graphics.DrawLine(pen, x, 0, x, 15);
             }
 
-            DrawAlphaTimeline(graphics, currentTime, deltatime, step, startindex, linewidth, height);
-
             //Draw timing lines
             pen = new Pen(Color.White, 1);
             foreach (var note in SimaiProcess.timinglist)
@@ -707,6 +908,10 @@ public partial class MainWindow : Window
             }
 
             //Draw notes                    
+            using var starFont = new Font("Consolas", 12, System.Drawing.FontStyle.Bold);
+            using var breakStarBrush = new SolidBrush(Color.OrangeRed);
+            using var eachStarBrush = new SolidBrush(Color.Gold);
+            using var normalStarBrush = new SolidBrush(Color.DeepSkyBlue);
             foreach (var note in SimaiProcess.notelist)
             {
                 if (note == null) break;
@@ -746,9 +951,10 @@ public partial class MainWindow : Window
                                 pen.Color = Color.Gold;
                             else
                                 pen.Color = Color.DeepSkyBlue;
-                            Brush brush = new SolidBrush(pen.Color);
-                            graphics.DrawString("*", new Font("Consolas", 12, System.Drawing.FontStyle.Bold), brush,
-                                new PointF(x - 7f, y - 7f));
+                            var brush = noteD.isBreak
+                                ? breakStarBrush
+                                : isEach ? eachStarBrush : normalStarBrush;
+                            graphics.DrawString("*", starFont, brush, new PointF(x - 7f, y - 7f));
                         }
                         else
                         {
@@ -759,7 +965,7 @@ public partial class MainWindow : Window
                                 pen.Color = Color.Gold;
                             else
                                 pen.Color = Color.LightPink;
-                            graphics.DrawEllipse(pen, x - 2.5f, y - 2.5f, 5, 5);
+                            graphics.DrawEllipse(pen, x - 2.5f, y - 2.5f, 5f, 5f);
                         }
                     }
 
@@ -767,7 +973,7 @@ public partial class MainWindow : Window
                     {
                         pen.Width = 2;
                         pen.Color = isEach ? Color.Gold : Color.DeepSkyBlue;
-                        graphics.DrawRectangle(pen, x - 2.5f, y - 2.5f, 5, 5);
+                        graphics.DrawRectangle(pen, x - 2.5f, y - 2.5f, 5f, 5f);
                     }
 
                     if (noteD.noteType == SimaiNoteType.Hold)
@@ -782,8 +988,8 @@ public partial class MainWindow : Window
 
                         var xRight = x + (float)(noteD.holdTime / step) * linewidth;
 
-                        //1h[0:1]
-                        if (!float.IsNormal(xRight)) xRight = ushort.MaxValue;
+                        // Zero-duration holds are short holds, not unbounded holds.
+                        if (!float.IsFinite(xRight)) xRight = x;
                         if (xRight - x < 1f) xRight = x + 5;
                         graphics.DrawLine(pen, x, y, xRight, y);
 
@@ -794,7 +1000,7 @@ public partial class MainWindow : Window
                         pen.Width = 3;
                         var xDelta = (float)(noteD.holdTime / step) * linewidth / 4f;
                         //Console.WriteLine("HoldPixel"+ xDelta);
-                        if (!float.IsNormal(xDelta)) xDelta = ushort.MaxValue;
+                        if (!float.IsFinite(xDelta)) xDelta = 0f;
                         if (xDelta < 1f) xDelta = 1;
 
                         pen.Color = Color.FromArgb(200, 255, 75, 0);
@@ -818,9 +1024,10 @@ public partial class MainWindow : Window
                                 pen.Color = Color.Gold;
                             else
                                 pen.Color = Color.DeepSkyBlue;
-                            Brush brush = new SolidBrush(pen.Color);
-                            graphics.DrawString("*", new Font("Consolas", 12, System.Drawing.FontStyle.Bold), brush,
-                                new PointF(x - 7f, y - 7f));
+                            var brush = noteD.isBreak
+                                ? breakStarBrush
+                                : isEach ? eachStarBrush : normalStarBrush;
+                            graphics.DrawString("*", starFont, brush, new PointF(x - 7f, y - 7f));
                         }
 
                         if (noteD.isSlideBreak)
@@ -841,6 +1048,9 @@ public partial class MainWindow : Window
                     }
                 }
             }
+
+            DrawRecordingFlowBackground(graphics, currentTime, deltatime, step, startindex, linewidth, height);
+            DrawTimelineOverlay(graphics, currentTime, deltatime, step, startindex, linewidth, height);
 
             if (playStartTime - currentTime <= deltatime)
             {
@@ -875,7 +1085,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private static void DrawAlphaTimeline(
+    private void DrawTimelineOverlay(
         Graphics graphics,
         double currentTime,
         double visibleRange,
@@ -887,19 +1097,54 @@ public partial class MainWindow : Window
         if (step <= 0d || lineWidth <= 0f)
             return;
 
+        RefreshTimelineOverlayCache();
         using var labelFont = new Font("Cascadia Mono", 6.5f, System.Drawing.FontStyle.Regular);
-        DrawTimelineEvents(
-            graphics,
-            SimaiProcess.displayTable.Select(item =>
-                (item.time, (double)item.duration,
-                    $"{item.property}:{item.target:0.##}")),
-            currentTime, visibleRange, step, startIndex, lineWidth, 0f, labelFont);
-        DrawTimelineEvents(
-            graphics,
-            SimaiProcess.effectTable.Select(item =>
-                (item.time, (double)item.duration,
-                    $"{item.effect}:{item.intensity:0.##}")),
-            currentTime, visibleRange, step, startIndex, lineWidth, 13f, labelFont);
+        foreach (var item in timelineOverlayCache)
+        {
+            var endTime = item.Time + Math.Max(0d, item.Duration);
+            if (item.Time > currentTime + visibleRange || endTime < currentTime - visibleRange)
+                continue;
+
+            var x = (float)(item.Time / step - startIndex) * lineWidth;
+            var drawDuration = double.IsPositiveInfinity(item.Duration)
+                ? Math.Max(visibleRange * 2d, currentTime + visibleRange - item.Time)
+                : Math.Max(0d, item.Duration);
+            var durationWidth = (float)(drawDuration / step) * lineWidth;
+            var label = TrimTimelineLabel(item.Label);
+            var textWidth = graphics.MeasureString(label, labelFont).Width + 5f;
+            var width = Math.Max(7f, Math.Max(durationWidth, textWidth));
+            var y = item.Lane * 13f;
+            var rectangle = new RectangleF(x, y, width, 12f);
+            using var gradient = new LinearGradientBrush(
+                rectangle,
+                Color.FromArgb(155, item.Color),
+                Color.FromArgb(0, item.Color),
+                LinearGradientMode.Horizontal);
+            using var labelBrush = new SolidBrush(Color.FromArgb(225, 235, 214, 255));
+            graphics.FillRectangle(gradient, rectangle);
+            graphics.DrawString(label, labelFont, labelBrush,
+                new PointF(x + 2f, y));
+        }
+    }
+
+    private void RefreshTimelineOverlayCache()
+    {
+        if (ReferenceEquals(timelineDisplaySource, SimaiProcess.displayTable) &&
+            ReferenceEquals(timelineEffectSource, SimaiProcess.effectTable) &&
+            ReferenceEquals(timelineSubtitleSource, SimaiProcess.subtitleTable))
+            return;
+
+        timelineDisplaySource = SimaiProcess.displayTable;
+        timelineEffectSource = SimaiProcess.effectTable;
+        timelineSubtitleSource = SimaiProcess.subtitleTable;
+        timelineOverlayCache.Clear();
+
+        timelineOverlayCache.AddRange(SimaiProcess.displayTable.Select(item =>
+            new TimelineOverlayItem(item.time, Math.Max(0d, item.duration),
+                $"{item.property}:{item.target:0.##}", Color.FromArgb(182, 92, 255))));
+        timelineOverlayCache.AddRange(SimaiProcess.effectTable.Select(item =>
+            new TimelineOverlayItem(item.time, Math.Max(0d, item.duration),
+                $"{item.effect}:{item.intensity:0.##}", Color.FromArgb(182, 92, 255))));
 
         var subtitles = SimaiProcess.subtitleTable;
         for (var i = 0; i < subtitles.Count; i++)
@@ -909,46 +1154,97 @@ public partial class MainWindow : Window
                 ? item.duration
                 : i + 1 < subtitles.Count
                     ? Math.Max(0d, subtitles[i + 1].time - item.time)
-                    : visibleRange * 2d;
-            DrawTimelineEvents(
-                graphics,
-                new[] { (item.time, duration, $"TEXT:{TrimTimelineLabel(item.text)}") },
-                currentTime, visibleRange, step, startIndex, lineWidth,
-                Math.Max(0f, height - 13f), labelFont);
+                    : double.PositiveInfinity;
+            timelineOverlayCache.Add(new TimelineOverlayItem(item.time, duration,
+                $"TEXT:{TrimTimelineLabel(item.text)}", Color.FromArgb(182, 92, 255)));
+        }
+
+        timelineOverlayCache.Sort((left, right) => left.Time.CompareTo(right.Time));
+        var laneEnds = Enumerable.Repeat(double.NegativeInfinity, 5).ToArray();
+        var overflowLane = 0;
+        foreach (var item in timelineOverlayCache)
+        {
+            var lane = -1;
+            for (var candidate = 0; candidate < laneEnds.Length; candidate++)
+            {
+                if (laneEnds[candidate] <= item.Time + 0.0001d)
+                {
+                    lane = candidate;
+                    break;
+                }
+            }
+
+            if (lane < 0)
+                lane = overflowLane++ % laneEnds.Length;
+            item.Lane = lane;
+            laneEnds[lane] = item.Time + Math.Max(0d, item.Duration);
         }
     }
 
-    private static void DrawTimelineEvents(
+    private sealed class TimelineOverlayItem
+    {
+        public TimelineOverlayItem(double time, double duration, string label, Color color)
+        {
+            Time = time;
+            Duration = duration;
+            Label = label;
+            Color = color;
+        }
+
+        public double Time { get; }
+        public double Duration { get; }
+        public string Label { get; }
+        public Color Color { get; }
+        public int Lane { get; set; }
+    }
+
+    private void DrawRecordingFlowBackground(
         Graphics graphics,
-        IEnumerable<(double Time, double Duration, string Label)> events,
         double currentTime,
         double visibleRange,
         double step,
         int startIndex,
         float lineWidth,
-        float y,
-        Font labelFont)
+        int height)
     {
-        foreach (var item in events)
-        {
-            var endTime = item.Time + Math.Max(0d, item.Duration);
-            if (item.Time > currentTime + visibleRange || endTime < currentTime - visibleRange)
-                continue;
+        DrawFlowBackground(graphics, -RecordingIntroDuration, -1d, "录制加载",
+            Color.FromArgb(85, 160, 245), currentTime, visibleRange, step, startIndex, lineWidth, height);
+        DrawFlowBackground(graphics, -1d, 0d, "转场",
+            Color.FromArgb(70, 210, 175), currentTime, visibleRange, step, startIndex, lineWidth, height);
+        var allPerfectStart = GetAllPerfectStartTime();
+        if (allPerfectStart >= 0d)
+            DrawFlowBackground(graphics, allPerfectStart, allPerfectStart + AllPerfectDuration, "ALL PERFECT",
+                Color.FromArgb(235, 95, 190), currentTime, visibleRange, step, startIndex, lineWidth, height);
+    }
 
-            var x = (float)(item.Time / step - startIndex) * lineWidth;
-            var durationWidth = (float)(Math.Max(0d, item.Duration) / step) * lineWidth;
-            var width = Math.Max(4f, durationWidth);
-            var rectangle = new RectangleF(x, y, width, 12f);
-            using var gradient = new LinearGradientBrush(
-                rectangle,
-                Color.FromArgb(145, 182, 92, 255),
-                Color.FromArgb(0, 182, 92, 255),
-                LinearGradientMode.Horizontal);
-            using var labelBrush = new SolidBrush(Color.FromArgb(225, 235, 214, 255));
-            graphics.FillRectangle(gradient, rectangle);
-            graphics.DrawString(TrimTimelineLabel(item.Label), labelFont, labelBrush,
-                new PointF(x + 2f, y));
-        }
+    private static void DrawFlowBackground(
+        Graphics graphics,
+        double start,
+        double end,
+        string label,
+        Color color,
+        double currentTime,
+        double visibleRange,
+        double step,
+        int startIndex,
+        float lineWidth,
+        int height)
+    {
+        if (start > currentTime + visibleRange || end < currentTime - visibleRange)
+            return;
+
+        var x = (float)(start / step - startIndex) * lineWidth;
+        var width = Math.Max(4f, (float)((end - start) / step) * lineWidth);
+        var rectangle = new RectangleF(x, 0f, width, height);
+        using var gradient = new LinearGradientBrush(
+            rectangle,
+            Color.FromArgb(105, color),
+            Color.FromArgb(0, color),
+            LinearGradientMode.Horizontal);
+        using var labelFont = new Font("Cascadia Mono", 6.5f, System.Drawing.FontStyle.Regular);
+        using var labelBrush = new SolidBrush(Color.FromArgb(225, 245, 248, 255));
+        graphics.FillRectangle(gradient, rectangle);
+        graphics.DrawString(label, labelFont, labelBrush, new PointF(x + 3f, 1f));
     }
 
     private static string TrimTimelineLabel(string text)
@@ -959,6 +1255,11 @@ public partial class MainWindow : Window
         return text.Substring(0, maxLength - 3) + "...";
     }
 
+    internal void RefreshWaveNoteSkin()
+    {
+        DrawWave();
+    }
+
     // This update less frequently. set the time text.
     private void CurrentTimeRefreshTimer_Elapsed(object? sender, ElapsedEventArgs e)
     {
@@ -967,22 +1268,70 @@ public partial class MainWindow : Window
 
     private void UpdateTimeDisplay()
     {
-        var currentPlayTime = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
-        var minute = (int)currentPlayTime / 60;
-        double second = (int)(currentPlayTime - 60 * minute);
-        Dispatcher.Invoke(() => { TimeLabel.Content = string.Format("{0}:{1:00}", minute, second); });
+        var currentPlayTime = GetTimelinePosition();
+        var absolute = Math.Abs(currentPlayTime);
+        var minute = (int)absolute / 60;
+        var second = (int)(absolute - 60 * minute);
+        var fraction = absolute - Math.Floor(absolute);
+        Dispatcher.Invoke(() =>
+        {
+            TimeLabel.Content = $"{minute}:{second:00}";
+            NoteNowText.Content = fraction.ToString(".0000", System.Globalization.CultureInfo.InvariantCulture);
+        });
     }
 
     private void ScrollWave(double delta)
     {
-        if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING)
-            TogglePause();
-        delta = delta * deltatime / (Width / 2);
-        var time = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
-        SetBgmPosition(time + delta);
+        CancelNotePreview();
+        if (isPlaying)
+            StopPlaybackForScrub();
+        delta = delta * deltatime / (Width / 2d);
+        var time = GetTimelinePosition();
+        SetTimelinePosition(time + delta);
         SimaiProcess.ClearNoteListPlayedState();
-        SeekTextFromTime();
+        if (GetTimelinePosition() >= 0d && GetTimelinePosition() <= songLength)
+            SeekTextFromTime();
         Task.Run(() => DrawWave());
+    }
+
+    private void StopPlaybackForScrub()
+    {
+        TogglePause();
+    }
+
+    private double GetTimelinePosition()
+    {
+        if (flowPreviewActive)
+        {
+            var elapsed = (DateTime.Now - flowPreviewStartedAt).TotalSeconds * GetPlaybackSpeed();
+            return flowPreviewStartTime + elapsed;
+        }
+
+        return flowTimelineCursor ??
+               Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
+    }
+
+    private void SetTimelinePosition(double time, bool keepFlowCursor = false)
+    {
+        CancelNotePreview();
+        var allPerfectEnd = Math.Max(songLength, GetAllPerfectStartTime() + AllPerfectDuration);
+        time = Math.Clamp(time, -RecordingIntroDuration, allPerfectEnd);
+        flowPreviewActive = false;
+        flowPreviewGeneration++;
+
+        if (!keepFlowCursor && time >= 0d && time <= songLength)
+        {
+            flowTimelineCursor = null;
+            SetBgmPosition(time);
+        }
+        else
+        {
+            flowTimelineCursor = time;
+            if (time < 0d)
+                Bass.BASS_ChannelSetPosition(bgmStream, 0d);
+            else
+                Bass.BASS_ChannelSetPosition(bgmStream, songLength);
+        }
     }
 
     public static string GetLocalizedString(string key, string resourceFileName = "Langs", bool addSpaceAfter = false)
@@ -1004,6 +1353,7 @@ public partial class MainWindow : Window
     private void TogglePlay(PlayMethod playMethod = PlayMethod.Normal)
     {
         if (Op_Button.IsEnabled == false) return;
+        CancelNotePreview();
 
         if (lastEditorState == EditorControlMethod.Start || playMethod != PlayMethod.Normal)
             if (!sendRequestStop())
@@ -1073,26 +1423,53 @@ public partial class MainWindow : Window
                 });
                 break;
             case PlayMethod.Normal:
+                if (flowTimelineCursor.HasValue)
+                {
+                    StartFlowPreview(flowTimelineCursor.Value);
+                    break;
+                }
+
                 playStartTime = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
                 generateSoundEffectList(playStartTime, isOpIncluded);
-                SimaiProcess.ClearNoteListPlayedState();
-                StartSELoop();
-                //soundEffectTimer.Start();
-                waveStopMonitorTimer.Start();
-                visualEffectRefreshTimer.Start();
-                startAt = DateTime.Now;
-                Bass.BASS_ChannelPlay(bgmStream, false);
-                Task.Run(() =>
+
+                if (lastEditorState == EditorControlMethod.Pause)
                 {
-                    if (lastEditorState == EditorControlMethod.Pause)
+                    // Resume in place: notes are still on the field, nothing reloads, so
+                    // there is no send+load gap — start the BGM now and tell the View to
+                    // continue.
+                    SimaiProcess.ClearNoteListPlayedState();
+                    StartSELoop();
+                    waveStopMonitorTimer.Start();
+                    visualEffectRefreshTimer.Start();
+                    startAt = DateTime.Now;
+                    Bass.BASS_ChannelPlay(bgmStream, false);
+                    Task.Run(() => sendRequestContinue(startAt));
+                }
+                else
+                {
+                    // Fresh play (incl. after a scrub): send the chart FIRST so the View
+                    // loads during the lead-in, then start the BGM exactly at startAt — the
+                    // same shared future instant the View clocks from. Pin startTime to the
+                    // scrub position so neither side reads a moving BGM cursor.
+                    var bgmStartPos = playStartTime;
+                    startAt = DateTime.Now.AddSeconds(PlaybackLeadIn);
+                    Task.Run(() =>
                     {
-                        if (!sendRequestContinue(startAt)) return;
-                    }
-                    else
-                    {
-                        if (!sendRequestRun(startAt, playMethod)) return;
-                    }
-                });
+                        if (!sendRequestRun(startAt, playMethod, (float)bgmStartPos)) return;
+                        while (DateTime.Now.Ticks < startAt.Ticks)
+                            if (lastEditorState != EditorControlMethod.Start) return;
+                        Dispatcher.Invoke(() =>
+                        {
+                            if (!isPlaying) return;
+                            Bass.BASS_ChannelSetPosition(bgmStream, bgmStartPos);
+                            SimaiProcess.ClearNoteListPlayedState();
+                            StartSELoop();
+                            waveStopMonitorTimer.Start();
+                            visualEffectRefreshTimer.Start();
+                            Bass.BASS_ChannelPlay(bgmStream, false);
+                        });
+                    });
+                }
                 break;
         }
 
@@ -1102,6 +1479,14 @@ public partial class MainWindow : Window
 
     private void TogglePause()
     {
+        CancelNotePreview();
+        if (flowPreviewActive)
+        {
+            var pausedFlowTime = GetTimelinePosition();
+            flowPreviewActive = false;
+            flowPreviewGeneration++;
+            flowTimelineCursor = pausedFlowTime;
+        }
         Op_Button.IsEnabled = true;
         isPlaying = false;
         isPlan2Stop = false;
@@ -1109,6 +1494,9 @@ public partial class MainWindow : Window
         FumenContent.Focus();
         PlayAndPauseButton.Content = "▶";
         Bass.BASS_ChannelStop(bgmStream);
+        Bass.BASS_ChannelStop(trackStartStream);
+        Bass.BASS_ChannelStop(allperfectStream);
+        Bass.BASS_ChannelStop(fanfareStream);
         Bass.BASS_ChannelStop(holdRiserStream);
         //soundEffectTimer.Stop();
         waveStopMonitorTimer.Stop();
@@ -1119,6 +1507,9 @@ public partial class MainWindow : Window
 
     private void ToggleStop()
     {
+        CancelNotePreview();
+        flowPreviewActive = false;
+        flowPreviewGeneration++;
         Op_Button.IsEnabled = true;
         isPlaying = false;
         isPlan2Stop = false;
@@ -1126,13 +1517,103 @@ public partial class MainWindow : Window
         FumenContent.Focus();
         PlayAndPauseButton.Content = "▶";
         Bass.BASS_ChannelStop(bgmStream);
+        Bass.BASS_ChannelStop(trackStartStream);
+        Bass.BASS_ChannelStop(allperfectStream);
+        Bass.BASS_ChannelStop(fanfareStream);
         Bass.BASS_ChannelStop(holdRiserStream);
         //soundEffectTimer.Stop();
         waveStopMonitorTimer.Stop();
         visualEffectRefreshTimer.Stop();
         sendRequestStop();
-        Bass.BASS_ChannelSetPosition(bgmStream, playStartTime);
+        SetTimelinePosition(playStartTime);
         DrawWave();
+    }
+
+    private void StartFlowPreview(double startTime)
+    {
+        playStartTime = startTime;
+        flowTimelineCursor = null;
+        flowPreviewActive = true;
+        flowPreviewStartTime = startTime;
+        flowPreviewStartedAt = DateTime.Now;
+        var generation = ++flowPreviewGeneration;
+        var playbackSpeed = GetPlaybackSpeed();
+        var leadInSeconds = startTime < 0d ? -startTime / playbackSpeed : 0d;
+        var playbackStart = DateTime.Now.AddSeconds(leadInSeconds);
+        var viewStartTime = startTime < 0d ? 0f : (float)startTime;
+
+        generateSoundEffectList(Math.Max(0d, startTime), true);
+        visualEffectRefreshTimer.Start();
+        if (startTime < 0d)
+        {
+            var introPosition = Math.Clamp(RecordingIntroDuration + startTime, 0d, RecordingIntroDuration);
+            Bass.BASS_ChannelSetPosition(trackStartStream, introPosition);
+            Bass.BASS_ChannelPlay(trackStartStream, false);
+        }
+        if (startTime >= GetAllPerfectStartTime())
+        {
+            if (editorSetting!.ShowAllPerfect)
+            {
+                Bass.BASS_ChannelPlay(allperfectStream, true);
+                Bass.BASS_ChannelPlay(fanfareStream, true);
+            }
+        }
+        else if (startTime >= 0d && startTime <= songLength)
+        {
+            Bass.BASS_ChannelSetPosition(bgmStream, startTime);
+            SimaiProcess.ClearNoteListPlayedState();
+            StartSELoop();
+            Bass.BASS_ChannelPlay(bgmStream, false);
+        }
+
+        var requestPlayMethod = startTime < 0d ? PlayMethod.Op : PlayMethod.Normal;
+        Task.Run(() =>
+        {
+            if (!sendRequestRun(playbackStart, requestPlayMethod, viewStartTime, true))
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (generation != flowPreviewGeneration)
+                        return;
+                    flowPreviewActive = false;
+                    isPlaying = false;
+                    Op_Button.IsEnabled = true;
+                    PlayAndPauseButton.Content = "▶";
+                    visualEffectRefreshTimer.Stop();
+                    DrawWave();
+                });
+            }
+        });
+
+        Task.Run(async () =>
+        {
+            if (startTime < 0d)
+            {
+                var delay = playbackStart - DateTime.Now;
+                if (delay > TimeSpan.Zero)
+                    await Task.Delay(delay);
+                if (!flowPreviewActive || generation != flowPreviewGeneration)
+                    return;
+                Dispatcher.Invoke(() =>
+                {
+                    flowPreviewStartTime = 0d;
+                    flowPreviewStartedAt = DateTime.Now;
+                    flowTimelineCursor = null;
+                    Bass.BASS_ChannelSetPosition(bgmStream, 0d);
+                    SimaiProcess.ClearNoteListPlayedState();
+                    StartSELoop();
+                    Bass.BASS_ChannelPlay(bgmStream, false);
+                });
+            }
+
+            var previewEnd = Math.Max(songLength, GetAllPerfectStartTime() + AllPerfectDuration);
+            var remaining = (previewEnd - Math.Max(startTime, 0d)) / playbackSpeed;
+            if (remaining > 0d)
+                await Task.Delay(TimeSpan.FromSeconds(remaining));
+            if (!flowPreviewActive || generation != flowPreviewGeneration)
+                return;
+            Dispatcher.Invoke(ToggleStop);
+        });
     }
 
     private void TogglePlayAndPause(PlayMethod playMethod = PlayMethod.Normal)
@@ -1181,6 +1662,9 @@ public partial class MainWindow : Window
 
     private void SetBgmPosition(double time)
     {
+        flowTimelineCursor = null;
+        flowPreviewActive = false;
+        flowPreviewGeneration++;
         if (lastEditorState == EditorControlMethod.Pause) sendRequestStop();
         Bass.BASS_ChannelSetPosition(bgmStream, time);
     }
@@ -1233,6 +1717,9 @@ public partial class MainWindow : Window
             audioSpeed = GetPlaybackSpeed(),
             showJudgeLine = editorSetting.ShowJudgeLine,
             showJudgeText = editorSetting.ShowJudgeText,
+            showAllPerfect = editorSetting.ShowAllPerfect,
+            skin = editorSetting.Skin,
+            songDetailStyle = editorSetting.SongDetailStyle,
             editorPlayMethod = editorSetting.editorPlayMethod
         };
         var json = JsonConvert.SerializeObject(request);
@@ -1260,13 +1747,20 @@ public partial class MainWindow : Window
             showJudgeLine = editorSetting.ShowJudgeLine,
             showJudgeText = editorSetting.ShowJudgeText,
             innerBackgroundCover = editorSetting.InnerBackgroundCover,
-            outerBackgroundCover = editorSetting.OuterBackgroundCover
+            outerBackgroundCover = editorSetting.OuterBackgroundCover,
+            showAllPerfect = editorSetting.ShowAllPerfect,
+            skin = editorSetting.Skin,
+            songDetailStyle = editorSetting.SongDetailStyle
         };
         WebControl.RequestPOST("http://localhost:8013/",
             JsonConvert.SerializeObject(request));
     }
 
-    private bool sendRequestRun(DateTime StartAt, PlayMethod playMethod)
+    private bool sendRequestRun(
+        DateTime StartAt,
+        PlayMethod playMethod,
+        float? startTimeOverride = null,
+        bool previewFlow = false)
     {
         var jsonStruct = new Majson();
         foreach (var note in SimaiProcess.notelist)
@@ -1278,9 +1772,11 @@ public partial class MainWindow : Window
         jsonStruct.title = SimaiProcess.title!;
         jsonStruct.artist = SimaiProcess.artist!;
         jsonStruct.level = SimaiProcess.levels[selectedDifficulty];
-        jsonStruct.designer = SimaiProcess.designer!;
+        jsonStruct.designer = SimaiProcess.GetDesignerText(selectedDifficulty);
         jsonStruct.difficulty = SimaiProcess.GetDifficultyText(selectedDifficulty);
         jsonStruct.diffNum = selectedDifficulty;
+        jsonStruct.songDetailStyle = editorSetting?.SongDetailStyle ?? 0;
+        jsonStruct.wholeBpm = SimaiProcess.GetWholeBpmText();
         jsonStruct.svTable    = SimaiProcess.svTable;    // ALPHA: true SV
         jsonStruct.colorTable = SimaiProcess.colorTable; // ALPHA: note color
         jsonStruct.sizeTable  = SimaiProcess.sizeTable;  // ALPHA: note size
@@ -1289,8 +1785,9 @@ public partial class MainWindow : Window
         jsonStruct.subtitleTable = SimaiProcess.subtitleTable; // ALPHA: timed subtitles
         jsonStruct.effectTable = SimaiProcess.effectTable; // ALPHA: screen effects
 
-        var json = JsonConvert.SerializeObject(jsonStruct);
         var path = maidataDir + "/majdata.json";
+        jsonStruct.filePath = path;
+        var json = JsonConvert.SerializeObject(jsonStruct);
         File.WriteAllText(path, json);
 
         var request = new EditRequestjson();
@@ -1318,7 +1815,7 @@ public partial class MainWindow : Window
         {
             request.jsonPath = path;
             request.startAt = StartAt.Ticks;
-            request.startTime =
+            request.startTime = startTimeOverride ??
                 (float)Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
             // request.playSpeed = float.Parse(ViewerSpeed.Text);
             // 将maimaiDX速度换算为View中的单位速度 MajSpeed = 107.25 / (71.4184491 * (MaiSpeed + 0.9975) ^ -0.985558604)
@@ -1331,6 +1828,13 @@ public partial class MainWindow : Window
             request.showComboInfo = editorSetting.ShowComboInfo;
             request.showJudgeLine = editorSetting.ShowJudgeLine;
             request.showJudgeText = editorSetting.ShowJudgeText;
+            request.skin = editorSetting.Skin;
+            request.songDetailStyle = editorSetting.SongDetailStyle;
+            request.previewFlow = previewFlow;
+            request.previewTimelineTime = previewFlow
+                ? (float)flowPreviewStartTime
+                : request.startTime;
+            request.showAllPerfect = editorSetting.ShowAllPerfect;
             request.comboStatusType = editorSetting!.comboStatusType;
             request.audioSpeed = GetPlaybackSpeed();
             request.smoothSlideAnime = editorSetting!.SmoothSlideAnime;
@@ -1338,6 +1842,9 @@ public partial class MainWindow : Window
             request.chartLength = chartLen;
             request.recordFrameRate = playMethod == PlayMethod.Record60 ? 60 : 30;
         });
+
+        if (editorSetting?.SongDetailStyle == 1)
+            EnsureSongDetailCache(jsonStruct);
 
         json = JsonConvert.SerializeObject(request);
         var response = WebControl.RequestPOST("http://localhost:8013/", json);
@@ -1348,6 +1855,460 @@ public partial class MainWindow : Window
         }
         lastEditorState = EditorControlMethod.Start;
         return true;
+    }
+
+    // 让封面缓存失效:只删签名文件,保留 PNG,避免 View 端瞬间退回实时拼 UI。
+    private void InvalidateSongDetailCache(params int[] difficulties)
+    {
+        if (string.IsNullOrWhiteSpace(maidataDir))
+            return;
+        try
+        {
+            if (difficulties == null || difficulties.Length == 0)
+                difficulties = new[] { 4, 5 };
+
+            foreach (var diff in difficulties.Distinct())
+            {
+                var stem = GetSongDetailCacheStem(diff);
+                if (stem == null)
+                    continue;
+
+                var path = Path.Combine(maidataDir, stem + ".sig");
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+        }
+        catch
+        {
+            // 删除失败不影响功能,大不了下次仍沿用旧缓存。
+        }
+    }
+
+    private static string? GetSongDetailCacheStem(int difficulty)
+    {
+        return difficulty switch
+        {
+            4 => "songdetail_master",
+            5 => "songdetail_remaster",
+            _ => null
+        };
+    }
+
+    private string BuildSongDetailInfoFingerprint()
+    {
+        var coverPath = FindChartImage("Cover") ?? FindChartImage("bg") ?? "";
+        long coverTicks = 0L, coverLength = 0L;
+        if (!string.IsNullOrWhiteSpace(coverPath))
+        {
+            try
+            {
+                var info = new FileInfo(coverPath);
+                coverTicks = info.LastWriteTimeUtc.Ticks;
+                coverLength = info.Length;
+            }
+            catch
+            {
+                // 元数据只用于判断缓存是否需要刷新,取不到就忽略。
+            }
+        }
+
+        return string.Join("\u0001", new[]
+        {
+            SimaiProcess.title ?? "",
+            SimaiProcess.artist ?? "",
+            SimaiProcess.designer ?? "",
+            SimaiProcess.wholeBpm ?? "",
+            coverPath,
+            coverTicks.ToString(CultureInfo.InvariantCulture),
+            coverLength.ToString(CultureInfo.InvariantCulture)
+        });
+    }
+
+    private void EnsureSongDetailCache(Majson majson)
+    {
+        if (majson.songDetailStyle != 1 || string.IsNullOrWhiteSpace(maidataDir))
+            return;
+
+        try
+        {
+            var templateDir = FindProjectAssetPath("Assets/Resources/SongDetailTemplates/dx");
+            var fontDir = FindProjectAssetPath("Assets/Resources/Fonts");
+            if (templateDir == null || fontDir == null)
+                return;
+
+            var isReMaster = majson.diffNum == 5;
+            if (majson.diffNum != 4 && !isReMaster)
+                return;
+            var basePath = Path.Combine(templateDir, isReMaster ? "DxReMasterBase.png" : "DxBase.png");
+            var overlayPath = Path.Combine(templateDir, isReMaster ? "DxReMasterOverlay.png" : "DxOverlay.png");
+            var coverPath = FindChartImage("Cover") ?? FindChartImage("bg");
+            if (!File.Exists(basePath) || !File.Exists(overlayPath) || coverPath == null)
+                return;
+
+            // 只有当谱面信息(标题/曲师/谱师/等级/BPM)或封面文件变化时才重烤,
+            // 否则直接沿用已有 PNG。避免每次播放都重新合成、卡顿。
+            var cacheStem = GetSongDetailCacheStem(majson.diffNum);
+            if (cacheStem == null)
+                return;
+            var outputPath = Path.Combine(maidataDir, cacheStem + ".png");
+            var signaturePath = Path.Combine(maidataDir, cacheStem + ".sig");
+            var dxMaxScore = CountTotalNotes(majson) * 3;
+            var signature = BuildSongDetailSignature(majson, coverPath, dxMaxScore);
+            if (File.Exists(outputPath) && File.Exists(signaturePath) &&
+                string.Equals(File.ReadAllText(signaturePath), signature, StringComparison.Ordinal))
+                return;
+
+            using var canvas = new Bitmap(341, 588, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using var graphics = Graphics.FromImage(canvas);
+            graphics.CompositingMode = CompositingMode.SourceOver;
+            graphics.CompositingQuality = CompositingQuality.HighQuality;
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.SmoothingMode = SmoothingMode.HighQuality;
+            graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            graphics.Clear(Color.Transparent);
+
+            using (var baseImage = System.Drawing.Image.FromFile(basePath))
+                graphics.DrawImage(baseImage, 0, 0, 341, 588);
+            DrawCover(graphics, coverPath, new Rectangle(30, 78, 283, 282));
+            using (var overlayImage = System.Drawing.Image.FromFile(overlayPath))
+                graphics.DrawImage(overlayImage, 0, 0, 341, 588);
+
+            using var titleFonts = new PrivateFontCollection();
+            AddFontIfExists(titleFonts, Path.Combine(fontDir, "MicrosoftYaHei-Bold.ttc"));
+            AddFontIfExists(titleFonts, Path.Combine(fontDir, "NotoSansSC-VF.ttf"));
+            using var smallFonts = new PrivateFontCollection();
+            AddFontIfExists(smallFonts, Path.Combine(fontDir, "Aileron-Regular.otf"));
+            using var levelFonts = new PrivateFontCollection();
+            AddFontIfExists(levelFonts, Path.Combine(fontDir, "Allerta-Regular.ttf"));
+
+            DrawFitText(graphics, majson.title, titleFonts, new RectangleF(10, 407, 321, 45),
+                22f, 10f, Color.White, StringAlignment.Center, true);
+            DrawFitText(graphics, majson.artist, titleFonts, new RectangleF(10, 452, 321, 38),
+                16f, 8f, Color.FromArgb(235, 241, 255), StringAlignment.Center, true);
+            DrawFitText(graphics, majson.designer, smallFonts, new RectangleF(11, 558, 204, 24),
+                17f, 9f, Color.FromArgb(28, 34, 62), StringAlignment.Near, false);
+            DrawFitText(graphics, GetBpmTextForCache(majson), smallFonts, new RectangleF(226, 558, 94, 24),
+                16f, 8f, Color.FromArgb(28, 34, 62), StringAlignment.Far, false);
+
+            DrawLevelTextInBox(
+                graphics,
+                CleanLevelForCache(majson.level),
+                levelFonts,
+                new RectangleF(221f, 354f, 113f, 46f),
+                isReMaster);
+
+            // DXSCORE 右侧、星级上方:白色 "物量*3/ 物量*3"(左大右小,底部对齐),与谱师同字体。
+            DrawDxScore(graphics, dxMaxScore, smallFonts);
+
+            canvas.Save(outputPath, ImageFormat.Png);
+            File.WriteAllText(signaturePath, signature);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine("Song detail cache failed: " + e.Message);
+        }
+    }
+
+    private static void DrawCover(Graphics graphics, string coverPath, Rectangle target)
+    {
+        using var cover = System.Drawing.Image.FromFile(coverPath);
+        var scale = Math.Max(target.Width / (float)cover.Width, target.Height / (float)cover.Height);
+        var source = new RectangleF(
+            (cover.Width - target.Width / scale) / 2f,
+            (cover.Height - target.Height / scale) / 2f,
+            target.Width / scale,
+            target.Height / scale);
+        graphics.DrawImage(cover, target, source.X, source.Y, source.Width, source.Height, GraphicsUnit.Pixel);
+    }
+
+    private static void DrawFitText(
+        Graphics graphics,
+        string text,
+        PrivateFontCollection fonts,
+        RectangleF rect,
+        float maxSize,
+        float minSize,
+        Color color,
+        StringAlignment alignment,
+        bool bold)
+    {
+        text ??= "";
+
+        // Tight single-line measurement. GenericTypographic strips the wide side-bearing
+        // padding the default StringFormat adds, and NoWrap keeps the text on one line.
+        // The previous code measured against rect.Size WITH StringTrimming.EllipsisCharacter,
+        // which reports the *truncated* width as fitting — so the shrink loop never kicked in
+        // and long designer names were drawn full-size with an ellipsis ("...").
+        using var measureFormat = (StringFormat)StringFormat.GenericTypographic.Clone();
+        measureFormat.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
+        using var drawFormat = (StringFormat)StringFormat.GenericTypographic.Clone();
+        drawFormat.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.NoClip;
+        drawFormat.Alignment = alignment;
+        drawFormat.LineAlignment = StringAlignment.Center;
+
+        var family = fonts.Families.Length > 0 ? fonts.Families[0] : System.Drawing.FontFamily.GenericSansSerif;
+        var style = bold ? System.Drawing.FontStyle.Bold : System.Drawing.FontStyle.Regular;
+        var chosen = minSize;
+        for (var size = maxSize; size >= minSize; size -= 0.5f)
+        {
+            using var probe = new System.Drawing.Font(family, size, style, GraphicsUnit.Pixel);
+            var measured = graphics.MeasureString(text, probe, PointF.Empty, measureFormat);
+            if (measured.Width <= rect.Width)
+            {
+                chosen = size;
+                break;
+            }
+        }
+
+        using (var font = new System.Drawing.Font(family, chosen, style, GraphicsUnit.Pixel))
+        using (var brush = new SolidBrush(color))
+            graphics.DrawString(text, font, brush, rect, drawFormat);
+    }
+
+    private static void DrawLevelTextInBox(
+        Graphics graphics,
+        string text,
+        PrivateFontCollection fonts,
+        RectangleF box,
+        bool isReMaster = false)
+    {
+        text = string.IsNullOrWhiteSpace(text) ? "" : text.Trim();
+        if (text.Length == 0)
+            return;
+
+        var family = fonts.Families.Length > 0 ? fonts.Families[0] : System.Drawing.FontFamily.GenericSansSerif;
+        var (number, hasPlus) = SplitLevelForCache(text);
+        if (string.IsNullOrEmpty(number))
+            number = text;
+
+        using var glyphFormat = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Near };
+        using var group = new GraphicsPath();
+
+        // "LV" 前缀已经烤进 DxOverlay 模板,这里只画难度数字和 "+",不要再画 LV(会和模板重叠)。
+        // 数字左缘紧贴模板里的 LV 右侧(box.Left+43 ≈ x264),垂直居中到 box 中线(≈ y377)。
+        var digitsLeft = box.Left + 43f;
+        var centerY = box.Top + box.Height * 0.5f;
+
+        using var digits = new GraphicsPath();
+        digits.AddString(number, family, (int)System.Drawing.FontStyle.Regular, 50f, PointF.Empty, glyphFormat);
+        var db = digits.GetBounds();
+        if (db.Width <= 0f || db.Height <= 0f)
+            return;
+        OffsetPath(digits, digitsLeft - db.Left, centerY - (db.Top + db.Height * 0.5f));
+        db = digits.GetBounds();
+        group.AddPath(digits, false);
+
+        // "+" superscript: small, just right of the digits and top-aligned near their top.
+        if (hasPlus)
+        {
+            using var plus = new GraphicsPath();
+            plus.AddString("+", family, (int)System.Drawing.FontStyle.Regular, 25f, PointF.Empty, glyphFormat);
+            var plb = plus.GetBounds();
+            OffsetPath(plus, (db.Right + 4f) - plb.Left, (db.Top - 2f) - plb.Top);
+            group.AddPath(plus, false);
+        }
+
+        using var outline = new Pen(isReMaster ? Color.White : Color.FromArgb(78, 54, 111), 5f)
+        {
+            LineJoin = LineJoin.Round
+        };
+        using var fill = new LinearGradientBrush(
+            group.GetBounds(),
+            isReMaster ? Color.FromArgb(170, 50, 225) : Color.White,
+            isReMaster ? Color.FromArgb(44, 8, 102) : Color.FromArgb(220, 224, 236),
+            LinearGradientMode.Vertical);
+        graphics.DrawPath(outline, group);
+        graphics.FillPath(fill, group);
+    }
+
+    // DXSCORE 标签右侧那块空白(星级正上方)显示 dx 满分:左边 "物量*3/" 较大、
+    // 右边 "物量*3" 较小,"/" 紧贴左侧数字、右侧数字前空一格,两段视觉底部对齐。
+    // 用 GraphicsPath 取字形真实下沿(GetBounds().Bottom)对齐,而非 rect,确保不同字号底齐。
+    private static void DrawDxScore(Graphics graphics, int dxMaxScore, PrivateFontCollection fonts)
+    {
+        if (dxMaxScore <= 0)
+            return;
+
+        var family = fonts.Families.Length > 0 ? fonts.Families[0] : System.Drawing.FontFamily.GenericSansSerif;
+        const float startX = 120f;     // 左缘紧贴 DXSCORE 标签右侧(绿字右缘约 x109)
+        const float baselineY = 540f;  // 与 DXSCORE 文字底部对齐
+        const float gap = 6f;          // "/" 与右侧数字之间的一个空格
+        const float leftSize = 18f;    // 左侧数字(与谱师字号相当,略醒目)
+        const float rightSize = 17f;   // 右侧仅比左侧小一点;末位落在第五颗星正上方、AP 徽章之前
+
+        using var fmt = new StringFormat(StringFormat.GenericTypographic)
+        {
+            Alignment = StringAlignment.Near,
+            LineAlignment = StringAlignment.Near
+        };
+
+        var value = dxMaxScore.ToString(CultureInfo.InvariantCulture);
+
+        using var leftPath = new GraphicsPath();
+        leftPath.AddString(value + "/", family, (int)System.Drawing.FontStyle.Regular, leftSize, PointF.Empty, fmt);
+        var lb = leftPath.GetBounds();
+        if (lb.Width <= 0f || lb.Height <= 0f)
+            return;
+        OffsetPath(leftPath, startX - lb.Left, baselineY - lb.Bottom);
+        lb = leftPath.GetBounds();
+
+        using var rightPath = new GraphicsPath();
+        rightPath.AddString(value, family, (int)System.Drawing.FontStyle.Regular, rightSize, PointF.Empty, fmt);
+        var rb = rightPath.GetBounds();
+        OffsetPath(rightPath, (lb.Right + gap) - rb.Left, baselineY - rb.Bottom);
+
+        using var brush = new SolidBrush(Color.White);
+        graphics.FillPath(brush, leftPath);
+        graphics.FillPath(brush, rightPath);
+    }
+
+    private static void OffsetPath(GraphicsPath path, float dx, float dy)
+    {
+        using var m = new System.Drawing.Drawing2D.Matrix();
+        m.Translate(dx, dy);
+        path.Transform(m);
+    }
+
+    private static void AddFontIfExists(PrivateFontCollection collection, string path)
+    {
+        if (File.Exists(path))
+            collection.AddFontFile(path);
+    }
+
+    private string FindChartImage(string basename)
+    {
+        foreach (var ext in new[] { ".png", ".jpg", ".jpeg" })
+        {
+            var path = Path.Combine(maidataDir, basename + ext);
+            if (File.Exists(path))
+                return path;
+        }
+        return null;
+    }
+
+    private static string FindProjectAssetPath(string relativePath)
+    {
+        foreach (var root in EnumerateSearchRoots())
+        {
+            var candidate = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (Directory.Exists(candidate))
+                return candidate;
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateSearchRoots()
+    {
+        var current = new DirectoryInfo(Environment.CurrentDirectory);
+        while (current != null)
+        {
+            yield return current.FullName;
+            current = current.Parent;
+        }
+
+        current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current != null)
+        {
+            yield return current.FullName;
+            current = current.Parent;
+        }
+    }
+
+    private static string CleanLevelForCache(string level)
+    {
+        if (string.IsNullOrWhiteSpace(level))
+            return "";
+        level = level.Trim();
+        if (level.StartsWith("Lv", StringComparison.OrdinalIgnoreCase))
+            level = level.Substring(2).Trim();
+        return level;
+    }
+
+    private static (string number, bool hasPlus) SplitLevelForCache(string level)
+    {
+        if (string.IsNullOrWhiteSpace(level))
+            return ("", false);
+        var trimmed = level.Trim();
+        if (trimmed.EndsWith("+", StringComparison.Ordinal))
+            return (trimmed.Substring(0, trimmed.Length - 1).TrimEnd(), true);
+        // Decimal constant (e.g. "14.9") → maimai display: integer part, with a "+"
+        // when the fractional part is >= 0.6 (14.6→"14+", 14.5→"14").
+        if (trimmed.Contains('.') &&
+            float.TryParse(trimmed, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
+        {
+            var intPart = (int)Math.Floor(value);
+            return (intPart.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                value - intPart >= 0.595f);
+        }
+        return (trimmed, false);
+    }
+
+    private static string GetBpmTextForCache(Majson majson)
+    {
+        return string.IsNullOrWhiteSpace(majson.wholeBpm) ? "-" : majson.wholeBpm.Trim();
+    }
+
+    // 渲染逻辑变化时手动 +1,使旧缓存的签名失效、强制重烤一次。
+    private const string SongDetailCacheVersion = "v8";
+
+    // 与 View 端 JsonDataLoader.CountNoteSum 同口径统计谱面总物量:
+    // 带头 slide = star 头(1) + slide 体(1);其余每个 note(含 break)各计 1。
+    // dx 满分 = 总物量 * 3,正是卡面 DXSCORE 右侧显示并纳入签名的值。
+    private static int CountTotalNotes(Majson majson)
+    {
+        var total = 0;
+        foreach (var timing in majson.timingList)
+        {
+            if (timing.noteList == null)
+                continue;
+            foreach (var note in timing.noteList)
+            {
+                if (note.noteType == SimaiNoteType.Slide)
+                {
+                    if (!note.isSlideNoHead)
+                        total++; // star 头
+                    total++;     // slide 体(break 与否都计 1)
+                }
+                else
+                {
+                    total++;
+                }
+            }
+        }
+        return total;
+    }
+
+    private static string BuildSongDetailSignature(Majson majson, string coverPath, int dxMaxScore)
+    {
+        long coverTicks = 0L, coverLength = 0L;
+        try
+        {
+            var info = new FileInfo(coverPath);
+            coverTicks = info.LastWriteTimeUtc.Ticks;
+            coverLength = info.Length;
+        }
+        catch
+        {
+            // 取不到封面元数据就只按文本签名,不影响功能。
+        }
+
+        return string.Join("", new[]
+        {
+            SongDetailCacheVersion,
+            majson.songDetailStyle.ToString(),
+            majson.diffNum.ToString(),
+            majson.title ?? "",
+            majson.artist ?? "",
+            majson.designer ?? "",
+            majson.level ?? "",
+            GetBpmTextForCache(majson),
+            coverPath ?? "",
+            coverTicks.ToString(),
+            coverLength.ToString(),
+            // 物量*3 纳入签名:开始播放/录制前若与缓存里的 dxscore 对不上,签名变化即触发重烤。
+            dxMaxScore.ToString()
+        });
     }
 
     [DllImport("user32.dll")]
@@ -1366,7 +2327,23 @@ public partial class MainWindow : Window
     {
         if (Process.GetProcessesByName("MajdataView").Length == 0 && Process.GetProcessesByName("Unity").Length == 0)
         {
-            var viewProcess = Process.Start("MajdataView.exe");
+            var viewPath = FindMajdataViewExecutable();
+            if (viewPath == null)
+            {
+                MessageBox.Show(
+                    "找不到 MajdataView.exe。\n请把 MajdataView.exe 放在 MajdataEdit.exe 同目录，或使用完整发布包运行。",
+                    GetLocalizedString("Error"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return true;
+            }
+
+            var viewProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = viewPath,
+                WorkingDirectory = Path.GetDirectoryName(viewPath) ?? Environment.CurrentDirectory,
+                UseShellExecute = true
+            });
             var setWindowPosTimer = new Timer(2000)
             {
                 AutoReset = false
@@ -1377,6 +2354,21 @@ public partial class MainWindow : Window
         }
 
         return false;
+    }
+
+    private static string? FindMajdataViewExecutable()
+    {
+        var baseDirectory = AppContext.BaseDirectory;
+        var candidates = new[]
+        {
+            Path.Combine(Environment.CurrentDirectory, "MajdataView.exe"),
+            Path.Combine(baseDirectory, "MajdataView.exe"),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "MajdataView.exe")),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "release", "MaiChartAssistant", "MajdataView.exe")),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "..", "release", "MaiChartAssistant", "MajdataView.exe"))
+        };
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 
     private string GetViewerWorkingDirectory()

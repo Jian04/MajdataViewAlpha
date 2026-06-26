@@ -29,6 +29,18 @@ public class Sensor : MonoBehaviour
     public event EventHandler<InputEventArgs> OnStatusChanged;//oStatus nStatus
 
     List<Guid> tasks = new();
+    public void ResetState()
+    {
+        tasks.Clear();
+        Status = SensorStatus.Off;
+        IsJudging = false;
+    }
+
+    public void ClearEventHandlers()
+    {
+        OnStatusChanged = null;
+    }
+
     public void SetOn(Guid id)
     {
         if (tasks.Contains(id))

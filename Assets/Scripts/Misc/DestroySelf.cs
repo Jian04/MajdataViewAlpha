@@ -8,8 +8,8 @@ public class DestroySelf : MonoBehaviour
 
     private void Update()
     {
-        // Recording is finalized explicitly by PlayAllPerfect. Keeping the
-        // serialized field preserves existing animation bindings.
+        if (ifStopRecording)
+            GameObject.Find("ScreenRecorder").GetComponent<ScreenRecorder>().StopRecording();
         if (ifDestroy)
             Destroy(gameObject);
     }

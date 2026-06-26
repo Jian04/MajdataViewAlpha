@@ -132,6 +132,9 @@
   <data name="Brightness" xml:space="preserve">
     <value>明るさ</value>
   </data>
+  <data name="Skin" xml:space="preserve">
+    <value>ノートスキン</value>
+  </data>
   <data name="InnerBrightness" xml:space="preserve">
     <value>内側の暗さ</value>
   </data>
@@ -146,6 +149,9 @@
   </data>
   <data name="ShowJudgeLine" xml:space="preserve">
     <value>再生中に判定ラインを表示</value>
+  </data>
+  <data name="ShowAllPerfect" xml:space="preserve">
+    <value>All Perfect を表示・再生</value>
   </data>
   <data name="ShowJudgeText" xml:space="preserve">
     <value>判定文字を表示</value>
@@ -558,6 +564,9 @@ Open Browser to download latest update of Majdata?</value>
   </data>
   <data name="FormatBrush" xml:space="preserve">
     <value>拍子ブラシ（最大）</value>
+  </data>
+  <data name="FormatBrush8" xml:space="preserve">
+    <value>拍子ブラシ（8分）</value>
   </data>
   <data name="FormatBrush16" xml:space="preserve">
     <value>拍子ブラシ（16分）</value>

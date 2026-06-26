@@ -51,15 +51,31 @@ public class CustomSkin : MonoBehaviour
 
     public Texture2D test;
     private SpriteRenderer Outline;
+    private string loadedSkinPath;
 
     // Start is called before the first frame update
     private void Start()
     {
-        var path = new DirectoryInfo(Application.dataPath).Parent.FullName + "/Skin/";
-        Outline = gameObject.GetComponent<SpriteRenderer>();
-        print(path);
+        LoadSkin("dx");
+    }
 
-        Outline.sprite = SpriteLoader.LoadSpriteFromFile(path + "/outline.png");
+    public void LoadSkin(string skinName)
+    {
+        var root = Path.Combine(new DirectoryInfo(Application.dataPath).Parent.FullName, "Skin");
+        var requested = Path.Combine(root, SanitizeSkinName(skinName));
+        var dx = Path.Combine(root, "dx");
+        var path = Directory.Exists(requested)
+            ? requested
+            : Directory.Exists(dx)
+                ? dx
+                : root;
+        if (string.Equals(loadedSkinPath, path, System.StringComparison.OrdinalIgnoreCase))
+            return;
+        loadedSkinPath = path;
+        Outline = gameObject.GetComponent<SpriteRenderer>();
+        Debug.Log($"Loading skin: {path}");
+
+        Outline.sprite = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "outline.png"));
 
         Tap = SpriteLoader.LoadSpriteFromFile(path + "/tap.png");
         Tap_Each = SpriteLoader.LoadSpriteFromFile(path + "/tap_each.png");
@@ -178,8 +194,14 @@ public class CustomSkin : MonoBehaviour
         Debug.Log(test);
     }
 
-    // Update is called once per frame
-    private void Update()
+    private static string SanitizeSkinName(string skinName)
     {
+        if (string.IsNullOrWhiteSpace(skinName))
+            return "dx";
+
+        skinName = Path.GetFileName(skinName.Trim());
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+            skinName = skinName.Replace(invalid.ToString(), "");
+        return string.IsNullOrWhiteSpace(skinName) ? "dx" : skinName;
     }
 }

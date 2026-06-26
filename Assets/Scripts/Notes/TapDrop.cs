@@ -45,7 +45,8 @@ public class TapDrop : TapBase
         inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
         sensorPos = (SensorType)(startPosition - 1);
-        inputManager.BindArea(Check, sensorPos);
+        if (!previewOnly)
+            inputManager.BindArea(Check, sensorPos);
         State = NoteStatus.Initialized;
     }
 }

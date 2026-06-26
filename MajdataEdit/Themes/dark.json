@@ -1,0 +1,13 @@
+{
+  "name": "dark",
+  "displayName": "Dark",
+  "windowBackground": "#FF1F1F1F",
+  "buttonForeground": "#FFFFFFFF",
+  "helperForeground": "#FF569CD6",
+  "buttonsBackground": "#99303030",
+  "editorBackground": "#FF424852",
+  "editorForeground": "#FFEEEEEE",
+  "editorSelection": "#664C7D9D",
+  "waveBackground": "#CC303030",
+  "waveAccent": "#FFFF4F5E"
+}

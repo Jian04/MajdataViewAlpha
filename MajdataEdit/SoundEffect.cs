@@ -180,19 +180,38 @@ public partial class MainWindow
         waitToBePlayed = new List<SoundEffectTiming>();
         if (isOpIncluded)
         {
-            var cmds = SimaiProcess.other_commands!.Split('\n');
-            foreach (var cmdl in cmds)
-                if (cmdl.Length > 12 && cmdl.Substring(1, 11) == "clock_count")
-                    try
-                    {
-                        var clock_cnt = int.Parse(cmdl.Substring(13));
-                        var clock_int = 60.0d / SimaiProcess.notelist[0].currentBpm;
-                        for (var i = 0; i < clock_cnt; i++)
-                            waitToBePlayed.Add(new SoundEffectTiming(i * clock_int, _hasClock: true));
-                    }
-                    catch
-                    {
-                    }
+            var clockCountText = SimaiProcess.GetClockCountText();
+            if (!string.IsNullOrWhiteSpace(clockCountText))
+            {
+                try
+                {
+                    var clock_cnt = int.Parse(clockCountText);
+                    var clock_int = 60.0d / SimaiProcess.notelist[0].currentBpm;
+                    for (var i = 0; i < clock_cnt; i++)
+                        waitToBePlayed.Add(new SoundEffectTiming(i * clock_int, _hasClock: true));
+                }
+                catch
+                {
+                }
+            }
+            else
+            {
+                var cmds = SimaiProcess.other_commands!.Split('\n');
+                foreach (var cmdl in cmds)
+                {
+                    if (cmdl.Length > 12 && cmdl.Substring(1, 11) == "clock_count")
+                        try
+                        {
+                            var clock_cnt = int.Parse(cmdl.Substring(13));
+                            var clock_int = 60.0d / SimaiProcess.notelist[0].currentBpm;
+                            for (var i = 0; i < clock_cnt; i++)
+                                waitToBePlayed.Add(new SoundEffectTiming(i * clock_int, _hasClock: true));
+                        }
+                        catch
+                        {
+                        }
+                }
+            }
         }
 
         for (var i = 0; i < SimaiProcess.notelist.Count; i++)
@@ -374,7 +393,8 @@ public partial class MainWindow
                 waitToBePlayed.Add(stobj);
         }
 
-        if (isOpIncluded) waitToBePlayed.Add(new SoundEffectTiming(GetAllPerfectStartTime(), _hasAllPerfect: true));
+        if (isOpIncluded && editorSetting?.ShowAllPerfect == true)
+            waitToBePlayed.Add(new SoundEffectTiming(GetAllPerfectStartTime(), _hasAllPerfect: true));
         waitToBePlayed.Sort((o1, o2) => o1.time < o2.time ? -1 : 1);
 
         var apTime = GetAllPerfectStartTime();

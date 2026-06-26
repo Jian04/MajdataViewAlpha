@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -46,11 +47,14 @@ public partial class EditorSettingPanel : Window
         LanguageComboBox.SelectedIndex = boxIndex;
 
         RenderModeComboBox.SelectedIndex = window.editorSetting.RenderMode;
+        LoadSkinChoices(window.editorSetting.Skin);
+        LoadThemeChoices(window.editorSetting.EditorTheme);
 
         InnerViewerCover.Text = window.editorSetting.InnerBackgroundCover.ToString();
         OuterViewerCover.Text = window.editorSetting.OuterBackgroundCover.ToString();
-        ViewerSpeed.Text = window.editorSetting.playSpeed.ToString("F1"); // 转化为形如"7.0", "9.5"这样的速度
-        ViewerTouchSpeed.Text = window.editorSetting.touchSpeed.ToString("F1");
+        EditorFontPreset.SelectedIndex = Math.Clamp(window.editorSetting.EditorFontPreset, 0, EditorFontPreset.Items.Count - 1);
+        SongDetailStyle.SelectedIndex = Math.Clamp(window.editorSetting.SongDetailStyle, 0, 1);
+        EditorLightTheme.IsChecked = false;
         ComboDisplay.SelectedIndex = Array.IndexOf(
             Enum.GetValues(window.editorSetting.comboStatusType.GetType()),
             window.editorSetting.comboStatusType
@@ -72,6 +76,7 @@ public partial class EditorSettingPanel : Window
         ShowComboInfo.IsChecked = window.editorSetting.ShowComboInfo;
         ShowJudgeLine.IsChecked = window.editorSetting.ShowJudgeLine;
         ShowJudgeText.IsChecked = window.editorSetting.ShowJudgeText;
+        ShowAllPerfect.IsChecked = window.editorSetting.ShowAllPerfect;
         SyntaxCheckLevel.SelectedIndex = window.editorSetting.SyntaxCheckLevel;
     }
 
@@ -95,30 +100,19 @@ public partial class EditorSettingPanel : Window
         textBox.Text = Math.Clamp(offset, 0f, 1f).ToString("0.0");
     }
 
-    private void ViewerSpeed_MouseWheel(object sender, MouseWheelEventArgs e)
-    {
-        var offset = float.Parse(ViewerSpeed.Text);
-        offset += e.Delta > 0 ? 0.5f : -0.5f;
-        ViewerSpeed.Text = offset.ToString();
-    }
-
-    private void ViewerTouchSpeed_MouseWheel(object sender, MouseWheelEventArgs e)
-    {
-        var offset = float.Parse(ViewerTouchSpeed.Text);
-        offset += e.Delta > 0 ? 0.5f : -0.5f;
-        ViewerTouchSpeed.Text = offset.ToString();
-    }
-
     private void Save_Button_Click(object sender, RoutedEventArgs e)
     {
         var window = (MainWindow)Owner;
         window.editorSetting!.Language = langList[LanguageComboBox.SelectedIndex];
         window.editorSetting!.RenderMode = RenderModeComboBox.SelectedIndex;
+        window.editorSetting!.Skin = SkinComboBox.SelectedItem?.ToString() ?? "dx";
+        window.editorSetting!.EditorTheme = (ThemeComboBox.SelectedItem as EditorTheme)?.name ?? ThemeManager.DefaultTheme;
         window.editorSetting!.InnerBackgroundCover = Math.Clamp(float.Parse(InnerViewerCover.Text), 0f, 1f);
         window.editorSetting!.OuterBackgroundCover = Math.Clamp(float.Parse(OuterViewerCover.Text), 0f, 1f);
         window.editorSetting!.backgroundCover = window.editorSetting.InnerBackgroundCover;
-        window.editorSetting!.playSpeed = float.Parse(ViewerSpeed.Text);
-        window.editorSetting!.touchSpeed = float.Parse(ViewerTouchSpeed.Text);
+        window.editorSetting!.EditorFontPreset = Math.Clamp(EditorFontPreset.SelectedIndex, 0, EditorFontPreset.Items.Count - 1);
+        window.editorSetting!.SongDetailStyle = Math.Clamp(SongDetailStyle.SelectedIndex, 0, 1);
+        window.editorSetting!.EditorLightTheme = false;
         window.editorSetting!.ChartRefreshDelay = int.Parse(ChartRefreshDelay.Text);
         window.editorSetting!.AutoCheckUpdate = (bool) AutoUpdate.IsChecked!;
         window.editorSetting!.SmoothSlideAnime = (bool) SmoothSlideAnime.IsChecked!;
@@ -126,6 +120,7 @@ public partial class EditorSettingPanel : Window
         window.editorSetting!.ShowComboInfo = ShowComboInfo.IsChecked == true;
         window.editorSetting!.ShowJudgeLine = ShowJudgeLine.IsChecked == true;
         window.editorSetting!.ShowJudgeText = ShowJudgeText.IsChecked == true;
+        window.editorSetting!.ShowAllPerfect = ShowAllPerfect.IsChecked == true;
         window.editorSetting!.editorPlayMethod = (EditorPlayMethod)PlayMethod.SelectedIndex;
         window.editorSetting!.SyntaxCheckLevel = SyntaxCheckLevel.SelectedIndex;
         // window.editorSetting.isComboEnabled = (bool) ComboDisplay.IsChecked!;
@@ -137,6 +132,8 @@ public partial class EditorSettingPanel : Window
         window.ViewerSpeed.Content = window.editorSetting.playSpeed.ToString("F1"); // 转化为形如"7.0", "9.5"这样的速度
         window.ViewerTouchSpeed.Content = window.editorSetting.touchSpeed.ToString("F1");
         window.chartChangeTimer.Interval = window.editorSetting.ChartRefreshDelay;
+        window.ApplyEditorAppearance();
+        window.RefreshWaveNoteSkin();
         window.SendDisplaySettings();
 
 
@@ -148,6 +145,61 @@ public partial class EditorSettingPanel : Window
     private void Cancel_Button_Click(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    private void LoadSkinChoices(string selectedSkin)
+    {
+        SkinComboBox.Items.Clear();
+        var skinRoot = FindSkinRoot();
+        if (Directory.Exists(skinRoot))
+        {
+            foreach (var directory in Directory.GetDirectories(skinRoot)
+                         .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase))
+                SkinComboBox.Items.Add(Path.GetFileName(directory));
+        }
+
+        if (SkinComboBox.Items.Count == 0)
+            SkinComboBox.Items.Add("dx");
+
+        SkinComboBox.SelectedItem = selectedSkin;
+        if (SkinComboBox.SelectedIndex < 0)
+            SkinComboBox.SelectedIndex = 0;
+    }
+
+    private void LoadThemeChoices(string selectedTheme)
+    {
+        ThemeComboBox.Items.Clear();
+        foreach (var theme in ThemeManager.LoadThemes())
+            ThemeComboBox.Items.Add(theme);
+
+        for (var i = 0; i < ThemeComboBox.Items.Count; i++)
+        {
+            if (ThemeComboBox.Items[i] is EditorTheme theme &&
+                string.Equals(theme.name, selectedTheme, StringComparison.OrdinalIgnoreCase))
+            {
+                ThemeComboBox.SelectedIndex = i;
+                break;
+            }
+        }
+
+        if (ThemeComboBox.SelectedIndex < 0 && ThemeComboBox.Items.Count > 0)
+            ThemeComboBox.SelectedIndex = 0;
+    }
+
+    private static string FindSkinRoot()
+    {
+        foreach (var start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
+        {
+            var directory = new DirectoryInfo(start);
+            for (var depth = 0; directory != null && depth < 6; depth++, directory = directory.Parent)
+            {
+                var candidate = Path.Combine(directory.FullName, "Skin");
+                if (Directory.Exists(candidate))
+                    return candidate;
+            }
+        }
+
+        return Path.Combine(Environment.CurrentDirectory, "Skin");
     }
 
     private void Window_Closing(object sender, CancelEventArgs e)

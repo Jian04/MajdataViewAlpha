@@ -44,7 +44,6 @@ public class BGManager : MonoBehaviour
     private float coverWorldHeight;
     private float pendingInnerCover;
     private float pendingOuterCover;
-
     private void Start()
     {
         spriteRender = GetComponent<SpriteRenderer>();
@@ -110,7 +109,7 @@ public class BGManager : MonoBehaviour
         {
             // Standby: keep the outer area fully closed until playback starts.
             SetOuterCoverAlpha(1f);
-            if (provider.AudioTime >= 0f)
+            if (provider.PlaybackStarted)
             {
                 loadingPreview = false;
                 ApplyDisplayModeForPlayback();
@@ -139,21 +138,57 @@ public class BGManager : MonoBehaviour
             videoPlayer.playbackSpeed = playSpeed;
     }
 
-    public void PlaySongDetail()
+    public void PlaySongDetail(float timelineTime, float speed)
     {
+        if (SongDetail == null)
+            return;
+        if (timelineTime >= 0f)
+        {
+            SongDetail.SetActive(false);
+            return;
+        }
+
         SongDetail.SetActive(true);
+        var songDetailAnimator = SongDetail.GetComponent<Animator>();
+        if (songDetailAnimator == null)
+            return;
+
+        const float entryDuration = 0.8333333f;
+        const float showingDuration = 3f;
+        const float exitDuration = 1f;
+        var elapsed = Mathf.Clamp(5f + timelineTime, 0f,
+            entryDuration + showingDuration + exitDuration);
+        songDetailAnimator.speed = Mathf.Max(0.01f, speed);
+        if (elapsed < entryDuration)
+            songDetailAnimator.Play("Entry", 0, elapsed / entryDuration);
+        else if (elapsed < entryDuration + showingDuration)
+            songDetailAnimator.Play("Showing", 0, (elapsed - entryDuration) / showingDuration);
+        else
+            songDetailAnimator.Play("Exit", 0,
+                (elapsed - entryDuration - showingDuration) / exitDuration);
+        songDetailAnimator.Update(0f);
     }
 
     public void PauseVideo()
     {
-        videoPlayer.Pause();
+        if (videoPlayer != null && videoPlayer.isPrepared && videoPlayer.isPlaying)
+            videoPlayer.Pause();
+        var songDetailAnimator = SongDetail != null ? SongDetail.GetComponent<Animator>() : null;
+        if (songDetailAnimator != null && SongDetail.activeSelf)
+            songDetailAnimator.speed = 0f;
     }
 
     public void ContinueVideo(float speed)
     {
-        videoPlayer.playbackSpeed = speed;
         playSpeed = speed;
-        videoPlayer.Play();
+        if (videoPlayer != null && videoPlayer.isPrepared)
+        {
+            videoPlayer.playbackSpeed = speed;
+            videoPlayer.Play();
+        }
+        var songDetailAnimator = SongDetail != null ? SongDetail.GetComponent<Animator>() : null;
+        if (songDetailAnimator != null && SongDetail.activeSelf)
+            songDetailAnimator.speed = Mathf.Max(0.01f, speed);
     }
 
     public void LoadBGFromPath(string path, float speed, float innerCover, float outerCover)

@@ -38,6 +38,7 @@ public class JsonDataLoader : MonoBehaviour
     Task<Majson> jsonLoaderTask = null;
     Majson loadedData = null;
     float ignoreOffset = 0;
+    bool previewOnly = false;
     Coroutine noteParserTask = null;
     Dictionary<int, int> noteIndex = new();
         Dictionary<SensorType, int> touchIndex = new();
@@ -50,6 +51,8 @@ public class JsonDataLoader : MonoBehaviour
     public RawImage cardImage;
     public Color[] diffColors = new Color[7];
     private CustomSkin customSkin;
+    private SongDetailTemplateView songDetailTemplate;
+    private RawImage songDetailJacket;
 
     private ObjectCounter ObjectCounter;
 
@@ -461,6 +464,10 @@ public class JsonDataLoader : MonoBehaviour
         ObjectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
         customSkin = GameObject.Find("Outline").GetComponent<CustomSkin>();
         noteManager = GameObject.Find("Notes").GetComponent<NoteManager>();
+        if (cardImage != null)
+            songDetailTemplate = cardImage.GetComponent<SongDetailTemplateView>() ??
+                                 cardImage.gameObject.AddComponent<SongDetailTemplateView>();
+        songDetailJacket = GameObject.Find("Jacket")?.GetComponent<RawImage>();
     }
 
     // Update is called once per frame
@@ -472,14 +479,28 @@ public class JsonDataLoader : MonoBehaviour
                 if (jsonLoaderTask is null || !jsonLoaderTask.IsCompleted)
                     return;
                 loadedData = jsonLoaderTask.Result;
-                diffText.text = loadedData.difficulty;
-                levelText.text = loadedData.level;
-                titleText.text = loadedData.title;
-                artistText.text = loadedData.artist;
-                designText.text = loadedData.designer;
-                cardImage.color = diffColors[loadedData.diffNum];
+                if (!previewOnly)
+                {
+                    if (diffText != null) diffText.text = loadedData.difficulty;
+                    if (levelText != null) levelText.text = loadedData.level;
+                    if (titleText != null) titleText.text = loadedData.title;
+                    if (artistText != null) artistText.text = loadedData.artist;
+                    if (designText != null) designText.text = loadedData.designer;
+                    if (songDetailTemplate != null && cardImage != null && songDetailTemplate.IsMasterTemplate(loadedData))
+                    {
+                        songDetailTemplate.ApplyMaster(loadedData, cardImage, songDetailJacket,
+                            diffText, levelText, titleText, artistText, designText);
+                    }
+                    else
+                    {
+                        songDetailTemplate?.ResetOriginal();
+                        if (cardImage != null)
+                            cardImage.color = diffColors[loadedData.diffNum];
+                    }
 
-                CountNoteSum(loadedData);
+                    CountNoteSum(loadedData);
+                }
+
                 if (loadedData.timingList.Count == 0) break;
                 var lastNoteTime = loadedData.timingList.Last().time;
 
@@ -524,10 +545,9 @@ public class JsonDataLoader : MonoBehaviour
         sw.Start();
         foreach (var timing in timingList)
         {
-            // Spend more of the loading countdown preparing notes so dense
-            // charts do not keep instantiating objects after playback starts.
-            var frameBudgetMs = timeProvider != null && timeProvider.AudioTime < 0f ? 12 : 2;
-            if (sw.ElapsedMilliseconds >= frameBudgetMs)
+            // Keep loading incremental. A larger negative-time budget blocks
+            // the main thread exactly when the cover transition is playing.
+            if (sw.ElapsedMilliseconds >= 2)
             {
                 yield return 0;
                 sw.Restart();
@@ -551,7 +571,7 @@ public class JsonDataLoader : MonoBehaviour
                         if (note.isForceStar)
                         {
                             GOnote = Instantiate(starPrefab, notes.transform);
-                            var _NDCompo = GOnote.GetComponent<StarDrop>();
+                            var _NDCompo = PrepareNote<StarDrop>(GOnote);
                             _NDCompo.tapSpr = customSkin.Star;
                             _NDCompo.eachSpr = customSkin.Star_Each;
                             _NDCompo.breakSpr = customSkin.Star_Break;
@@ -564,7 +584,7 @@ public class JsonDataLoader : MonoBehaviour
                         else
                         {
                             GOnote = Instantiate(tapPrefab, notes.transform);
-                            NDCompo = GOnote.GetComponent<TapDrop>();
+                            NDCompo = PrepareNote<TapDrop>(GOnote);
                             //自定义note样式
                             NDCompo.tapSpr = customSkin.Tap;
                             NDCompo.breakSpr = customSkin.Tap_Break;
@@ -597,7 +617,7 @@ public class JsonDataLoader : MonoBehaviour
                     {
                         var GOnote = Instantiate(holdPrefab, notes.transform);
                         noteManager.AddNote(GOnote, noteIndex[note.startPosition]++);
-                        var NDCompo = GOnote.GetComponent<HoldDrop>();
+                        var NDCompo = PrepareNote<HoldDrop>(GOnote);
 
                         // note的图层顺序
                         NDCompo.noteSortOrder = noteSortOrder;
@@ -634,7 +654,7 @@ public class JsonDataLoader : MonoBehaviour
                         var touchSensor = Assets.Scripts.TouchBase.GetSensor(note.touchArea, note.startPosition);
                         var GOnote = Instantiate(touchHoldPrefab, notes.transform);
                         noteManager.AddTouch(GOnote, touchIndex[touchSensor]++);
-                        var NDCompo = GOnote.GetComponent<TouchHoldDrop>();
+                        var NDCompo = PrepareNote<TouchHoldDrop>(GOnote);
 
                         // note的图层顺序
                         NDCompo.noteSortOrder = noteSortOrder;
@@ -659,7 +679,7 @@ public class JsonDataLoader : MonoBehaviour
                     {
                         var GOnote = Instantiate(touchPrefab, notes.transform);
                         noteManager.AddTouch(GOnote, touchIndex[TouchBase.GetSensor(note.touchArea, note.startPosition)]++);
-                        var NDCompo = GOnote.GetComponent<TouchDrop>();
+                        var NDCompo = PrepareNote<TouchDrop>(GOnote);
 
                         // note的图层顺序
                         NDCompo.noteSortOrder = noteSortOrder;
@@ -787,12 +807,106 @@ public class JsonDataLoader : MonoBehaviour
         noteParserTask = null;
         yield break;
     }
-    public void LoadJson(string json, float ignoreOffset)
+
+    private T PrepareNote<T>(GameObject noteObject) where T : NoteDrop
+    {
+        var component = noteObject.GetComponent<T>();
+        component.previewOnly = previewOnly;
+        return component;
+    }
+
+    public void LoadJson(string json, float ignoreOffset, bool previewOnly = false)
     {
         _tintMaterialCache.Clear();
         jsonLoaderTask = Task.Run(() => JsonConvert.DeserializeObject<Majson>(json));
         State = NoteLoaderStatus.LodingJson;
         this.ignoreOffset = ignoreOffset;
+        this.previewOnly = previewOnly;
+    }
+
+    public void LoadJsonImmediate(string json, float ignoreOffset, bool previewOnly = false)
+    {
+        _tintMaterialCache.Clear();
+        loadedData = JsonConvert.DeserializeObject<Majson>(json);
+        this.ignoreOffset = ignoreOffset;
+        this.previewOnly = previewOnly;
+        if (loadedData == null || loadedData.timingList.Count == 0)
+        {
+            State = NoteLoaderStatus.Finished;
+            return;
+        }
+
+        if (!previewOnly)
+        {
+            if (diffText != null) diffText.text = loadedData.difficulty;
+            if (levelText != null) levelText.text = loadedData.level;
+            if (titleText != null) titleText.text = loadedData.title;
+            if (artistText != null) artistText.text = loadedData.artist;
+            if (designText != null) designText.text = loadedData.designer;
+            if (songDetailTemplate != null && cardImage != null && songDetailTemplate.IsMasterTemplate(loadedData))
+            {
+                songDetailTemplate.ApplyMaster(loadedData, cardImage, songDetailJacket,
+                    diffText, levelText, titleText, artistText, designText);
+            }
+            else
+            {
+                songDetailTemplate?.ResetOriginal();
+                if (cardImage != null)
+                    cardImage.color = diffColors[loadedData.diffNum];
+            }
+
+            CountNoteSum(loadedData);
+        }
+
+        SvController.Load(loadedData.svTable, ignoreOffset);
+        BuildColorTimeline(loadedData.colorTable);
+        BuildSizeTimeline(loadedData.sizeTable);
+        BuildAlphaTimeline(loadedData.alphaTable);
+
+        var loader = LoadNotes(loadedData.timingList, ignoreOffset, loadedData.timingList.Last().time);
+        while (loader.MoveNext())
+        {
+        }
+        State = NoteLoaderStatus.Finished;
+    }
+
+    public void ClearLoadedNotes(bool immediate = false)
+    {
+        if (noteParserTask != null)
+        {
+            StopCoroutine(noteParserTask);
+            noteParserTask = null;
+        }
+
+        (GameObject.Find("Input") ?? GameObject.Find("InputManager"))
+            ?.GetComponent<InputManager>()
+            ?.ResetInputState(true);
+        GameObject.Find("Sensors")?.GetComponent<SensorManager>()?.ResetAllSensors();
+        GameObject.Find("MultTouchHandler")?.GetComponent<MultTouchHandler>()?.clearSlots();
+        HttpHandler.IsReloding = true;
+        if (notes != null)
+        {
+            for (var i = notes.transform.childCount - 1; i >= 0; i--)
+            {
+                var child = notes.transform.GetChild(i).gameObject;
+                child.SetActive(false);
+                if (immediate)
+                    DestroyImmediate(child);
+                else
+                    Destroy(child);
+            }
+        }
+        noteManager?.Clear();
+        slideLayer = -1;
+        noteSortOrder = 0;
+        State = NoteLoaderStatus.Idle;
+        StartCoroutine(ResetReloadFlagNextFrame());
+    }
+
+    private IEnumerator ResetReloadFlagNextFrame()
+    {
+        yield return null;
+        HttpHandler.IsReloding = false;
     }
 
 
@@ -1094,7 +1208,7 @@ public class JsonDataLoader : MonoBehaviour
         endPos++;
 
         var GOnote = Instantiate(starPrefab, notes.transform);
-        var NDCompo = GOnote.GetComponent<StarDrop>();
+        var NDCompo = PrepareNote<StarDrop>(GOnote);
         noteManager.AddNote(GOnote, noteIndex[note.startPosition]++);
 
 
@@ -1121,7 +1235,7 @@ public class JsonDataLoader : MonoBehaviour
         var slideWifi = Instantiate(slidePrefab[SLIDE_PREFAB_MAP["wifi"]], notes.transform);
         slideWifi.SetActive(false);
         NDCompo.slide = slideWifi;
-        var WifiCompo = slideWifi.GetComponent<WifiDrop>();
+        var WifiCompo = PrepareNote<WifiDrop>(slideWifi);
 
         WifiCompo.normalStar = customSkin.Star;
         WifiCompo.eachStar = customSkin.Star_Each;
@@ -1188,7 +1302,7 @@ public class JsonDataLoader : MonoBehaviour
     private GameObject InstantiateStar(SimaiTimingPoint timing, SimaiNote note, ConnSlideInfo info)
     {
         var GOnote = Instantiate(starPrefab, notes.transform);
-        var NDCompo = GOnote.GetComponent<StarDrop>();
+        var NDCompo = PrepareNote<StarDrop>(GOnote);
         if(!note.isSlideNoHead)
             noteManager.AddNote(GOnote, noteIndex[note.startPosition]++);
         // note的图层顺序
@@ -1233,6 +1347,7 @@ public class JsonDataLoader : MonoBehaviour
         slide.SetActive(false);
         NDCompo.slide = slide;
         var SliCompo = slide.AddComponent<SlideDrop>();
+        SliCompo.previewOnly = previewOnly;
 
         SliCompo.slideType = slideShape;
         SliCompo.spriteNormal = customSkin.Slide;
@@ -1743,12 +1858,22 @@ public class JsonDataLoader : MonoBehaviour
     /// hex: 6-digit "FF8800" or 8-digit "FF880080" (last 2 bytes = opacity 0x00–0xFF).
     /// alpha: additional opacity multiplier from <ALPHA*x> (multiplied with hex alpha).
     /// srcHue: 0 enables break-detail preservation without retaining source hues.
+    // each/break sprites pack their pattern into HUE differences, which plain hue
+    // replacement flattens (looks like a flat over-saturated block). Driving these with
+    // srcHue=0 (turns hue contrast into value/brightness contrast so the texture stays
+    // visible) + tintCoverage=1 (saturation follows the *target* dye colour instead of
+    // the sprite's own high saturation) fixes both. tap/hold/slide keep coverage 0 and
+    // are untouched. Keep this below 1 so each/break/excellent textures retain
+    // their original light/dark contrast instead of becoming flat neon blocks.
+    private const float DetailedTintCoverage = 0f;
+
     private Material CreateTintMaterial(
         string hex,
         float alpha = 1f,
         float srcHue = -1f,
         bool allowCache = true,
-        bool grayscale = false)
+        bool grayscale = false,
+        float tintCoverage = 0f)
     {
         if (string.IsNullOrEmpty(hex) && alpha >= 0.9999f && !grayscale) return null;
         if (_tintShader == null) _tintShader = Shader.Find("Sprites/NoteColorTint");
@@ -1757,7 +1882,7 @@ public class JsonDataLoader : MonoBehaviour
         string cacheKey = null;
         if (allowCache)
         {
-            cacheKey = $"{hex}|{alpha:0.####}|{srcHue:0.####}|{grayscale}";
+            cacheKey = $"{hex}|{alpha:0.####}|{srcHue:0.####}|{grayscale}|{tintCoverage:0.####}";
             if (_tintMaterialCache.TryGetValue(cacheKey, out var cached))
                 return cached;
         }
@@ -1786,6 +1911,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (alpha < 0.9999f) mat.SetFloat("_NoteAlpha", alpha);
         if (grayscale) mat.SetFloat("_Grayscale", 1f);
+        if (tintCoverage > 0.0001f) mat.SetFloat("_TintCoverage", tintCoverage);
         if (allowCache)
             _tintMaterialCache[cacheKey] = mat;
         return mat;
@@ -1803,9 +1929,12 @@ public class JsonDataLoader : MonoBehaviour
                 GetAlphaAt(isBreak ? "break" : isEach ? "each" : "tap", time),
                 grayscale: true);
         if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time), GetAlphaAt("break", time), 0f);
-        string color = isEach ? (GetColorAt("each", time) ?? GetColorAt("tap", time)) : GetColorAt("tap", time);
-        return CreateTintMaterial(color, GetAlphaAt(isEach ? "each" : "tap", time));
+            return CreateTintMaterial(GetColorAt("break", time), GetAlphaAt("break", time), 0f,
+                tintCoverage: DetailedTintCoverage);
+        if (isEach)
+            return CreateTintMaterial(GetColorAt("each", time) ?? GetColorAt("tap", time),
+                GetAlphaAt("each", time), tintCoverage: DetailedTintCoverage);
+        return CreateTintMaterial(GetColorAt("tap", time), GetAlphaAt("tap", time));
     }
 
     private Material GetHoldMaterial(bool isBreak, bool isEach, double time, bool isMono = false)
@@ -1815,9 +1944,12 @@ public class JsonDataLoader : MonoBehaviour
                 GetAlphaAt(isBreak ? "break" : isEach ? "each" : "hold", time),
                 grayscale: true);
         if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("hold", time), GetAlphaAt("break", time), 0f);
-        string color = isEach ? (GetColorAt("each", time) ?? GetColorAt("hold", time)) : GetColorAt("hold", time);
-        return CreateTintMaterial(color, GetAlphaAt(isEach ? "each" : "hold", time));
+            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("hold", time),
+                GetAlphaAt("break", time), 0f, tintCoverage: DetailedTintCoverage);
+        if (isEach)
+            return CreateTintMaterial(GetColorAt("each", time) ?? GetColorAt("hold", time),
+                GetAlphaAt("each", time), tintCoverage: DetailedTintCoverage);
+        return CreateTintMaterial(GetColorAt("hold", time), GetAlphaAt("hold", time));
     }
 
     private Material GetSlideMaterial(bool isBreak, double time, bool isMono = false)
@@ -1827,7 +1959,8 @@ public class JsonDataLoader : MonoBehaviour
                 GetAlphaAt(isBreak ? "break" : "slide", time),
                 grayscale: true);
         if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("slide", time), GetAlphaAt("break", time), 0f);
+            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("slide", time),
+                GetAlphaAt("break", time), 0f, tintCoverage: DetailedTintCoverage);
         return CreateTintMaterial(GetColorAt("slide", time), GetAlphaAt("slide", time));
     }
 
@@ -1841,12 +1974,14 @@ public class JsonDataLoader : MonoBehaviour
         if (isBreak)
         {
             string c = GetColorAt("break", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time);
-            return CreateTintMaterial(c, GetAlphaAt("break", time), 0f);
+            return CreateTintMaterial(c, GetAlphaAt("break", time), 0f, tintCoverage: DetailedTintCoverage);
         }
-        string color = isEach
-            ? (GetColorAt("each", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time))
-            : (GetColorAt("star", time) ?? GetColorAt("tap", time));
-        return CreateTintMaterial(color, GetAlphaAt(isEach ? "each" : "star", time));
+        if (isEach)
+            return CreateTintMaterial(
+                GetColorAt("each", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time),
+                GetAlphaAt("each", time), tintCoverage: DetailedTintCoverage);
+        return CreateTintMaterial(GetColorAt("star", time) ?? GetColorAt("tap", time),
+            GetAlphaAt("star", time));
     }
 
     private int MirrorKeys(int key)

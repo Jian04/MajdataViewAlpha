@@ -11,6 +11,7 @@ public class NoteDrop : MonoBehaviour
     public float speed = 7;
     public bool isEach;
     public double noteScrollPos; // cumulative scroll at note's judge time
+    public bool previewOnly;
 
     protected AudioTimeProvider timeProvider;
 
@@ -42,6 +43,25 @@ public class NoteDrop : MonoBehaviour
         return new Vector3(
             distance * Mathf.Cos((position * -2f + 5f) * 0.125f * Mathf.PI),
             distance * Mathf.Sin((position * -2f + 5f) * 0.125f * Mathf.PI));
+    }
+
+    protected Vector3 GetCurrentVisualPosition()
+    {
+        var distance = GetSvDistance();
+        return State == NoteStatus.Pending && distance < 1.225f
+            ? getPositionFromDistance(1.225f)
+            : getPositionFromDistance(distance);
+    }
+
+    protected int GetCurrentVisualPositionIndex()
+    {
+        return GetSvDistance() < 0f ? (startPosition + 3) % 8 + 1 : startPosition;
+    }
+
+    protected Quaternion GetCurrentVisualRotation()
+    {
+        var position = GetCurrentVisualPositionIndex();
+        return Quaternion.Euler(0, 0, -22.5f + -45f * (position - 1));
     }
 }
 

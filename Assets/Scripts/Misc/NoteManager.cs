@@ -18,6 +18,7 @@ public class NoteManager : MonoBehaviour
     public void Clear()
     {
         ResetIndex();
+        notes.Clear();
         noteOrder.Clear();
         touchOrder.Clear();
     }
@@ -26,6 +27,9 @@ public class NoteManager : MonoBehaviour
     public void Refresh()
     {
         var count = transform.childCount;
+        notes.Clear();
+        noteOrder.Clear();
+        touchOrder.Clear();
         ResetIndex();
         for (int i = 0; i < count; i++)
         {
@@ -37,15 +41,15 @@ public class NoteManager : MonoBehaviour
             var touchHold = child.GetComponent<TouchHoldDrop>();
 
             if (tap != null)
-                noteOrder.Add(tap.gameObject, noteIndex[tap.startPosition]++);
+                noteOrder[tap.gameObject] = noteIndex[tap.startPosition]++;
             else if (hold != null)
-                noteOrder.Add(hold.gameObject, noteIndex[hold.startPosition]++);
+                noteOrder[hold.gameObject] = noteIndex[hold.startPosition]++;
             else if (star != null && !star.isNoHead)
-                noteOrder.Add(star.gameObject, noteIndex[star.startPosition]++);
+                noteOrder[star.gameObject] = noteIndex[star.startPosition]++;
             else if (touch != null)
-                touchOrder.Add(touch.gameObject, touchIndex[touch.GetSensor()]++);
+                touchOrder[touch.gameObject] = touchIndex[touch.GetSensor()]++;
             else if(touchHold != null)
-                touchOrder.Add(touchHold.gameObject, touchIndex[SensorType.C]++);
+                touchOrder[touchHold.gameObject] = touchIndex[SensorType.C]++;
 
             notes.Add(child.gameObject);
         }

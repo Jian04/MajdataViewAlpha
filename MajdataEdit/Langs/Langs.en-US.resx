@@ -132,6 +132,9 @@
   <data name="Brightness" xml:space="preserve">
     <value>Bright</value>
   </data>
+  <data name="Skin" xml:space="preserve">
+    <value>Note skin</value>
+  </data>
   <data name="InnerBrightness" xml:space="preserve">
     <value>Inner dimming</value>
   </data>
@@ -146,6 +149,9 @@
   </data>
   <data name="ShowJudgeLine" xml:space="preserve">
     <value>Show judge line during playback</value>
+  </data>
+  <data name="ShowAllPerfect" xml:space="preserve">
+    <value>Show and play All Perfect</value>
   </data>
   <data name="ShowJudgeText" xml:space="preserve">
     <value>Show judgement text</value>
@@ -528,6 +534,9 @@ Click OK to start render.</value>
   </data>
   <data name="FormatBrush" xml:space="preserve">
     <value>Beat Brush (Highest)</value>
+  </data>
+  <data name="FormatBrush8" xml:space="preserve">
+    <value>Beat Brush (1/8)</value>
   </data>
   <data name="FormatBrush16" xml:space="preserve">
     <value>Beat Brush (1/16)</value>

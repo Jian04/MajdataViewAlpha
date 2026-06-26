@@ -27,6 +27,7 @@ public class DisplayTimelineController : MonoBehaviour
     private float lastOuterBrightness = float.NaN;
     private float lastInnerBrightness = float.NaN;
     private float lastJudgeText = float.NaN;
+    private int lastComboDisplay = int.MinValue;
     private GUIStyle subtitleStyle;
     private GUIStyle subtitleShadowStyle;
     private bool hasDisplayEvents;
@@ -219,19 +220,21 @@ public class DisplayTimelineController : MonoBehaviour
         var judgeText = tracks["ShowJudgeText"].Evaluate(time);
         var inner = tracks["InnerBrightness"].Evaluate(time);
         var outer = tracks["OuterBrightness"].Evaluate(time);
+        var hasComboDisplayEvents = eventsByProperty.TryGetValue("ComboDisplay", out var comboDisplayEvents) &&
+                                    comboDisplayEvents.Count > 0;
+        var comboDisplay = hasComboDisplayEvents ? EvaluateComboDisplay(time, comboDisplayEvents) : lastComboDisplay;
 
-        if (!Mathf.Approximately(judgeLine, lastJudgeLine))
+        foreach (var renderer in judgeLines)
         {
-            foreach (var renderer in judgeLines)
-            {
-                renderer.enabled = true;
-                var color = renderer.color;
-                color.a = judgeLine;
-                renderer.color = color;
-                renderer.forceRenderingOff = judgeLine <= 0.001f;
-            }
-            lastJudgeLine = judgeLine;
+            if (renderer == null)
+                continue;
+            renderer.enabled = true;
+            var color = renderer.color;
+            color.a = judgeLine;
+            renderer.color = color;
+            renderer.forceRenderingOff = judgeLine <= 0.001f;
         }
+        lastJudgeLine = judgeLine;
 
         if (!Mathf.Approximately(judgeInfo, lastJudgeInfo) ||
             !Mathf.Approximately(comboInfo, lastComboInfo))
@@ -255,6 +258,24 @@ public class DisplayTimelineController : MonoBehaviour
             lastJudgeText = judgeText;
         }
 
+        if (hasComboDisplayEvents && comboDisplay != lastComboDisplay)
+        {
+            objectCounter?.ComboSetActive((EditorComboIndicator)comboDisplay);
+            lastComboDisplay = comboDisplay;
+        }
+
+    }
+
+    private int EvaluateComboDisplay(float time, List<DisplayChange> comboEvents)
+    {
+        var value = lastComboDisplay == int.MinValue ? 0 : lastComboDisplay;
+        foreach (var item in comboEvents)
+        {
+            if (item.time > time)
+                break;
+            value = Mathf.RoundToInt(item.target);
+        }
+        return value;
     }
 
     private DisplayTrack CreateTrack(string property, float initial)
@@ -291,6 +312,8 @@ public class DisplayTimelineController : MonoBehaviour
     {
         foreach (var renderer in judgeLines)
         {
+            if (renderer == null)
+                continue;
             renderer.enabled = true;
             renderer.forceRenderingOff = false;
             var color = renderer.color;
@@ -312,6 +335,7 @@ public class DisplayTimelineController : MonoBehaviour
         lastOuterBrightness = float.NaN;
         lastInnerBrightness = float.NaN;
         lastJudgeText = float.NaN;
+        lastComboDisplay = int.MinValue;
     }
 
     private void ResetSubtitleCursor()

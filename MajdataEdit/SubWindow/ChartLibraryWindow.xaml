@@ -1,0 +1,117 @@
+<Window x:Class="MajdataEdit.ChartLibraryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="谱面节奏检索"
+        Width="1120"
+        Height="740"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBackground}">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="180" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="节奏型"
+                       Foreground="{DynamicResource ButtonForeground}"
+                       VerticalAlignment="Center"
+                       Margin="0,0,8,0" />
+            <TextBox x:Name="QueryBox"
+                     Grid.Column="1"
+                     Height="30"
+                     VerticalContentAlignment="Center"
+                     FontFamily="Cascadia Code, Consolas"
+                     ToolTip="例：{16}1,,2,,3, 或 1/5,,2/6" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,0">
+                <CheckBox x:Name="ExactModeBox" Content="精确位置" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <CheckBox x:Name="FuzzyModeBox" Content="模糊" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <Button Content="搜索" Width="86" Click="SearchButton_Click" />
+            </StackPanel>
+        </Grid>
+
+        <DockPanel Grid.Row="1" Margin="0,8,0,0">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                <CheckBox x:Name="Diff2" Content="Basic" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox x:Name="Diff3" Content="Advanced" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox x:Name="Diff4" Content="Expert" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox x:Name="Diff5" Content="Master" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" Margin="0,0,8,0" />
+                <CheckBox x:Name="Diff6" Content="Re:Master" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" Margin="0,0,8,0" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <TextBlock Text="排序" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <ComboBox x:Name="SortComboBox" Width="110" SelectedIndex="0">
+                    <ComboBoxItem Content="次数" />
+                    <ComboBoxItem Content="等级" />
+                    <ComboBoxItem Content="BPM" />
+                    <ComboBoxItem Content="密度/CB" />
+                    <ComboBoxItem Content="星星数" />
+                </ComboBox>
+                <CheckBox x:Name="SortDescendingBox" Content="降序" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" VerticalAlignment="Center" Margin="8,0,0,0" />
+            </StackPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="2" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="340" />
+            </Grid.ColumnDefinitions>
+            <ListView x:Name="ResultList" SelectionChanged="ResultList_SelectionChanged">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="歌曲" DisplayMemberBinding="{Binding Title}" Width="250" />
+                        <GridViewColumn Header="曲师" DisplayMemberBinding="{Binding Artist}" Width="170" />
+                        <GridViewColumn Header="难度" DisplayMemberBinding="{Binding Difficulty}" Width="90" />
+                        <GridViewColumn Header="Lv" DisplayMemberBinding="{Binding Level}" Width="60" />
+                        <GridViewColumn Header="次数" DisplayMemberBinding="{Binding Count}" Width="60" />
+                        <GridViewColumn Header="路径" DisplayMemberBinding="{Binding File}" Width="480" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+            <ListView x:Name="MatchList"
+                      Grid.Column="1"
+                      Margin="8,0,0,0"
+                      DisplayMemberPath="Display"
+                      SelectionChanged="MatchList_SelectionChanged" />
+        </Grid>
+
+        <TextBox x:Name="DetailBox"
+                 Grid.Row="3"
+                 Margin="0,10,0,0"
+                 FontFamily="Cascadia Code, Consolas"
+                 FontSize="13"
+                 TextWrapping="Wrap"
+                 AcceptsReturn="True"
+                 IsReadOnly="True"
+                 VerticalScrollBarVisibility="Auto"
+                 Background="{DynamicResource ButtonsBackground}"
+                 Foreground="{DynamicResource ButtonForeground}" />
+
+        <DockPanel Grid.Row="4" Margin="0,8,0,0">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock x:Name="StatusText"
+                           Foreground="{DynamicResource HelperForeground}"
+                           VerticalAlignment="Center" />
+                <TextBlock x:Name="ProgressText"
+                           Foreground="{DynamicResource ButtonForeground}"
+                           Opacity="0.72"
+                           FontSize="11"
+                           Margin="0,2,0,0" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="复制段落" Width="90" Margin="0,0,8,0" Click="CopyMatchButton_Click" />
+                <Button Content="复制上下文" Width="90" Margin="0,0,8,0" Click="CopyContextButton_Click" />
+                <Button Content="复制路径" Width="90" Margin="0,0,8,0" Click="CopyPathButton_Click" />
+                <Button Content="载入谱面" Width="90" Click="OpenButton_Click" />
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

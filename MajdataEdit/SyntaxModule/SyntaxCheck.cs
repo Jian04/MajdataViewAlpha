@@ -135,7 +135,7 @@ namespace MajdataEdit.SyntaxModule
             // confuse the BPM/beat/note checkers below.
             simaiStr = System.Text.RegularExpressions.Regex.Replace(
                 simaiStr,
-                @"<(COLOR|SIZE|ALPHA|SV|ShowJudgeLine|ShowJudgeInfo|ShowComboInfo|OuterBrightness|InnerBrightness|ShowJudgeText|TEXT|Gaussian|Neon|Trail|Fade|Brightness|Saturation|Contrast|Rainbow|Flash|Vignette|Zoom|Glitch|TVNoise)\*[^>]*>",
+                @"<(COLOR|SIZE|ALPHA|SV|ShowJudgeLine|ShowJudgeInfo|ShowComboInfo|OuterBrightness|InnerBrightness|ShowJudgeText|ComboDisplay|TEXT|Gaussian|Neon|Trail|Fade|Brightness|Saturation|Contrast|Rainbow|Flash|Vignette|Zoom|Glitch|TVNoise)\*[^>]*>",
                 "",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 

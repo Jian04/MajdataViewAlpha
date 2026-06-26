@@ -27,6 +27,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         fumenEditor = new FumenEditorAdapter(FumenContent);
+        FumenContent.TextArea.TextView.BackgroundRenderers.Add(
+            new ColorSectionBackgroundRenderer(FumenContent));
         FumenContent.TextArea.TextView.LineTransformers.Add(new SimaiColorizer());
         FumenContent.TextArea.Caret.PositionChanged += FumenContent_SelectionChanged;
         FumenContent.Options.AllowToggleOverstrikeMode = false;
@@ -59,6 +61,8 @@ public partial class MainWindow : Window
         chartChangeTimer.AutoReset = false;
         currentTimeRefreshTimer.Elapsed += CurrentTimeRefreshTimer_Elapsed;
         currentTimeRefreshTimer.Start();
+        notePreviewTimer.Elapsed += NotePreviewTimer_Elapsed;
+        notePreviewTimer.AutoReset = false;
         visualEffectRefreshTimer.Elapsed += VisualEffectRefreshTimer_Elapsed;
         waveStopMonitorTimer.Elapsed += WaveStopMonitorTimer_Elapsed;
         playbackSpeedHideTimer.Elapsed += PlbHideTimer_Elapsed;
@@ -125,6 +129,7 @@ public partial class MainWindow : Window
         }
 
         currentTimeRefreshTimer.Stop();
+        notePreviewTimer.Stop();
         visualEffectRefreshTimer.Stop();
 
         soundSetting.Close();
@@ -266,11 +271,26 @@ public partial class MainWindow : Window
         tap.Show();
     }
 
+    private void ChartAssistant_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        var window = new ChartLibraryWindow { Owner = this };
+        window.ShowDialog();
+    }
+
     private void FormatBrushAuto_MenuItem_Click(object? sender, RoutedEventArgs e)
         => ApplyBeatFormatBrush(null);
 
+    private void FormatBrush8_MenuItem_Click(object? sender, RoutedEventArgs e)
+        => ApplyBeatFormatBrush(8);
+
+    private void FormatBrush12_MenuItem_Click(object? sender, RoutedEventArgs e)
+        => ApplyBeatFormatBrush(12);
+
     private void FormatBrush16_MenuItem_Click(object? sender, RoutedEventArgs e)
         => ApplyBeatFormatBrush(16);
+
+    private void FormatBrush24_MenuItem_Click(object? sender, RoutedEventArgs e)
+        => ApplyBeatFormatBrush(24);
 
     private void FormatBrush32_MenuItem_Click(object? sender, RoutedEventArgs e)
         => ApplyBeatFormatBrush(32);
@@ -280,18 +300,82 @@ public partial class MainWindow : Window
         if (!fumenEditor.HasSelection)
             return;
 
+        var selection = fumenEditor.Selection;
         var original = fumenEditor.SelectedText;
-        var transformed = BeatFormatBrush.Transform(original, targetBeat);
+        var transformed = BeatFormatBrush.TransformSelection(
+            fumenEditor.Text, selection.Start, selection.Length, targetBeat);
         if (!string.Equals(original, transformed, StringComparison.Ordinal))
             fumenEditor.ReplaceSelection(transformed);
     }
 
+    private async void AudioConvert44100_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            InitialDirectory = Directory.Exists(maidataDir) ? maidataDir : "",
+            Filter = "Audio|*.wav;*.mp3;*.ogg;*.flac;*.m4a;*.aac|All files|*.*"
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+
+        try
+        {
+            await MediaTools.ConvertAudioTo44100Async(dialog.FileName);
+            if (!string.IsNullOrWhiteSpace(maidataDir) &&
+                string.Equals(Path.GetDirectoryName(dialog.FileName), maidataDir, StringComparison.OrdinalIgnoreCase) &&
+                Path.GetFileNameWithoutExtension(dialog.FileName).Equals("track", StringComparison.OrdinalIgnoreCase))
+            {
+                initFromFile(maidataDir);
+            }
+            MessageBox.Show("转换完成，原文件已备份到 backup。", "MajdataEdit");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "ffmpeg failed");
+        }
+    }
+
+    private async void MediaCutRange_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            InitialDirectory = Directory.Exists(maidataDir) ? maidataDir : "",
+            Filter = "Media|*.mp4;*.mov;*.mkv;*.webm;*.wav;*.mp3;*.ogg;*.flac;*.m4a;*.aac|All files|*.*"
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+
+        var range = MediaRangeDialog.ShowDialog(this);
+        if (range == null)
+            return;
+
+        try
+        {
+            await MediaTools.RemoveRangeAsync(dialog.FileName, range.Value.Start, range.Value.End);
+            MessageBox.Show("剪辑完成，原文件已备份到 backup。", "MajdataEdit");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "ffmpeg failed");
+        }
+    }
+
+    private void AlphaSyntaxHelp_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        var window = new AlphaSyntaxHelp { Owner = this };
+        window.ShowDialog();
+    }
+
     private void MenuItem_InfomationEdit_Click(object? sender, RoutedEventArgs e)
     {
+        var before = BuildSongDetailInfoFingerprint();
         var infoWindow = new Infomation();
         SetSavedState(false);
         infoWindow.ShowDialog();
         TheWindow.Title = GetWindowsTitleString(SimaiProcess.title!);
+        var after = BuildSongDetailInfoFingerprint();
+        if (!string.Equals(before, after, StringComparison.Ordinal))
+            InvalidateSongDetailCache(4, 5);
     }
 
     private void MenuItem_Majnet_Click(object? sender, RoutedEventArgs e)
@@ -510,24 +594,56 @@ public partial class MainWindow : Window
     private void ComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var i = LevelSelector.SelectedIndex;
-        SetRawFumenText(SimaiProcess.fumens[i]);
+        if (i < 0)
+            return;
         selectedDifficulty = i;
-        LevelTextBox.Text = SimaiProcess.levels[selectedDifficulty];
+        if (isLoading)
+        {
+            suppressLevelTextChange = true;
+            try
+            {
+                LevelTextBox.Text = SimaiProcess.levels[selectedDifficulty];
+            }
+            finally
+            {
+                suppressLevelTextChange = false;
+            }
+            return;
+        }
+        SetRawFumenText(SimaiProcess.fumens[i]);
+        suppressLevelTextChange = true;
+        try
+        {
+            LevelTextBox.Text = SimaiProcess.levels[selectedDifficulty];
+        }
+        finally
+        {
+            suppressLevelTextChange = false;
+        }
         SetSavedState(true);
+        chartChangeTimer.Stop();
         SimaiProcess.Serialize(GetRawFumenText());
+        chartParsePending = false;
         DrawWave();
         SyntaxCheck();
     }
 
     private void LevelTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        if (isLoading || suppressLevelTextChange)
+            return;
         SetSavedState(false);
         if (selectedDifficulty == -1) return;
+        if (string.Equals(SimaiProcess.levels[selectedDifficulty], LevelTextBox.Text, StringComparison.Ordinal))
+            return;
         SimaiProcess.levels[selectedDifficulty] = LevelTextBox.Text;
+        InvalidateSongDetailCache(selectedDifficulty);
     }
 
     private void OffsetTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        if (isLoading)
+            return;
         SetSavedState(false);
         try
         {
@@ -572,13 +688,13 @@ public partial class MainWindow : Window
 
     private void FumenContent_SelectionChanged(object? sender, EventArgs e)
     {
-        NoteNowText.Content = $"{fumenEditor.CurrentLine} 行";
         if (chartParsePending)
             return;
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING && (bool)FollowPlayCheck.IsChecked!)
             return;
-        //TODO:这个应该换成用fumen text position来在已经serialized的timinglist里面找。。 然后直接去掉这个double的返回和position的入参。。。
-        var time = SimaiProcess.Serialize(GetRawFumenText(), GetRawFumenPosition());
+        var time = GetTimeFromParsedPosition(fumenEditor.CurrentLine - 1, fumenEditor.CurrentColumn);
+        NoteNowText.Content = (Math.Abs(time) - Math.Floor(Math.Abs(time)))
+            .ToString(".0000", System.Globalization.CultureInfo.InvariantCulture);
 
         //按住Ctrl，同时按下鼠标左键/上下左右方向键时，才改变进度，其他包含Ctrl的组合键不影响进度。
         if (Keyboard.Modifiers == ModifierKeys.Control && (
@@ -596,8 +712,11 @@ public partial class MainWindow : Window
 
         //Console.WriteLine("SelectionChanged");
         SimaiProcess.ClearNoteListPlayedState();
+        var ghostChanged = Math.Abs(ghostCusorPositionTime - time) > 0.0001d;
         ghostCusorPositionTime = (float)time;
-        if (!isPlaying) DrawWave();
+        if (!isPlaying && ghostChanged)
+            DrawWave();
+        QueueNotePreview();
     }
 
     private void FumenContent_TextChanged(object? sender, EventArgs e)
@@ -605,18 +724,9 @@ public partial class MainWindow : Window
         if (GetRawFumenText() == "" || isLoading) return;
         SetSavedState(false);
         chartParsePending = true;
-        if (chartChangeTimer.Interval < 33)
-        {
-            ghostCusorPositionTime = (float)SimaiProcess.Serialize(
-                GetRawFumenText(), GetRawFumenPosition());
-            chartParsePending = false;
-            DrawWave();
-        }
-        else
-        {
-            chartChangeTimer.Stop();
-            chartChangeTimer.Start();
-        }
+        chartChangeTimer.Stop();
+        chartChangeTimer.Start();
+        QueueNotePreview();
     }
 
 

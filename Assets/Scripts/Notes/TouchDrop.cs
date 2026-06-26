@@ -97,10 +97,13 @@ public class TouchDrop : TouchBase
                                  .GetComponent<InputManager>();
         var customSkin = GameObject.Find("Outline").GetComponent<CustomSkin>();
         judgeText = customSkin.JudgeText;
-        inputManager.BindSensor(Check, GetSensor());
+        if (!previewOnly)
+            inputManager.BindSensor(Check, GetSensor());
     }
     void Check(object sender,InputEventArgs arg)
     {
+        if (previewOnly)
+            return;
         var type = GetSensor();
         if (arg.Type != type)
             return;
@@ -126,6 +129,8 @@ public class TouchDrop : TouchBase
     }
     private void FixedUpdate()
     {
+        if (previewOnly)
+            return;
         var timing = GetJudgeTiming();
         if (!isJudged && timing <= 0.316667f)
         {
@@ -261,11 +266,14 @@ public class TouchDrop : TouchBase
     }
     private void OnDestroy()
     {
-        if (HttpHandler.IsReloding)
+        if (inputManager != null)
+            inputManager.UnbindSensor(Check, GetSensor());
+        if (multTouchHandler != null)
+            multTouchHandler.cancelTouch(this);
+        if (previewOnly || HttpHandler.IsReloding || !gameObject.scene.isLoaded)
             return;
 
         FinalizeJudge();
-        multTouchHandler.cancelTouch(this);
 
         if (isFirework && judgeResult != JudgeType.Miss)
         {
@@ -288,10 +296,11 @@ public class TouchDrop : TouchBase
             GroupInfo.JudgeResult = judgeResult;
         objectCounter.ReportResult(this, judgeResult);
         objectCounter.NextTouch(sensor.Type);
-        inputManager.UnbindSensor(Check, GetSensor());
     }
     void PlayJudgeEffect()
     {
+        if (judgeEffect == null || noteEffectManager == null)
+            return;
         var obj = Instantiate(judgeEffect, Vector3.zero,transform.rotation);
         var _obj = Instantiate(judgeEffect, Vector3.zero, transform.rotation);
         var judgeObj = obj.transform.GetChild(0);

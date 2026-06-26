@@ -31,12 +31,12 @@
             <ColumnDefinition Width="360*" />
         </Grid.ColumnDefinitions>
 
-        <Label x:Name="ErrCount" Grid.Column="1" Content="0" 
+        <Label x:Name="ErrCount" Grid.Column="1" Content="0" Visibility="Collapsed"
             Foreground="White" 
             HorizontalAlignment="Left" HorizontalContentAlignment="Center"
             Margin="44,201,0,0" Grid.RowSpan="2" VerticalAlignment="Top" Width="53" Height="25" PreviewMouseDoubleClick="SyntaxCheckButton_Click"/>
 
-        <Label x:Name="ErrCount_Label" Content="Error" 
+        <Label x:Name="ErrCount_Label" Content="Error" Visibility="Collapsed"
                Foreground="White" 
                HorizontalAlignment="Left" HorizontalContentAlignment="Left"
                Margin="2,201,0,0" Grid.RowSpan="2" VerticalAlignment="Top" Width="45" PreviewMouseDoubleClick="SyntaxCheckButton_Click" Grid.Column="1" RenderTransformOrigin="0.5,0.5">
@@ -98,14 +98,23 @@
             <MenuItem Header="{lex:Loc Tools}" Foreground="{DynamicResource ButtonForeground}"
                       Template="{DynamicResource DarkMenuItem}">
                 <MenuItem Header="{lex:Loc BPMtap}" Click="BPMtap_MenuItem_Click" />
+                <MenuItem Header="谱面库搜索" Click="ChartAssistant_MenuItem_Click" />
                 <MenuItem x:Name="MenuMuriCheck" Header="{lex:Loc MapMuriDetc}" Click="MuriCheck_Click_1"
                           IsEnabled="False" />
                 <MenuItem x:Name="SyntaxCheckButton" Header="{lex:Loc SyntaxDisplay}" Click="SyntaxCheckButton_Click"
                           IsEnabled="False" />
                 <Separator />
                 <MenuItem Header="{lex:Loc FormatBrush}" Click="FormatBrushAuto_MenuItem_Click" />
+                <MenuItem Header="{lex:Loc FormatBrush8}" Click="FormatBrush8_MenuItem_Click" />
+                <MenuItem Header="格式刷（12分）" Click="FormatBrush12_MenuItem_Click" />
                 <MenuItem Header="{lex:Loc FormatBrush16}" Click="FormatBrush16_MenuItem_Click" />
+                <MenuItem Header="格式刷（24分）" Click="FormatBrush24_MenuItem_Click" />
                 <MenuItem Header="{lex:Loc FormatBrush32}" Click="FormatBrush32_MenuItem_Click" />
+                <Separator />
+                <MenuItem Header="音频转换为 44100Hz" Click="AudioConvert44100_MenuItem_Click" />
+                <MenuItem Header="剪掉音/视频片段" Click="MediaCutRange_MenuItem_Click" />
+                <Separator />
+                <MenuItem Header="Alpha 语法帮助" Click="AlphaSyntaxHelp_MenuItem_Click" />
             </MenuItem>
             <MenuItem Header="Majnet" Click="MenuItem_Majnet_Click"
                       Foreground="{DynamicResource ButtonForeground}" Template="{DynamicResource DarkMenuItem}" />
@@ -131,7 +140,7 @@
                   Click="FollowPlayCheck_Click" Background="{DynamicResource ButtonsBackground}"
                   Template="{DynamicResource DarkCheck}" Grid.Row="1" Grid.Column="1" />
         <avalonEdit:TextEditor x:Name="FumenContent"
-                     Padding="2,5" FontFamily="Cascadia Mono"
+                     Padding="6,5" FontFamily="Cascadia Code, Consolas" FontWeight="Normal"
                      Foreground="#FFE8E8E8" TextChanged="FumenContent_TextChanged"
                      Margin="102,29,10,90" HorizontalScrollBarVisibility="Auto"
                      VerticalScrollBarVisibility="Visible"
@@ -139,7 +148,7 @@
                      InputMethod.IsInputMethodEnabled="True"
                      ShowLineNumbers="True"
                      WordWrap="False"
-                     Background="#B3171717"
+                     Background="#FF3A4049"
                      PreviewKeyDown="FumenContent_OnPreviewKeyDown" Grid.Row="1" Grid.Column="1">
             <avalonEdit:TextEditor.Resources>
                 <RoutedUICommand x:Key="PlayAndPause" Text="PlayAndPause" />
@@ -225,21 +234,25 @@
                 VerticalAlignment="Bottom" RenderTransformOrigin="1.1,0.25" Click="Op_Button_Click"
                 HorizontalAlignment="Left" Width="87" Template="{DynamicResource DarkButton}"
                 Foreground="{DynamicResource ButtonForeground}" Background="{DynamicResource ButtonsBackground}"
-                ToolTip="{lex:Loc RecordModeDiscrp}" Grid.Row="1" Grid.Column="1" />
+                ToolTip="{lex:Loc RecordModeDiscrp}" Grid.Row="1" Grid.Column="1" Visibility="Collapsed" />
         <Label Content="{lex:Loc TouchSpeed}" MouseUp="SettingLabel_MouseUp" HorizontalAlignment="Left" Height="24"
                Margin="2,0,0,200" VerticalAlignment="Bottom" Width="80" Foreground="White"
-               RenderTransformOrigin="9.667,-2.284" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1" />
+               RenderTransformOrigin="9.667,-2.284" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1"
+               Visibility="Collapsed" />
         <Label x:Name="ViewerTouchSpeed" MouseUp="SettingLabel_MouseUp" HorizontalAlignment="Left" Height="24"
                Margin="62,0,0,200" Content="7.0" VerticalAlignment="Bottom" Width="35"
                VerticalContentAlignment="Center" Foreground="{DynamicResource ButtonForeground}"
-               HorizontalContentAlignment="Center" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1" />
+               HorizontalContentAlignment="Center" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1"
+               Visibility="Collapsed" />
         <Label Content="{lex:Loc Speed}" MouseUp="SettingLabel_MouseUp" HorizontalAlignment="Left" Height="24"
                Margin="2,0,0,226" VerticalAlignment="Bottom" Width="60" Foreground="White"
-               RenderTransformOrigin="9.667,-2.284" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1" />
+               RenderTransformOrigin="9.667,-2.284" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1"
+               Visibility="Collapsed" />
         <Label x:Name="ViewerSpeed" MouseUp="SettingLabel_MouseUp" HorizontalAlignment="Left" Height="24"
                Margin="62,0,0,226" Content="7.0" VerticalAlignment="Bottom" Width="35"
                VerticalContentAlignment="Center" Foreground="{DynamicResource ButtonForeground}"
-               HorizontalContentAlignment="Center" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1" />
+               HorizontalContentAlignment="Center" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1"
+               Visibility="Collapsed" />
         <Grid x:Name="PlbSpdAdjGrid" HorizontalAlignment="Left" Height="105" Margin="102,289,0,0"
               VerticalAlignment="Top" Width="148" Visibility="Hidden" Grid.Row="1" Grid.Column="1">
             <Grid.Background>

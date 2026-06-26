@@ -194,11 +194,14 @@ public class WifiDrop : NoteLongDrop,IFlasher
                                     .Select(x => x.Key);
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
         boundSensors.AddRange(allSensors);
-        foreach (var sensor in allSensors)
-            inputManager.BindSensor(Check, sensor);
+        if (!previewOnly)
+            foreach (var sensor in allSensors)
+                inputManager.BindSensor(Check, sensor);
     }
     private void FixedUpdate()
     {
+        if (previewOnly)
+            return;
         /// time      是Slide启动的时间点
         /// timeStart 是Slide完全显示但未启动
         /// LastFor   是Slide的时值
@@ -249,6 +252,8 @@ public class WifiDrop : NoteLongDrop,IFlasher
     public void Check(object sender, InputEventArgs arg) => CheckAll();
     void CheckAll()
     {
+        if (previewOnly)
+            return;
         if (isFinished || !canCheck)
             return;
         else if (isChecking)
@@ -605,8 +610,15 @@ public class WifiDrop : NoteLongDrop,IFlasher
     }
     void OnDestroy()
     {
-        if (isDestroying || HttpHandler.IsReloding)
+        if (isDestroying)
             return;
+        isDestroying = true;
+        foreach (var sensor in boundSensors)
+            inputManager?.UnbindSensor(Check, sensor);
+
+        if (previewOnly || HttpHandler.IsReloding)
+            return;
+        ClearTriggeredSensor();
 
         switch (InputManager.Mode)
         {
@@ -619,21 +631,20 @@ public class WifiDrop : NoteLongDrop,IFlasher
                 SetJust();
                 break;
         }
+        if (objectCounter == null)
+            return;
         objectCounter.ReportResult(this, judgeResult, isBreak);
-        if (isBreak && judgeResult == JudgeType.Perfect)
+        if (isBreak && judgeResult == JudgeType.Perfect && slideOK != null)
             slideOK.GetComponent<Animator>().runtimeAnimatorController = judgeBreakShine;
-        slideOK.SetActive(true);
-
-        
-        foreach (var sensor in boundSensors)
-            inputManager.UnbindSensor(Check, sensor);
-        ClearTriggeredSensor();
-        isDestroying = true;
+        if (slideOK != null)
+            slideOK.SetActive(true);
     }
     void ClearTriggeredSensor()
     {
         foreach (var sensor in sensors)
         {
+            if (sensor == null)
+                continue;
             var s = sensor.GetComponent<Sensor>();
             if (s != null)
             {

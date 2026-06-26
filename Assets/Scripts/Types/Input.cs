@@ -33,5 +33,10 @@ namespace Assets.Scripts.Types
             if (OnStatusChanged is not null)
                 OnStatusChanged(this,args);
         }
+
+        public void ClearEventHandlers()
+        {
+            OnStatusChanged = null;
+        }
     }
 }

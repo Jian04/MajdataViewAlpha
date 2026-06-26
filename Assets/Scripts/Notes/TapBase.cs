@@ -39,6 +39,8 @@ namespace Assets.Scripts.Notes
 
         protected SpriteRenderer spriteRenderer;
         private MaterialPropertyBlock brightnessProperties;
+        private bool tapLineFlipped;
+        private bool tapLineRotationInitialized;
 
         protected void ApplyExAlpha()
         {
@@ -71,6 +73,11 @@ namespace Assets.Scripts.Notes
         }
         protected void FixedUpdate()
         {
+            if (timeProvider == null || noteManager == null)
+                return;
+            if (previewOnly)
+                return;
+
             var timing = GetJudgeTiming();
             if (!isJudged && timing > 0.15f)
             {
@@ -97,6 +104,8 @@ namespace Assets.Scripts.Notes
                         isJudged = true;
                         break;
                     case AutoPlayMode.DJAuto:
+                        if (inputManager == null)
+                            return;
                         if (isTriggered)
                             return;
                         inputManager.ClickSensor(sensorPos);
@@ -117,13 +126,13 @@ namespace Assets.Scripts.Notes
 
             var distance = GetSvDistance();
             var destScale = distance * 0.4f + 0.51f;
+            UpdateTapLineRotation(distance);
 
             switch(State)
             {
                 case NoteStatus.Initialized:
                     if (destScale >= 0f)
                     {
-                        tapLine.transform.rotation = Quaternion.Euler(0, 0, -22.5f + -45f * (startPosition - 1));
                         State = NoteStatus.Pending;
                         goto case NoteStatus.Pending;
                     }
@@ -168,8 +177,23 @@ namespace Assets.Scripts.Notes
                 spriteRenderer.SetPropertyBlock(brightnessProperties);
             }
         }
+        protected void UpdateTapLineRotation(float distance)
+        {
+            var shouldFlip = State == NoteStatus.Running && distance < 0f;
+            if (tapLineRotationInitialized && tapLineFlipped == shouldFlip)
+                return;
+
+            tapLineRotationInitialized = true;
+            tapLineFlipped = shouldFlip;
+            var position = shouldFlip ? (startPosition + 3) % 8 + 1 : startPosition;
+            tapLine.transform.rotation = Quaternion.Euler(0, 0, -22.5f + -45f * (position - 1));
+        }
         protected void Check(object sender, InputEventArgs arg)
         {
+            if (previewOnly)
+                return;
+            if (this == null || !isActiveAndEnabled || sensor == null || inputManager == null || noteManager == null)
+                return;
             if (arg.Type != sensor.Type)
                 return;
             else if (isJudged || !noteManager.CanJudge(gameObject, startPosition))
@@ -240,7 +264,9 @@ namespace Assets.Scripts.Notes
         }
         protected virtual void OnDestroy()
         {
-            if (HttpHandler.IsReloding)
+            if (inputManager != null)
+                inputManager.UnbindArea(Check, sensorPos);
+            if (previewOnly || HttpHandler.IsReloding)
                 return;
             var effectManager = GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
             if (effectManager == null) return;
@@ -248,7 +274,6 @@ namespace Assets.Scripts.Notes
             effectManager.PlayFastLate(startPosition, judgeResult);
             objectCounter.NextNote(startPosition);
             objectCounter.ReportResult(this, judgeResult,isBreak);
-            inputManager.UnbindArea(Check, sensorPos);
         }
     }
 }

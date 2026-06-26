@@ -96,10 +96,13 @@ public class TouchHoldDrop : NoteLongDrop
         transform.localScale *= noteScale;
         var customSkin = GameObject.Find("Outline").GetComponent<CustomSkin>();
         judgeText = customSkin.JudgeText;
-        inputManager.BindSensor(Check, touchSensor);
+        if (!previewOnly)
+            inputManager.BindSensor(Check, touchSensor);
     }
     void Check(object sender, InputEventArgs arg)
     {
+        if (previewOnly)
+            return;
         if (isJudged || !noteManager.CanJudge(gameObject, sensor.Type))
             return;
         else if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
@@ -157,6 +160,8 @@ public class TouchHoldDrop : NoteLongDrop
     }
     private void FixedUpdate()
     {
+        if (previewOnly)
+            return;
         var remainingTime = GetRemainingTime();
         var timing = GetJudgeTiming();
         var holdTime = timing - LastFor;
@@ -257,7 +262,11 @@ public class TouchHoldDrop : NoteLongDrop
     }
     private void OnDestroy()
     {
-        if (HttpHandler.IsReloding || !gameObject.scene.isLoaded)
+        if (inputManager != null && sensor != null)
+            inputManager.UnbindSensor(Check, sensor.Type);
+        if (manager != null && sensor != null)
+            manager.SetSensorOff(sensor.Type, guid);
+        if (previewOnly || HttpHandler.IsReloding || !gameObject.scene.isLoaded)
             return;
         var realityHT = LastFor - 0.45f - (judgeDiff / 1000f);
         var percent = MathF.Min(1, (realityHT - playerIdleTime) / realityHT);
@@ -321,8 +330,6 @@ public class TouchHoldDrop : NoteLongDrop
             fireworkEffect.SetTrigger("Fire");
             firework.transform.position = transform.position;
         }
-        inputManager.UnbindSensor(Check, sensor.Type);
-        manager.SetSensorOff(sensor.Type, guid);
         PlayJudgeEffect(result);
     }
 
@@ -334,6 +341,8 @@ public class TouchHoldDrop : NoteLongDrop
     }
     void PlayJudgeEffect(JudgeType judgeResult)
     {
+        if (judgeEffect == null || noteEffectManager == null)
+            return;
         var obj = Instantiate(judgeEffect, Vector3.zero, transform.rotation);
         var _obj = Instantiate(judgeEffect, Vector3.zero, transform.rotation);
         var judgeObj = obj.transform.GetChild(0);
