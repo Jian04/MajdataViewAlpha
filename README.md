@@ -1,380 +1,214 @@
 # MajdataViewAlpha
 
-> 本项目由 Claude Code 和 Codex 辅助完成。  
-> 本项目基于原版 [MajdataView / MajdataEdit](https://github.com/LingFeng-bbben/MajdataView) 修改、扩展与重新整理发布。感谢原作者 bbben、LingFeng-bbben 以及 MajdataView / MajdataEdit 的所有贡献者。
+> 基于 [MajdataView / MajdataEdit 4.4.0](https://github.com/LingFeng-bbben/MajdataView) 修改与扩展。
+> 感谢原作者 bbben（GitHub：LingFeng-bbben）及原项目所有贡献者。
 
-MajdataViewAlpha 是面向 maimai / 舞萌谱面制作的视频预览、调试与导出工具。它保留原版 MajdataView 的播放逻辑，并在其基础上增加 Alpha 扩展语法、动态显示控制、视频特效、皮肤切换、歌曲信息卡片、配置库检索、配置实时预览、视频录制导出和编辑器辅助功能。
+MajdataViewAlpha 是面向 maimai / 舞萌谱面制作、预览与视频导出的工具，在原版 4.4.0 基础上增加了 Alpha 扩展语法、编辑辅助、动态显示、画面特效、媒体时间线、录制导出和桌宠启动器。
 
-仓库地址：<https://github.com/Jian04/MajdataViewAlpha>
+项目地址：<https://github.com/Jian04/MajdataViewAlpha>
 
-## 下载与运行
+## v0.4.0 更新
 
-前往 [Releases](https://github.com/Jian04/MajdataViewAlpha/releases) 下载发布包，解压后运行：
+### Edit
 
-```text
-MajdataEdit.exe
-```
+- 新增「自动踩音」，支持填写 BPM、First、难度和阈值预设。
+- 新增音符密度图和全谱 16 分整理。
+- 新增 Alpha 命令补全、参数提示和分类语法帮助。
+- 新增基础语法错误标记和「导出无特效谱面」。
+- 新增 4/4、3/4 小节模板，以及选中配置直接检索谱面库。
+- 新增可视化音符插入，可在 View 中点击或拖动生成 Tap、Touch 与 Slide。
+- 新增统一的录制设置窗口，可选择 60 / 120 FPS、输出分辨率、歌曲信息卡片、开头背景和 All Perfect。
+- 新增双视频轨、双音频轨媒体时间线，支持拖放、吸附、切割、复制、删除、撤销、混合导出及与主波形同步预览。
+- 媒体时间线采用临时工程事务：退出再进入保留撤销记录，保存谱面时提交，选择不保存时丢弃修改。
+- 视频时间线导出自动采用最高素材分辨率并按 20MB 内目标压制；音频导出固定为 44100Hz。
+- 新增简体中文、英语和日语界面。
+- 新增浅色、CiRCLE 和 CiRCLE PLUS 编辑器主题。
 
-`MajdataEdit.exe` 会自动拉起同目录的 `MajdataView.exe`。请保持发布包目录结构完整。
+### View 与 Alpha
 
-```text
-MajdataViewAlpha/
-  MajdataEdit.exe
-  MajdataView.exe
-  MajdataView_Data/
-  SFX/
-  Skin/
-  EditorSetting.json
-  bass.dll / bass_fx.dll
-```
+- 新增「星星速度」设置，仅调整 Slide 路径的提前显现时间；`0` 对应 4.4.0 默认效果，不改变 Slide 移动、判定或 DJAuto 逻辑。
+- 优化 D 区 Slide 与 Touch Slide 的等距路径绘制、星星朝向和终点判定特效位置。
+- `COLOR` 染色统一采用保留原素材明暗、纹理、高光与暗边的色相替换方式，覆盖 Tap、Each、Break、Hold、Star 与 Slide。
+- 修复媒体时间线中途播放、暂停续播、视频轨层级和同轨重叠片段恢复，并补充保持宽高比的 PV / BGA 缩放模式。
+- 新增 `JLINE` 判定线颜色和 `ShowJudgeArea` 判定区显示控制。
+- 新增按音符类型分别设置的 SV / HS，以及环形音符视觉出生半径 `SPAWN`。
+- 新增 Hue、Tint、Move、Rotate、Shake 画面特效。
+- 新增 `AUDIO`，可在谱面中播放 OGG、WAV 或 MP3。
+- 新增 `PVOVERLAY`，可用 PNG、JPG 或 MP4 替换当前 PV，并支持可选的交叉渐变时间。
+- 新增 Touch Slide：`E1-E4[8:1]` 为直线，`E1<E6[8:1]` / `E1>E7[8:1]` 为定向弧线，`E1^E3[8:1]` 为短弧；起点和终点支持 A/B/C/D/E 区且必须填写时长。
+- Touch Slide 支持连段与绝赞：`A1<A3<A5[8:1]`、`A1b-A2b[8:1]`；`b` 位于起点后表示绝赞 Touch 头，位于路径终点后表示绝赞 Slide 路径。`A1!-A2[8:1]` / `A1?-A2[8:1]` 为无头写法。
+- 新增 `@3/4`、`@4/4` 波形拍号和 `@RRGGBB` 编辑区分段背景。
+- 新增 D 区音符和 Break Touch / TouchHold 专用显示。
+- 新增可选方向的 `Shake`，可直接填写角度控制震动方向。
+- 新增 Default、CiRCLE、CiRCLE PLUS 三种开头背景。
 
-## v0.3.0 更新重点
+### Launcher 与发布
 
-### 歌曲信息卡片
-- 新增新版 Master / Re:Master 歌曲信息卡片，可在编辑器设置中切换“原版 / 新版”。Master 与 Re:Master 使用独立模板和独立缓存（`songdetail_master.png`、`songdetail_remaster.png`），互不覆盖。
-- 卡片在 DXSCORE 右侧、星级上方显示 DX 满分（谱面总物量 × 3），并随物量变化自动刷新。
-- Re:Master 等级文字使用白描边和深紫渐变，14.6 及以上自动显示为 `14+`。
-- 卡片缓存只在标题、曲师、谱师、BPM、封面或对应难度等级变化时刷新；缓存失效时只删除签名文件、保留 PNG，避免 View 回退到实时拼 UI。修改 Master 等级不会删除 Re:Master 缓存，反之亦然。
+- 新增桌宠启动器，负责依次启动 View 和 Edit，并显示运行状态。
+- 发布包改为 Launcher 位于根目录，View 与 Edit 分别放在 `App/MajdataView` 和 `App/MajdataEdit`。
+- Unity 构建结束后自动发布 Edit、Launcher，并复制皮肤、主题、工具与配置库。
+- 发布根目录统一只保留一份 `README.md`。
 
-### 编辑器与工具
-- 编辑器字体设置改为真实系统字体族，新增 `DengXian`、`Noto Serif SC`、`Global Monospace` 等多个可读字体选项。
-- 支持皮肤目录切换：`Skin/dx`、`Skin/sd`，也可以添加自定义皮肤目录。
-- 新增 / 完善 Alpha 语法帮助。
-- 新增格式刷，支持 8 / 12 / 16 / 24 / 32 / 最大分音。
-- 新增配置库检索，内置约 1600 张谱供检索参考（请勿在比赛中使用）。
-- 新增内置音频转换与媒体剪辑工具：可将音频转为 44100Hz，或剪掉某段乐曲并拼接剩余部分（操作后需重新打开谱面）。
-- 新增配置预览，可实时看到正在书写的配置效果以及星星形状。
-- 谱面信息面板新增 BPM 和 Clock Count 显示。
-- 时间轴时间显示精确到小数点后六位。
-- 录制的预览定位由按键改为直接拖拽时间轴；移除了旧版录制模式、note 速度等冗余 UI，以及 trial version 限制。
+## 新增功能
 
-### 语法与显示
-- 改进 `COLOR` 染色逻辑，保留音符原本的明暗、纹理和层次。
-- 新增屏幕中央显示内容控制语法（`ComboStatus`）。
-- 新增 `&RRGGBB` / `&NULL` 背景分段语法，可对编辑区文本分块标记。
-- 波形图时间轴支持录制准备区、开头歌曲信息展示区和 All Perfect 区域预览，并提供 All Perfect 开关。
-- 导出视频支持 30 FPS / 60 FPS 两个档位。
-
-### 稳定性
-- All Perfect 出现时不再强制清空最后一批判定特效。
-- 修正多处播放、暂停、时间轴拖拽、预览与导出流程的稳定性问题。
-- 修正视频导出：Edit ↔ View 通信不再因过短超时误判“端口断开”；自动停止在 All Perfect 演出放完或谱面结束后触发（关闭 All Perfect 时谱末 +5 秒兜底），手动点“终止”也会让 FFmpeg 正常收尾、生成视频。
-
-## 从源码构建
-
-仓库中的 `alpha/` 是主工程目录，包含 Unity View 和 WPF Edit。
+以下为 MajdataViewAlpha 在 MajdataView / MajdataEdit 4.4.0 基础上增加的主要功能。
 
 ### MajdataEdit
 
-```powershell
-cd alpha
-dotnet build MajdataEdit\MajdataEdit.csproj -c Release
-```
-
-Debug 调试：
-
-```powershell
-dotnet build MajdataEdit\MajdataEdit.csproj -c Debug
-```
+- 支持深色、浅色、CiRCLE、CiRCLE PLUS 主题和自定义编辑器字体。
+- 支持 `dx`、`sd` 及自定义皮肤目录。
+- 新增 Master / Re:Master 歌曲信息卡片、独立缓存、DX 满分和等级显示。
+- 新增配置库 / 节奏型检索，可查找相似配置片段。
+- 新增 8 / 12 / 16 / 24 / 32 / 最高分拍格式刷和全谱整理。
+- 新增选区镜像、右键小节模板、语法错误标记和 Alpha 命令补全。
+- 新增配置即时预览和星星形状预览。
+- 新增可视化音符插入。
+- 新增音符密度图。
+- 新增自动踩音。
+- 新增音频转 44100 Hz 和音频 / 视频区段剪辑。
+- 新增媒体时间线编辑器，可组合两条视频轨和两条音频轨，并与谱面保存状态统一管理。
+- 集成 MaiMuriDX 无理配置检查。
+- 波形图可显示音符、BPM、Clock Count、拍号、歌曲信息卡片、All Perfect 和录制区段。
+- 新增独立录制参数窗口。
+- 支持简体中文、英语和日语。
 
 ### MajdataView
 
-用 Unity 打开 `alpha/` 工程，构建 Windows Standalone。构建出的 `MajdataView.exe` 需要和 `MajdataEdit.exe` 放在同一发布目录。
+- 支持谱面内动态修改音符 SV、HS、视觉出生半径、颜色、尺寸和透明度。
+- 支持按 Tap、Each、Hold、Slide、Star、Break、Touch、TouchHold 分别设置音符属性。
+- 支持动态控制判定线、判定区、判定文字、左右信息栏、中央数据显示和背景亮度。
+- 支持 Gaussian、Neon、Trail、Fade、Flash、Brightness、Saturation、Contrast、Rainbow、Vignette、Zoom、Glitch、TVNoise、Hue、Tint、Move、Rotate、Shake 等画面特效。
+- 支持谱面内附加音频和图片 / 视频 PV 覆盖。
+- 支持非 C 区 TouchHold、Break Touch / TouchHold、Mine、D 区和 `rp/rq` Slide。
+- 支持新版歌曲信息卡片、开头背景、All Perfect 结尾和生成标识。
+- 支持从 View 向 Edit 发送可视化音符编辑操作。
+- 支持固定帧视频录制和自定义输出分辨率。
 
-## 编辑器设置
+### Alpha 语法
 
-编辑器设置中新增或调整了以下项目：
-
-- `Skin`：选择 `Skin/` 下的皮肤目录，例如 `dx`、`sd`。
-- `整体主题`：编辑器界面配色主题。
-- `编辑器字体`：谱面编辑区字体。
-- `歌曲信息卡片`：`原版` 或 `新版 Master/Re:Master`。
-- `内圈亮度` / `外圈亮度`：分别控制圆形区域内外遮罩亮度。
-- `显示判定线`：播放时开关判定线。
-- `显示判定文字`：开关 Critical Perfect、Perfect、Great、Fast/Late、Slide 判定牌等素材。
-- `显示左侧判定统计` / `显示右侧 Combo 信息`：分别控制左右 UI。
-- `显示 All Perfect`：关闭后不播放 All Perfect 动画和语音，但不改变谱面结束时机。
-
-## Alpha 扩展语法
-
-Alpha 扩展语法统一使用尖括号：
+Alpha 命令写在谱面时间线中：
 
 ```text
-<名称*参数>
-<名称*(参数,持续秒数)>
+<命令*参数>
+<命令*(参数,时间)>
 ```
 
-多个语法可以写在同一时间点：
+命令分为四类：
 
-```text
-<COLOR*FF00FF><SV*1.5><TEXT*(HELLO,2)>
-```
-
-### COLOR
-
-修改后续音符颜色。
-
-```text
-<COLOR*FF00FF>
-<COLOR*tap=FF69B4,slide=00BFFF,break=FF4500>
-```
-
-可用类型：
-
-```text
-tap, each, hold, slide, star, break, touch, touchhold
-```
-
-恢复默认：
-
-```text
-<COLOR*NULL>
-<COLOR*tap=NULL,slide=NULL>
-```
-
-颜色支持 `RRGGBB` 和 `RRGGBBAA`。
-
-### SV
-
-修改谱面滚动速度倍率。
-
-```text
-<SV*2.0>
-<SV*0.5>
-<SV*1.0>
-```
-
-### SIZE
-
-修改后续音符大小倍率。
-
-```text
-<SIZE*1.5>
-<SIZE*tap=0.8,slide=1.2>
-<SIZE*1.0>
-```
-
-恢复默认：
-
-```text
-<SIZE*NULL>
-<SIZE*tap=NULL>
-```
-
-### ALPHA
-
-修改后续音符透明度。
-
-```text
-<ALPHA*0.5>
-<ALPHA*tap=0.3,slide=0.8>
-<ALPHA*1.0>
-```
-
-恢复默认：
-
-```text
-<ALPHA*NULL>
-<ALPHA*tap=NULL>
-```
-
-### TEXT
-
-在左上角显示字幕。
-
-显示指定秒数：
-
-```text
-<TEXT*(你好,2)>
-```
-
-持续显示到下一条 `TEXT`：
-
-```text
-<TEXT*你好>
-```
-
-清除字幕：
-
-```text
-<TEXT*>
-```
-
-### 显示控制
-
-格式：
-
-```text
-<名称*(目标值,渐变秒数)>
-```
+- 音符：`SV`、`HS`、`SPAWN`、`COLOR`、`SIZE`、`ALPHA`
+- 显示：`JLINE`、`TEXT`、显示开关、`ComboDisplay`、内外圈亮度
+- 滤镜：Gaussian、Neon、Trail、Fade、Flash、Brightness、Saturation、Contrast、Rainbow、Vignette、Zoom、Glitch、TVNoise、Hue、Tint、Move、Rotate、Shake
+- 媒体：`AUDIO`、`PVOVERLAY`
 
 示例：
 
 ```text
-<ShowJudgeLine*(False,2)>
-<ShowJudgeInfo*(False,1)>
-<ShowComboInfo*(True,0.5)>
-<ShowJudgeText*(False,2)>
-<InnerBrightness*(0.8,3)>
-<OuterBrightness*(0.5,3)>
+<SV*tap=1.5,slide=0.8>
+<SPAWN*tap=-4.8,hold=0>
+<COLOR*star=FF66CC,break=FF4500>
+<ShowJudgeLine*(False,8:1)>
+<Tint*(True,000000,0.6,8:1)>
+<Shake*(True,0.5,12,30,0.2)>
+<AUDIO*(True,media/voice.ogg)>
+<PVOVERLAY*(True,media/cutin.mp4,8:1)>
+<PVOVERLAY*(False,8:1)>
 ```
 
-支持项目：
-
-| 名称 | 作用 |
-| --- | --- |
-| `ShowJudgeLine` | 判定线 |
-| `ShowJudgeInfo` | 左侧判定统计 |
-| `ShowComboInfo` | 右侧 Combo / 分数信息 |
-| `ShowJudgeText` | 音符判定文字、Fast/Late、Slide 判定牌 |
-| `InnerBrightness` | 内圈背景遮罩亮度 |
-| `OuterBrightness` | 外圈背景遮罩亮度 |
-
-### Combo 显示内容
-
-切换中间显示内容，使用和显示控制相同的时间渐变逻辑。
+完整签名和示例请在 Edit 中打开：
 
 ```text
-<ComboStatus*(Combo,1)>
-<ComboStatus*(Score,1)>
-<ComboStatus*(Achievement,1)>
+工具 → Alpha 语法帮助
 ```
 
-具体可用名称以编辑器设置中的 Combo 显示选项为准。
+### 扩展谱面标记
 
-### 全屏视频特效
+- `||`：单行注释。
+- `|* … *|`：块注释。
+- `@分子/分母`：编辑器波形拍号。
+- `@RRGGBB` / `@NULL`：编辑区分段背景色。
+- `m`：Mine。
+- `d`：D 区。
+- `rp` / `rq`：反向圆弧 Slide。
 
-格式：
+### 桌宠启动器
+
+- 自动查找并依次启动 View 与 Edit。
+- 显示启动、播放、制谱、录制和错误状态。
+- 支持透明桌宠动画和状态气泡。
+- 支持跟随 Edit 窗口或固定在桌面位置。
+
+## 下载与运行
+
+从 [Releases](https://github.com/Jian04/MajdataViewAlpha/releases) 下载完整发布包，解压后运行：
 
 ```text
-<特效名*(持续秒数,强度)>
+MajdataLauncher.exe
 ```
 
-示例：
+发布目录：
 
 ```text
-<Gaussian*(2,1.5)>
-<Neon*(3,1)>
-<Trail*(3,0.8)>
-<Flash*(1,-1)>
-<Vignette*(2,0.8)>
-<TVNoise*(2,1)>
+MajdataViewAlpha/
+  MajdataLauncher.exe
+  README.md
+  Pets/
+  App/
+    MajdataView/
+    MajdataEdit/
 ```
 
-| 特效 | 说明 |
-| --- | --- |
-| `Gaussian` | 高斯模糊 |
-| `Neon` | 前景边缘 RGB 分离 / 霓虹效果 |
-| `Trail` | 残影拖尾 |
-| `Flash` | 正强度白闪，负强度黑闪 |
-| `Fade` | 兼容旧写法，等价于黑闪 |
-| `Zoom` | 画面放大后恢复 |
-| `Vignette` | 圆形可视区域向内收缩后展开 |
-| `Glitch` | 横向分段故障抖动 |
-| `TVNoise` | 横向电视噪声、扫描线和错位 |
-| `Brightness` | 亮度变化 |
-| `Saturation` | 饱和度变化，强度 `1` 接近黑白 |
-| `Contrast` | 对比度变化 |
-| `Rainbow` | 环形动态彩虹染色 |
+请保持目录结构完整。也可以直接运行 `App/MajdataEdit/MajdataEdit.exe`。
 
-多个高强度全屏特效叠加会增加播放与导出负担。
+## 从源码构建
 
-### 背景分段标记
+### 环境
 
-编辑器中可用 `&RRGGBB` 给后续谱面段落加淡色背景标记，用于分段。
+- Windows 10 / 11 x64
+- Unity 6000.4.2f1
+- Unity Windows Build Support（x86_64）
+- .NET SDK 6.0 或更新版本
+
+### 完整发布包
+
+1. 用 Unity 打开仓库根目录。
+2. 选择 Windows x86_64。
+3. 使用 **Build**，不要使用 Build And Run。
+4. 输出到例如：
 
 ```text
-&FF0000
-1,2,3,4
-&00AAFF
-5,6,7,8
-&NULL
+%USERPROFILE%\Desktop\MajdataViewAlpha\MajdataView.exe
 ```
 
-`&NULL` 结束当前背景色。
+Unity 构建完成后会自动组装完整发布包。
 
-### 注释
+### 单独检查 WPF 项目
 
-单行注释：
-
-```text
-|| 这里是注释
+```powershell
+dotnet build .\MajdataEdit\MajdataEdit.csproj -c Release
+dotnet build .\MajdataLauncher\MajdataLauncher.csproj -c Release
 ```
 
-块注释：
+这两个命令只检查 Edit 和 Launcher，不会重新构建 Unity View。
 
-```text
-|*
-这里的内容会作为注释
-*|
-```
+## 使用说明
 
-### 地雷音符
-
-音符尾部加 `m` 表示地雷音符，显示为低饱和灰色。
-
-```text
-1m
-1hm[8:1]
-1bm-5[8:1]
-1-5m[8:1]
-```
-
-规则和 Break 标记类似，但含义是创建地雷 note。
-
-### 旋转 Slide
-
-新增 `rq` / `rp` 旋转 Slide。
-
-```text
-1rq5
-1rp5
-```
-
-终点越接近起点，旋转特效半径会相应缩小。
-
-## 编辑器工具
-
-- `格式刷（自动最高分拍）`
-- `格式刷（8分）`
-- `格式刷（12分）`
-- `格式刷（16分）`
-- `格式刷（24分）`
-- `格式刷（32分）`
-- `Alpha 语法帮助`
-- `音频无损转 44100Hz`
-- `剪掉某段音频 / 视频并拼接剩余部分`
-- `配置库 / 节奏型检索`（内置约 1600 张谱供参考，请勿在比赛中使用）
-
-音频工具会先在 `backup/` 中备份原文件。
-
-> 书写 Alpha 配置或 Slide 时，编辑器会实时预览效果与星星形状，无需手动触发。
-
-## 录制与导出
-
-- 文件菜单提供 `导出视频（30 帧）` 和 `导出视频（60 帧）`。
-- 60 帧模式会同步设置 Unity 捕获帧率和 FFmpeg 输入帧率，避免音画速度不一致。
-- 录制的预览定位改为直接拖拽波形图 / 时间轴，不再依赖旧版录制模式按键。
-- 自动停止：开启 All Perfect 时，演出动画放完即停止并出视频；关闭 All Perfect 时，谱面结束 +5 秒兜底停止。中途点“终止”也会让 FFmpeg 正常收尾、生成视频。
-- 左下角生成标识为 `Generated by MajdataViewAlpha`。
+- Alpha Edit 与 Alpha View 需要配套使用。
+- 自动踩音使用发布包内的专用运行环境，请保持 `tools/Maicaiyin` 完整。
+- 自定义录制分辨率的宽和高必须为偶数。
+- 高分辨率、高帧率和多滤镜录制会增加设备负担，程序会提示但不会强制阻止。
+- 分层导出当前关闭。
 
 ## 已知问题
 
-- 书写非 note 内容时触发预览，偶尔会在 View 左上角报错；点击“终止”刷新即可消除。
-- 刚进入谱面、加载过量物量和特效时，Edit 清除预览不及时可能导致判定区占位、DJ Auto 误 Miss。
-- 使用内置音频转换工具转换后程序可能闪退（转换通常已完成，重新打开即可）。
-- `RP` / `RQ` 在终点与起点相差 `0` 或 `1` 时，旋转特效半径仍可能有误差。
-- 高分辨率录制叠加多个高强度全屏特效时，性能压力较大。
-- 原版限制仍存在：不支持动态比特率 mp3；内置录屏要求 View 分辨率为偶数。
+- D 区 Tap 使用星星或与星星 Slide 组合时，可能出现未知的显示或判定表现。
 
 ## 致谢与许可
 
-- 原项目：[LingFeng-bbben/MajdataView](https://github.com/LingFeng-bbben/MajdataView)
-- 配置库 / 节奏型检索及内置谱库：[MaiChartAssistant](https://github.com/Jian04/MaiChartAssistant)
-- 配置库谱面来源：[Maichart-Converts](https://github.com/Neskol/Maichart-Converts)（作者 Neskol 等）
+- 原项目及原作者：[MajdataView / MajdataEdit](https://github.com/LingFeng-bbben/MajdataView)，bbben（LingFeng-bbben）
+- 自动踩音：[Maicaiyin](https://github.com/Jian04/Maicaiyin)
+- 配置库 / 节奏型检索：[MaiChartAssistant](https://github.com/Jian04/MaiChartAssistant)
+- 配置库谱面来源：[Maichart-Converts](https://github.com/Neskol/Maichart-Converts)
 - Simai：Celeca
 - Hanabi 特效：青山散人
 
-感谢原作者提供的基础框架、编辑器和运行逻辑。MajdataViewAlpha 是在原项目基础上的二次修改与扩展。
-
-本项目遵循 GPL-3.0，与原版保持一致。谱面与素材版权归各自原作者所有。
+本项目遵循 GPL-3.0，与原版保持一致。谱面、音乐、图片、视频及其他素材版权归各自权利人所有。
