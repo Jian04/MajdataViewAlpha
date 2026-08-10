@@ -9,9 +9,9 @@ using Timer = System.Timers.Timer;
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     自动保存管理类
-///     **单例运行**
-///     其提供自动保存行为的计时能力，同时管理IAutoSave实现类的对象
+///     Autosave manager.
+///     **Runs as a singleton.**
+///     Schedules autosave operations and manages IAutoSave implementations.
 /// </summary>
 public sealed class AutoSaveManager
 {
@@ -21,32 +21,32 @@ public sealed class AutoSaveManager
     private readonly List<IAutoSave> autoSavers = new();
 
     /// <summary>
-    ///     自动保存计时Timer 默认每60秒检查一次
+    ///     Autosave timer, which checks every 60 seconds by default.
     /// </summary>
     private readonly Timer autoSaveTimer = new(1000 * 60);
 
     /// <summary>
-    ///     自上次保存后，是否产生了修改
+    ///     Whether changes have occurred since the last save.
     /// </summary>
     private bool isFileChanged;
 
 
     /// <summary>
-    ///     构造函数
+    ///     Constructor.
     /// </summary>
     private AutoSaveManager()
     {
-        // 本地存储者和全局存储者
+        // Local and global autosave providers
         autoSavers.Add(new LocalAutoSave());
         autoSavers.Add(new GlobalAutoSave());
 
-        // 存储事件
+        // Save event
         autoSaveTimer.AutoReset = true;
         autoSaveTimer.Elapsed += autoSaveTimer_Elapsed;
     }
 
     /// <summary>
-    ///     获取自动保存Timer间隔
+    ///     Gets the autosave timer interval.
     /// </summary>
     /// <returns></returns>
     public double GetAutoSaveTimerInterval()
@@ -55,7 +55,7 @@ public sealed class AutoSaveManager
     }
 
     /// <summary>
-    ///     设置自动保存Timer间隔
+    ///     Sets the autosave timer interval.
     /// </summary>
     /// <param name="interval"></param>
     public void SetAutoSaveTimerInterval(double interval)
@@ -64,7 +64,7 @@ public sealed class AutoSaveManager
     }
 
     /// <summary>
-    ///     文件发生了改动
+    ///     Marks the file as changed.
     /// </summary>
     public void SetFileChanged()
     {
@@ -72,19 +72,19 @@ public sealed class AutoSaveManager
     }
 
     /// <summary>
-    ///     Timer触发事件
+    ///     Handles timer events.
     /// </summary>
     /// <param name="sender"></param>
     /// <param name="e"></param>
     private void autoSaveTimer_Elapsed(object? sender, ElapsedEventArgs e)
     {
-        // 若文件未改动，则跳过此次自动保存
+        // Skip autosave if the file has not changed.
         if (!isFileChanged) return;
 
-        // 执行保存行为
+        // Perform autosave.
         foreach (var saver in autoSavers) saver.DoAutoSave();
 
-        // 标记变更已被保存
+        // Mark the changes as saved.
         isFileChanged = false;
     }
 

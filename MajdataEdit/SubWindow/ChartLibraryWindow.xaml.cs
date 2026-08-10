@@ -7,19 +7,32 @@ namespace MajdataEdit;
 
 public partial class ChartLibraryWindow : Window
 {
+    private readonly string initialQuery;
     private CancellationTokenSource? searchCts;
     private List<RhythmSearchResult> currentResults = new();
 
-    public ChartLibraryWindow()
+    private static string L(string key, params object[] args)
     {
+        var value = MainWindow.GetLocalizedString(key);
+        return args.Length == 0 ? value : string.Format(value, args);
+    }
+
+    public ChartLibraryWindow(string? initialQuery = null)
+    {
+        this.initialQuery = initialQuery?.Trim() ?? string.Empty;
         InitializeComponent();
         Loaded += (_, _) =>
         {
             var root = FindChartRoot();
             StatusText.Text = root is null
-                ? "未找到 charts 谱面库（请确认程序目录下有 charts 文件夹）"
-                : "输入节奏型后点击搜索。";
-            ProgressText.Text = root is null ? string.Empty : $"谱面库：{root}";
+                ? L("ChartLibraryMissing")
+                : L("ChartLibraryPrompt");
+            ProgressText.Text = root is null ? string.Empty : L("ChartLibraryPath", root);
+            if (root != null && !string.IsNullOrWhiteSpace(this.initialQuery))
+            {
+                QueryBox.Text = this.initialQuery;
+                SearchButton_Click(this, new RoutedEventArgs());
+            }
         };
     }
 
@@ -28,7 +41,7 @@ public partial class ChartLibraryWindow : Window
         var root = FindChartRoot();
         if (root == null)
         {
-            StatusText.Text = "未找到 charts 谱面库（请确认程序目录下有 charts 文件夹）";
+            StatusText.Text = L("ChartLibraryMissing");
             ProgressText.Text = string.Empty;
             return;
         }
@@ -36,7 +49,7 @@ public partial class ChartLibraryWindow : Window
         var query = QueryBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(query))
         {
-            StatusText.Text = "请输入节奏型。";
+            StatusText.Text = L("ChartLibraryEnterPattern");
             ProgressText.Text = string.Empty;
             return;
         }
@@ -48,8 +61,8 @@ public partial class ChartLibraryWindow : Window
         ResultList.ItemsSource = null;
         MatchList.ItemsSource = null;
         DetailBox.Clear();
-        StatusText.Text = "搜索中...";
-        ProgressText.Text = "正在读取谱面库并匹配节奏型。";
+        StatusText.Text = L("ChartLibrarySearching");
+        ProgressText.Text = L("ChartLibraryReading");
         var stopwatch = Stopwatch.StartNew();
 
         try
@@ -60,23 +73,25 @@ public partial class ChartLibraryWindow : Window
             var progress = new Progress<RhythmSearchProgress>(value =>
             {
                 var fileName = Path.GetFileName(Path.GetDirectoryName(value.File) ?? value.File);
-                ProgressText.Text = $"搜索进度：{value.Current}/{value.Total} 谱面  {fileName}";
+                ProgressText.Text = L("ChartLibraryProgress", value.Current, value.Total, fileName);
             });
             var results = await Task.Run(() =>
                 ChartRhythmSearchEngine.Search(root, query, exact, fuzzy, diffs, token, progress).ToList(), token);
             currentResults = SortResults(results);
             ResultList.ItemsSource = currentResults;
-            StatusText.Text = $"完成：{currentResults.Count} 个结果，{currentResults.Sum(r => r.Matches.Count)} 处匹配。";
-            ProgressText.Text = $"耗时 {stopwatch.Elapsed.TotalSeconds:F2}s，难度：{string.Join(", ", diffs.OrderBy(x => x))}";
+            StatusText.Text = L("ChartLibraryComplete", currentResults.Count,
+                currentResults.Sum(r => r.Matches.Count));
+            ProgressText.Text = L("ChartLibraryElapsed", stopwatch.Elapsed.TotalSeconds,
+                string.Join(", ", diffs.OrderBy(x => x)));
         }
         catch (OperationCanceledException)
         {
-            StatusText.Text = "已取消。";
+            StatusText.Text = L("ChartLibraryCancelled");
             ProgressText.Text = string.Empty;
         }
         catch (Exception ex)
         {
-            StatusText.Text = "搜索失败。";
+            StatusText.Text = L("ChartLibraryFailed");
             ProgressText.Text = ex.Message;
         }
     }
@@ -112,39 +127,12 @@ public partial class ChartLibraryWindow : Window
 
     private void MatchList_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshDetail();
 
-    private void CopyMatchButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (MatchList.SelectedItem is not RhythmMatch match)
-            return;
-        Clipboard.SetText(match.Match);
-        StatusText.Text = "已复制匹配段落。";
-    }
-
-    private void CopyContextButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (MatchList.SelectedItem is not RhythmMatch match)
-            return;
-        Clipboard.SetText(match.Context);
-        StatusText.Text = "已复制上下文。";
-    }
-
     private void CopyPathButton_Click(object sender, RoutedEventArgs e)
     {
         if (ResultList.SelectedItem is not RhythmSearchResult result)
             return;
         Clipboard.SetText(result.File);
-        StatusText.Text = "已复制 maidata 路径。";
-    }
-
-    private void OpenButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (ResultList.SelectedItem is not RhythmSearchResult result)
-            return;
-        if (Owner is MainWindow mainWindow)
-        {
-            mainWindow.OpenFile(result.Directory);
-            Close();
-        }
+        StatusText.Text = L("ChartLibraryCopiedPath");
     }
 
     private void RefreshDetail()
@@ -159,8 +147,8 @@ public partial class ChartLibraryWindow : Window
         var bpm = match.Bpm.HasValue ? ((int)match.Bpm.Value).ToString() : "?";
         DetailBox.Text =
             $"{result.Title} [{result.Difficulty} Lv.{result.Level}]\r\n" +
-            $"BPM={bpm}   第 {match.ComboBefore}cb 起 / 共 {match.Combo}cb   ☆{match.StarCount}   " +
-            $"{match.TimeSeconds:F2}s -> {match.EndSeconds:F2}s\r\n" +
+            L("ChartLibraryPosition", bpm, match.ComboBefore, match.Combo, match.StarCount,
+                match.TimeSeconds, match.EndSeconds) + "\r\n" +
             $"{result.File}\r\n\r\n" +
             match.Context;
     }
@@ -184,7 +172,7 @@ public partial class ChartLibraryWindow : Window
 
     private static string? FindChartRoot()
     {
-        // 谱面库 charts 随发布包放在程序目录下,exe 旁即是,下载者解压即用。
+        // Release packages place the chart-library charts beside the executable so they work immediately after extraction.
         var candidates = new[]
         {
             Path.Combine(AppContext.BaseDirectory, "charts"),

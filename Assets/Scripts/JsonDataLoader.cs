@@ -14,6 +14,7 @@ using Assets.Scripts;
 public class JsonDataLoader : MonoBehaviour
 {
     public float noteSpeed = 7f;
+    public float starSpeed;
     public float touchSpeed = 7.5f;
     public bool smoothSlideAnime = false;
     public Sprite starEach;
@@ -40,6 +41,10 @@ public class JsonDataLoader : MonoBehaviour
     float ignoreOffset = 0;
     bool previewOnly = false;
     Coroutine noteParserTask = null;
+    private int runtimeBindingReadyFrame = -1;
+    private const float InitialPlaybackHorizon = 0.5f;
+    private int reloadGeneration;
+    public bool RuntimeBindingsReady => runtimeBindingReadyFrame < 0;
     Dictionary<int, int> noteIndex = new();
         Dictionary<SensorType, int> touchIndex = new();
 
@@ -478,6 +483,15 @@ public class JsonDataLoader : MonoBehaviour
             case NoteLoaderStatus.LodingJson:
                 if (jsonLoaderTask is null || !jsonLoaderTask.IsCompleted)
                     return;
+                if (jsonLoaderTask.IsCanceled || jsonLoaderTask.IsFaulted)
+                {
+                    var message = jsonLoaderTask.Exception?.GetBaseException().Message ??
+                                  "Chart JSON loading was cancelled.";
+                    UnityEngine.Debug.LogWarning("[ChartLoader] Ignored invalid chart JSON: " + message);
+                    CompleteEmptyLoad();
+                    return;
+                }
+
                 loadedData = jsonLoaderTask.Result;
                 if (!previewOnly)
                 {
@@ -486,31 +500,35 @@ public class JsonDataLoader : MonoBehaviour
                     if (titleText != null) titleText.text = loadedData.title;
                     if (artistText != null) artistText.text = loadedData.artist;
                     if (designText != null) designText.text = loadedData.designer;
-                    if (songDetailTemplate != null && cardImage != null && songDetailTemplate.IsMasterTemplate(loadedData))
-                    {
+                    if (songDetailTemplate != null && cardImage != null &&
+                        songDetailTemplate.IsMasterTemplate(loadedData) &&
                         songDetailTemplate.ApplyMaster(loadedData, cardImage, songDetailJacket,
-                            diffText, levelText, titleText, artistText, designText);
+                            diffText, levelText, titleText, artistText, designText))
+                    {
                     }
                     else
                     {
                         songDetailTemplate?.ResetOriginal();
                         if (cardImage != null)
-                            cardImage.color = diffColors[loadedData.diffNum];
+                            cardImage.color = diffColors[Mathf.Clamp(loadedData.diffNum, 0, diffColors.Length - 1)];
                     }
 
                     CountNoteSum(loadedData);
                 }
 
-                if (loadedData.timingList.Count == 0) break;
+                if (loadedData?.timingList == null || loadedData.timingList.Count == 0)
+                {
+                    CompleteEmptyLoad();
+                    return;
+                }
                 var lastNoteTime = loadedData.timingList.Last().time;
 
-                // ALPHA: true SV — load global scroll velocity table
-                SvController.Load(loadedData.svTable, ignoreOffset);
-                // ALPHA: note color — build per-type color timelines
+                SvController.Load(loadedData.svTable, 0d);
+                BuildHSpeedTimeline(loadedData.hsTable);
+                BuildSpawnTimeline(loadedData.spawnTable);
+                BuildBounceTimeline(loadedData.bounceTable);
                 BuildColorTimeline(loadedData.colorTable);
-                // ALPHA: note size — build size timeline
                 BuildSizeTimeline(loadedData.sizeTable);
-                // ALPHA: note alpha — build alpha timeline
                 BuildAlphaTimeline(loadedData.alphaTable);
 
                 noteParserTask = StartCoroutine(LoadNotes(loadedData.timingList, ignoreOffset, lastNoteTime));
@@ -528,15 +546,31 @@ public class JsonDataLoader : MonoBehaviour
         }
 
     }
+
+    private void CompleteEmptyLoad()
+    {
+        noteParserTask = null;
+        runtimeBindingReadyFrame = -1;
+        State = NoteLoaderStatus.Finished;
+    }
+
+    private void LateUpdate()
+    {
+        // Notes created during HttpHandler.Update bind their input in Start() on the
+        // following frame. Publish readiness only after that frame's Start/Update pass.
+        if (runtimeBindingReadyFrame >= 0 && Time.frameCount >= runtimeBindingReadyFrame)
+            runtimeBindingReadyFrame = -1;
+    }
     IEnumerator LoadNotes(IEnumerable<SimaiTimingPoint> timingList, float ignoreOffset, double lastNoteTime)
     {
         if (timeProvider == null)
             timeProvider = FindAnyObjectByType<AudioTimeProvider>();
 
-        noteManager.Refresh();
+        if (!previewOnly)
+            noteManager.Refresh();
         noteIndex.Clear();
         touchIndex.Clear();
-        for (int i = 1; i < 9; i++)
+        for (int i = 1; i < 17; i++) // 1-8=A zone, 9-16=D zone
             noteIndex.Add(i, 0);
         for (int i = 0; i < 33; i++)
             touchIndex.Add((SensorType)i, 0);
@@ -545,6 +579,15 @@ public class JsonDataLoader : MonoBehaviour
         sw.Start();
         foreach (var timing in timingList)
         {
+            // Playback can begin once the notes around the current timeline position
+            // have bound their sensors. Continue streaming the rest of the chart after
+            // that point instead of delaying audio until every later note exists.
+            if (!previewOnly && runtimeBindingReadyFrame == int.MaxValue &&
+                timing.time > ignoreOffset + InitialPlaybackHorizon)
+            {
+                runtimeBindingReadyFrame = Time.frameCount + 1;
+            }
+
             // Keep loading incremental. A larger negative-time budget blocks
             // the main thread exactly when the cover transition is playing.
             if (sw.ElapsedMilliseconds >= 2)
@@ -563,6 +606,16 @@ public class JsonDataLoader : MonoBehaviour
                 for (var i = 0; i < timing.noteList.Count; i++)
                 {
                     var note = timing.noteList[i];
+                    if (note.noteType is SimaiNoteType.Tap or SimaiNoteType.Hold or SimaiNoteType.Slide &&
+                        (note.startPosition < 1 || note.startPosition > 8))
+                    {
+                        if (!previewOnly)
+                            UnityEngine.Debug.LogError(
+                                $"Skipping malformed {note.noteType} at {timing.time:F3}s: " +
+                                $"startPosition={note.startPosition}.");
+                        continue;
+                    }
+
                     if (note.noteType == SimaiNoteType.Tap)
                     {
                         GameObject GOnote = null;
@@ -585,14 +638,14 @@ public class JsonDataLoader : MonoBehaviour
                         {
                             GOnote = Instantiate(tapPrefab, notes.transform);
                             NDCompo = PrepareNote<TapDrop>(GOnote);
-                            //自定义note样式
+                            // Custom note style
                             NDCompo.tapSpr = customSkin.Tap;
                             NDCompo.breakSpr = customSkin.Tap_Break;
                             NDCompo.eachSpr = customSkin.Tap_Each;
                             NDCompo.exSpr = customSkin.Tap_Ex;
                         }
-                        noteManager.AddNote(GOnote, noteIndex[note.startPosition]++);
-                        // note的图层顺序
+                        AddJudgeNote(GOnote, note);
+                        // Note layer order
                         NDCompo.noteSortOrder = noteSortOrder;
                         noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
 
@@ -601,25 +654,37 @@ public class JsonDataLoader : MonoBehaviour
                         if (timing.noteList.Count > 1) NDCompo.isEach = true;
                         NDCompo.isBreak = note.isBreak;
                         NDCompo.isEX = note.isEx;
+                        NDCompo.isFirework = note.isHanabi;
+                        NDCompo.isDZone = note.isDZone;
                         NDCompo.time = (float)timing.time;
                         NDCompo.startPosition = note.startPosition;
-                        NDCompo.speed = noteSpeed * timing.HSpeed;
-                        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
-                        // ALPHA: forced stars use "star" key; regular taps use "tap"/"each"/"break"
+                        var tapType = note.isForceStar ? "star" : "tap";
+                        var tapIsEach = timing.noteList.Count > 1;
+                        NDCompo.speed = noteSpeed * GetHSpeedAt(
+                            tapType, timing.time, timing.HSpeed, note.isBreak, tapIsEach);
+                        NDCompo.scrollType = ResolveSvType(tapType, note.isBreak, tapIsEach);
+                        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(
+                            timing.time, NDCompo.scrollType);
+                        NDCompo.spawnRadius = GetSpawnRadiusAt(
+                            tapType, timing.time, note.isBreak, tapIsEach);
+                        NDCompo.bounceDuration = GetBounceDurationAt(
+                            tapType, timing.time, note.isBreak, tapIsEach);
                         var tapMat = note.isForceStar
                             ? GetStarMaterial(note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead)
                             : GetTapMaterial(note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
                         NDCompo.colorOverrideMaterial = tapMat;
                         if (tapMat != null) NDCompo.noteTintColor = tapMat.GetColor("_NoteColor");
-                        NDCompo.noteScale = GetSizeAt(timing.time); // ALPHA: note size
+                        var tapSize = GetSizeAt(tapType, timing.time, note.isBreak, tapIsEach);
+                        NDCompo.noteScaleX = tapSize.x;
+                        NDCompo.noteScaleY = tapSize.y;
                     }
                     else if (note.noteType == SimaiNoteType.Hold)
                     {
                         var GOnote = Instantiate(holdPrefab, notes.transform);
-                        noteManager.AddNote(GOnote, noteIndex[note.startPosition]++);
+                        AddJudgeNote(GOnote, note);
                         var NDCompo = PrepareNote<HoldDrop>(GOnote);
 
-                        // note的图层顺序
+                        // Note layer order
                         NDCompo.noteSortOrder = noteSortOrder;
                         noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
 
@@ -639,24 +704,36 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.time = (float)timing.time;
                         NDCompo.LastFor = (float)note.holdTime;
                         NDCompo.startPosition = note.startPosition;
-                        NDCompo.speed = noteSpeed * timing.HSpeed;
-                        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
+                        var holdIsEach = timing.noteList.Count > 1;
+                        NDCompo.speed = noteSpeed * GetHSpeedAt(
+                            "hold", timing.time, timing.HSpeed, note.isBreak, holdIsEach);
+                        NDCompo.scrollType = ResolveSvType("hold", note.isBreak, holdIsEach);
+                        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(
+                            timing.time, NDCompo.scrollType);
+                        NDCompo.spawnRadius = GetSpawnRadiusAt(
+                            "hold", timing.time, note.isBreak, holdIsEach);
+                        NDCompo.bounceDuration = GetBounceDurationAt(
+                            "hold", timing.time, note.isBreak, holdIsEach);
                         NDCompo.isEX = note.isEx;
                         NDCompo.isBreak = note.isBreak;
+                        NDCompo.isFirework = note.isHanabi;
+                        NDCompo.isDZone = note.isDZone;
                         var holdMat = GetHoldMaterial(
                             note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
                         NDCompo.colorOverrideMaterial = holdMat;
                         if (holdMat != null) NDCompo.noteTintColor = holdMat.GetColor("_NoteColor");
-                        NDCompo.noteScale = GetSizeAt(timing.time); // ALPHA: note size
+                        var holdSize = GetSizeAt("hold", timing.time, note.isBreak, holdIsEach);
+                        NDCompo.noteScaleX = holdSize.x;
+                        NDCompo.noteScaleY = holdSize.y;
                     }
                     else if (note.noteType == SimaiNoteType.TouchHold)
                     {
                         var touchSensor = Assets.Scripts.TouchBase.GetSensor(note.touchArea, note.startPosition);
                         var GOnote = Instantiate(touchHoldPrefab, notes.transform);
-                        noteManager.AddTouch(GOnote, touchIndex[touchSensor]++);
+                        AddJudgeTouch(GOnote, touchSensor);
                         var NDCompo = PrepareNote<TouchHoldDrop>(GOnote);
 
-                        // note的图层顺序
+                        // Note layer order
                         NDCompo.noteSortOrder = noteSortOrder;
                         noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
 
@@ -664,24 +741,36 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.startPosition = note.startPosition;
                         NDCompo.time = (float)timing.time;
                         NDCompo.LastFor = (float)note.holdTime;
-                        NDCompo.speed = touchSpeed * timing.HSpeed;
-                        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
+                        var touchHoldIsEach = timing.noteList.Count > 1;
+                        NDCompo.speed = touchSpeed * GetHSpeedAt(
+                            "touchhold", timing.time, timing.HSpeed, note.isBreak, touchHoldIsEach);
+                        NDCompo.scrollType = ResolveSvType("touchhold", note.isBreak, touchHoldIsEach);
+                        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(
+                            timing.time, NDCompo.scrollType);
                         NDCompo.isFirework = note.isHanabi;
-                        var thMat = CreateTintMaterial(GetColorAt("touchhold", timing.time), GetAlphaAt("touchhold", timing.time)); // ALPHA: note color
+                        NDCompo.isBreak = note.isBreak;
+                        // Mine notes remain grayscale even when a color override is active.
+                        var thMat = note.isMonoHead
+                            ? CreateTintMaterial(null, GetAlphaAt("touchhold", timing.time), grayscale: true)
+                            : CreateTintMaterial(GetColorAt("touchhold", timing.time), GetAlphaAt("touchhold", timing.time));
                         NDCompo.colorOverrideMaterial = thMat;
-                        if (thMat != null) NDCompo.noteTintColor = thMat.GetColor("_NoteColor");
-                        NDCompo.noteScale = GetSizeAt(timing.time);
+                        if (thMat != null && !note.isMonoHead) NDCompo.noteTintColor = thMat.GetColor("_NoteColor");
+                        var touchHoldSize = GetSizeAt(
+                            "touchhold", timing.time, note.isBreak, touchHoldIsEach);
+                        NDCompo.noteScaleX = touchHoldSize.x;
+                        NDCompo.noteScaleY = touchHoldSize.y;
 
-                        Array.Copy(customSkin.TouchHold, NDCompo.TouchHoldSprite, 5);
-                        NDCompo.TouchPointSprite = customSkin.TouchPoint;
+                        // Break touch-holds use dedicated skin sprites instead of runtime tinting.
+                        Array.Copy(note.isBreak ? customSkin.TouchHold_Break : customSkin.TouchHold, NDCompo.TouchHoldSprite, 5);
+                        NDCompo.TouchPointSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint;
                     }
                     else if (note.noteType == SimaiNoteType.Touch)
                     {
                         var GOnote = Instantiate(touchPrefab, notes.transform);
-                        noteManager.AddTouch(GOnote, touchIndex[TouchBase.GetSensor(note.touchArea, note.startPosition)]++);
+                        AddJudgeTouch(GOnote, TouchBase.GetSensor(note.touchArea, note.startPosition));
                         var NDCompo = PrepareNote<TouchDrop>(GOnote);
 
-                        // note的图层顺序
+                        // Note layer order
                         NDCompo.noteSortOrder = noteSortOrder;
                         noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
 
@@ -689,10 +778,11 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.areaPosition = note.touchArea;
                         NDCompo.startPosition = note.startPosition;
 
-                        NDCompo.fanNormalSprite = customSkin.Touch;
-                        NDCompo.fanEachSprite = customSkin.Touch_Each;
-                        NDCompo.pointNormalSprite = customSkin.TouchPoint;
-                        NDCompo.pointEachSprite = customSkin.TouchPoint_Each;
+                        // Break touches use dedicated skin sprites, including each notes.
+                        NDCompo.fanNormalSprite = note.isBreak ? customSkin.Touch_Break : customSkin.Touch;
+                        NDCompo.fanEachSprite = note.isBreak ? customSkin.Touch_Break : customSkin.Touch_Each;
+                        NDCompo.pointNormalSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint;
+                        NDCompo.pointEachSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint_Each;
                         NDCompo.justSprite = customSkin.TouchJust;
                         Array.Copy(customSkin.TouchBorder, NDCompo.multTouchNormalSprite, 2);
                         Array.Copy(customSkin.TouchBorder_Each, NDCompo.multTouchEachSprite, 2);
@@ -702,16 +792,31 @@ public class JsonDataLoader : MonoBehaviour
                             NDCompo.isEach = true;
                             members.Add(NDCompo);
                         }
-                        NDCompo.speed = touchSpeed * timing.HSpeed;
-                        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
+                        var touchIsEach = timing.noteList.Count > 1;
+                        NDCompo.speed = touchSpeed * GetHSpeedAt(
+                            "touch", timing.time, timing.HSpeed, note.isBreak, touchIsEach);
+                        NDCompo.scrollType = ResolveSvType("touch", note.isBreak, touchIsEach);
+                        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(
+                            timing.time, NDCompo.scrollType);
                         NDCompo.isFirework = note.isHanabi;
+                        NDCompo.isBreak = note.isBreak;
                         NDCompo.GroupInfo = null;
-                        NDCompo.colorOverrideMaterial = CreateTintMaterial(GetColorAt("touch", timing.time), GetAlphaAt("touch", timing.time)); // ALPHA: note color
-                        NDCompo.noteScale = GetSizeAt(timing.time);
+                        // Mine notes remain grayscale even when a color override is active.
+                        NDCompo.colorOverrideMaterial = note.isMonoHead
+                            ? CreateTintMaterial(null, GetAlphaAt("touch", timing.time), grayscale: true)
+                            : CreateTintMaterial(GetColorAt("touch", timing.time), GetAlphaAt("touch", timing.time));
+                        var touchSize = GetSizeAt("touch", timing.time, note.isBreak, touchIsEach);
+                        NDCompo.noteScaleX = touchSize.x;
+                        NDCompo.noteScaleY = touchSize.y;
                     }
 
                     else if (note.noteType == SimaiNoteType.Slide)
-                        InstantiateStarGroup(timing, note, i, lastNoteTime); // 星星组
+                    {
+                        if (note.isTouchSlide)
+                            InstantiateTouchSlide(timing, note, members);
+                        else
+                            InstantiateStarGroup(timing, note, i, lastNoteTime); // Star group
+                    }
                 }
 
 
@@ -761,7 +866,7 @@ public class JsonDataLoader : MonoBehaviour
 
                 var eachNotes = timing.noteList.FindAll(o =>
                     o.noteType != SimaiNoteType.Touch && o.noteType != SimaiNoteType.TouchHold);
-                if (eachNotes.Count > 1) //有多个非touchnote
+                if (eachNotes.Count > 1) // Multiple non-Touch notes
                 {
                     var startPos = eachNotes[0].startPosition;
                     var endPos = eachNotes[1].startPosition;
@@ -772,8 +877,13 @@ public class JsonDataLoader : MonoBehaviour
                     var lineDrop = line.GetComponent<EachLineDrop>();
 
                     lineDrop.time = (float)timing.time;
-                    lineDrop.speed = noteSpeed * timing.HSpeed;
-                    lineDrop.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
+                    lineDrop.speed = noteSpeed * GetHSpeedAt(
+                        "tap", timing.time, timing.HSpeed, isEach: true);
+                    lineDrop.scrollType = ResolveSvType("tap", false, true);
+                    lineDrop.noteScrollPos = SvController.GetCumulativeScroll(
+                        timing.time, lineDrop.scrollType);
+                    lineDrop.spawnRadius = GetSpawnRadiusAt(
+                        "tap", timing.time, isEach: true);
 
                     endPos = endPos < 0 ? endPos + 8 : endPos;
                     endPos = endPos > 8 ? endPos - 8 : endPos;
@@ -795,15 +905,20 @@ public class JsonDataLoader : MonoBehaviour
             }
             catch (Exception e)
             {
-                // The error is already handled and shown in ErrText. Logging it
-                // as an exception triggers Unity's Error Pause and deadlocks
-                // synchronous editor requests while the player is paused.
+                if (previewOnly)
+                {
+                    UnityEngine.Debug.LogWarning(e);
+                    continue;
+                }
+
+                // Do not write parser errors to the View overlay. Syntax feedback
+                // belongs in the editor; logging as an exception also triggers
+                // Unity's Error Pause and deadlocks synchronous editor requests.
                 UnityEngine.Debug.LogWarning(e);
-                var errText = GameObject.Find("ErrText");
-                if (errText != null)
-                    errText.GetComponent<Text>().text = "在第" + (timing.rawTextPositionY + 1) + "行发现问题：\n" + e.Message;
             }
         }
+        if (!previewOnly && runtimeBindingReadyFrame == int.MaxValue)
+            runtimeBindingReadyFrame = Time.frameCount + 1;
         noteParserTask = null;
         yield break;
     }
@@ -815,9 +930,25 @@ public class JsonDataLoader : MonoBehaviour
         return component;
     }
 
+    private void AddJudgeNote(GameObject noteObject, SimaiNote note)
+    {
+        if (previewOnly)
+            return;
+        var key = note.isDZone ? note.startPosition + 8 : note.startPosition;
+        noteManager.AddNote(noteObject, noteIndex[key]++);
+    }
+
+    private void AddJudgeTouch(GameObject noteObject, SensorType sensorType)
+    {
+        if (previewOnly)
+            return;
+        noteManager.AddTouch(noteObject, touchIndex[sensorType]++);
+    }
+
     public void LoadJson(string json, float ignoreOffset, bool previewOnly = false)
     {
-        _tintMaterialCache.Clear();
+        runtimeBindingReadyFrame = previewOnly ? -1 : int.MaxValue;
+        ClearTintMaterialCache();
         jsonLoaderTask = Task.Run(() => JsonConvert.DeserializeObject<Majson>(json));
         State = NoteLoaderStatus.LodingJson;
         this.ignoreOffset = ignoreOffset;
@@ -826,7 +957,8 @@ public class JsonDataLoader : MonoBehaviour
 
     public void LoadJsonImmediate(string json, float ignoreOffset, bool previewOnly = false)
     {
-        _tintMaterialCache.Clear();
+        runtimeBindingReadyFrame = -1;
+        ClearTintMaterialCache();
         loadedData = JsonConvert.DeserializeObject<Majson>(json);
         this.ignoreOffset = ignoreOffset;
         this.previewOnly = previewOnly;
@@ -843,22 +975,26 @@ public class JsonDataLoader : MonoBehaviour
             if (titleText != null) titleText.text = loadedData.title;
             if (artistText != null) artistText.text = loadedData.artist;
             if (designText != null) designText.text = loadedData.designer;
-            if (songDetailTemplate != null && cardImage != null && songDetailTemplate.IsMasterTemplate(loadedData))
-            {
+            if (songDetailTemplate != null && cardImage != null &&
+                songDetailTemplate.IsMasterTemplate(loadedData) &&
                 songDetailTemplate.ApplyMaster(loadedData, cardImage, songDetailJacket,
-                    diffText, levelText, titleText, artistText, designText);
+                    diffText, levelText, titleText, artistText, designText))
+            {
             }
             else
             {
                 songDetailTemplate?.ResetOriginal();
                 if (cardImage != null)
-                    cardImage.color = diffColors[loadedData.diffNum];
+                    cardImage.color = diffColors[Mathf.Clamp(loadedData.diffNum, 0, diffColors.Length - 1)];
             }
 
             CountNoteSum(loadedData);
         }
 
-        SvController.Load(loadedData.svTable, ignoreOffset);
+        SvController.Load(loadedData.svTable, 0d);
+        BuildHSpeedTimeline(loadedData.hsTable);
+        BuildSpawnTimeline(loadedData.spawnTable);
+        BuildBounceTimeline(loadedData.bounceTable);
         BuildColorTimeline(loadedData.colorTable);
         BuildSizeTimeline(loadedData.sizeTable);
         BuildAlphaTimeline(loadedData.alphaTable);
@@ -868,22 +1004,24 @@ public class JsonDataLoader : MonoBehaviour
         {
         }
         State = NoteLoaderStatus.Finished;
+        if (!previewOnly)
+            runtimeBindingReadyFrame = Time.frameCount + 1;
     }
 
     public void ClearLoadedNotes(bool immediate = false)
     {
+        UnityEngine.Debug.Log($"[MajdataView] ClearLoadedNotes(immediate={immediate}): clearing input bindings and judge queues.");
         if (noteParserTask != null)
         {
             StopCoroutine(noteParserTask);
             noteParserTask = null;
         }
 
-        (GameObject.Find("Input") ?? GameObject.Find("InputManager"))
-            ?.GetComponent<InputManager>()
-            ?.ResetInputState(true);
-        GameObject.Find("Sensors")?.GetComponent<SensorManager>()?.ResetAllSensors();
-        GameObject.Find("MultTouchHandler")?.GetComponent<MultTouchHandler>()?.clearSlots();
+        // Mark reload before removing old notes so OnDestroy cannot emit judgements.
+        // Remove note objects first, then reset shared input state. This prevents an
+        // old note from observing or mutating the reset performed for the new chart.
         HttpHandler.IsReloding = true;
+        var generation = ++reloadGeneration;
         if (notes != null)
         {
             for (var i = notes.transform.childCount - 1; i >= 0; i--)
@@ -897,16 +1035,23 @@ public class JsonDataLoader : MonoBehaviour
             }
         }
         noteManager?.Clear();
+        (GameObject.Find("Input") ?? GameObject.Find("InputManager"))
+            ?.GetComponent<InputManager>()
+            ?.ResetInputState(true);
+        GameObject.Find("Sensors")?.GetComponent<SensorManager>()?.ResetAllSensors();
+        GameObject.Find("MultTouchHandler")?.GetComponent<MultTouchHandler>()?.clearSlots();
         slideLayer = -1;
         noteSortOrder = 0;
         State = NoteLoaderStatus.Idle;
-        StartCoroutine(ResetReloadFlagNextFrame());
+        runtimeBindingReadyFrame = -1;
+        StartCoroutine(ResetReloadFlagNextFrame(generation));
     }
 
-    private IEnumerator ResetReloadFlagNextFrame()
+    private IEnumerator ResetReloadFlagNextFrame(int generation)
     {
         yield return null;
-        HttpHandler.IsReloding = false;
+        if (generation == reloadGeneration)
+            HttpHandler.IsReloding = false;
     }
 
 
@@ -914,6 +1059,19 @@ public class JsonDataLoader : MonoBehaviour
     {
         foreach (var timing in json.timingList)
             foreach (var note in timing.noteList)
+            {
+                if (note.isTouchSlide)
+                {
+                    if (!note.isSlideNoHead)
+                    {
+                        if (note.isBreak) ObjectCounter.breakSum++;
+                        else if (note.touchArea == 'K') ObjectCounter.tapSum++;
+                        else ObjectCounter.touchSum++;
+                    }
+                    if (note.isSlideBreak) ObjectCounter.breakSum++;
+                    else ObjectCounter.slideSum++;
+                    continue;
+                }
                 if (!note.isBreak)
                 {
                     if (note.noteType == SimaiNoteType.Tap) ObjectCounter.tapSum++;
@@ -944,11 +1102,25 @@ public class JsonDataLoader : MonoBehaviour
                         ObjectCounter.breakSum++;
                     }
                 }
+            }
     }
 
     private void CountNoteCount(List<SimaiNote> timing)
     {
         foreach (var note in timing)
+        {
+            if (note.isTouchSlide)
+            {
+                if (!note.isSlideNoHead)
+                {
+                    if (note.isBreak) ObjectCounter.breakCount++;
+                    else if (note.touchArea == 'K') ObjectCounter.tapCount++;
+                    else ObjectCounter.touchCount++;
+                }
+                if (note.isSlideBreak) ObjectCounter.breakCount++;
+                else ObjectCounter.slideCount++;
+                continue;
+            }
             if (!note.isBreak)
             {
                 if (note.noteType == SimaiNoteType.Tap) ObjectCounter.tapCount++;
@@ -979,6 +1151,7 @@ public class JsonDataLoader : MonoBehaviour
                     ObjectCounter.breakCount++;
                 }
             }
+        }
     }
 
     private void InstantiateStarGroup(SimaiTimingPoint timing, SimaiNote note, int sort, double lastNoteTime)
@@ -993,16 +1166,16 @@ public class JsonDataLoader : MonoBehaviour
         var sumBarCount = 0;
 
         var noteContent = note.noteContent;
-        var latestStartIndex = charIntParse(noteContent[0]); // 存储上一个Slide的结尾 也就是下一个Slide的起点
-        var ptr = 1; // 指向目前处理的字符
+        var latestStartIndex = charIntParse(noteContent[0]); // Previous Slide endpoint and next Slide start
+        var ptr = 1; // Current character
 
-        var specTimeFlag = 0; // 表示此组合slide是指定总时长 还是指定每一段的时长
-        // 0-目前还没有读取 1-读取到了一个未指定时长的段落 2-读取到了一个指定时长的段落 3-（期望）读取到了最后一个时长指定
+        var specTimeFlag = 0; // Whether this chain specifies total duration or each segment duration
+        // 0=none read; 1=segment without duration; 2=segment with duration; 3=expected final duration read
 
         while (ptr < noteContent.Length)
             if (!char.IsNumber(noteContent[ptr]))
             {
-                // 读取到字符
+                // Read a shape character
                 var slideTypeChar = noteContent[ptr++].ToString();
 
                 var slidePart = new SimaiNote();
@@ -1010,7 +1183,7 @@ public class JsonDataLoader : MonoBehaviour
                 slidePart.startPosition = latestStartIndex;
                 if (slideTypeChar == "V")
                 {
-                    // 转折星星
+                    // Turning Star
                     var middlePos = noteContent[ptr++];
                     var endPos = noteContent[ptr++];
 
@@ -1019,8 +1192,8 @@ public class JsonDataLoader : MonoBehaviour
                 }
                 else
                 {
-                    // 其他普通星星
-                    // 额外检查pp,qq,rp,rq
+                    // Other regular Stars
+                    // Also check pp, qq, rp, and rq
                     if (ptr >= noteContent.Length)
                         throw new Exception("Slide缺少目标键\nSLIDE TARGET MISSING");
                     if (noteContent[ptr] == slideTypeChar[0])
@@ -1037,15 +1210,15 @@ public class JsonDataLoader : MonoBehaviour
 
                 if (ptr < noteContent.Length && noteContent[ptr] == '[')
                 {
-                    // 如果指定了速度
+                    // A duration is specified
                     if (specTimeFlag == 0)
-                        // 之前未读取过
+                        // Nothing read previously
                         specTimeFlag = 2;
                     else if (specTimeFlag == 1)
-                        // 之前读取到的都是未指定时长的段落 那么将flag设为3 如果之后又读取到时长 则报错
+                        // Prior segments had no durations; mark this as the expected final duration
                         specTimeFlag = 3;
                     else if (specTimeFlag == 3)
-                        // 之前读取到了指定时长 并期待那个时长就是最终时长 但是又读取到一个新的时长 则报错
+                        // Another duration after the expected final duration is invalid
                         throw new Exception("组合星星有错误\nSLIDE CHAIN ERROR");
 
                     while (ptr < noteContent.Length && noteContent[ptr] != ']')
@@ -1054,12 +1227,12 @@ public class JsonDataLoader : MonoBehaviour
                 }
                 else
                 {
-                    // 没有指定速度
+                    // No duration is specified
                     if (specTimeFlag == 0)
-                        // 之前未读取过
+                        // Nothing read previously
                         specTimeFlag = 1;
                     else if (specTimeFlag == 2 || specTimeFlag == 3)
-                        // 之前读取到指定时长的段落了 说明这一条组合星星有的指定时长 有的没指定 则需要报错
+                        // Mixing segments with and without durations is invalid
                         throw new Exception("组合星星有错误\nSLIDE CHAIN ERROR");
                 }
 
@@ -1079,15 +1252,21 @@ public class JsonDataLoader : MonoBehaviour
             }
             else
             {
-                // 理论上来说 不应该读取到数字 因此如果读取到了 说明有语法错误
+                // A number cannot appear here and indicates invalid syntax
                 throw new Exception("组合星星有错误\nwSLIDE CHAIN ERROR");
             }
 
         for (var i = 0; i < subSlide.Count; i++)
         {
             var o = subSlide[i];
+            // The parser stores D-zone ownership on the complete slide. Once the
+            // slide is split into render/judge segments, retain it on the first and
+            // last segment so a simple 1d-5d slide reaches SlideDrop unchanged.
+            o.isDZone = i == 0 && note.isDZone;
+            o.isDZoneEnd = i == subSlide.Count - 1 && note.isDZoneEnd;
             o.isBreak = note.isBreak;
             o.isEx = note.isEx;
+            o.isHanabi = i == 0 && note.isHanabi; // Fireworks belong only to the Star head
             o.isMonoHead = i == 0 && note.isMonoHead;
             o.isSlideMono = note.isSlideMono;
             o.isSlideBreak = note.isSlideBreak;
@@ -1096,13 +1275,13 @@ public class JsonDataLoader : MonoBehaviour
         subSlide[0].isSlideNoHead = note.isSlideNoHead;
 
         if (specTimeFlag == 1 || specTimeFlag == 0)
-            // 如果到结束还是1 那说明没有一个指定了时长 报错
+            // Flag 1 at the end means no duration was specified
             throw new Exception("组合星星有错误\nwSLIDE CHAIN ERROR");
-        // 此时 flag为2表示每条指定语法 为3表示整体指定语法
+        // Flag 2 means per-segment syntax; flag 3 means total-duration syntax
 
         if (specTimeFlag == 3)
         {
-            // 整体指定语法 使用slideTime来计算
+            // Total-duration syntax uses slideTime for calculation
             var tempBarCount = 0;
             for (var i = 0; i < subSlide.Count; i++)
             {
@@ -1113,9 +1292,9 @@ public class JsonDataLoader : MonoBehaviour
         }
         else
         {
-            // 每条指定语法
+            // Per-segment syntax
 
-            // 获取时长的子函数
+            // Local helper to obtain duration
             double getTimeFromBeats(string noteText, float currentBpm)
             {
                 var startIndex = noteText.IndexOf('[');
@@ -1196,6 +1375,151 @@ public class JsonDataLoader : MonoBehaviour
         subSlides.ForEach(s => s.ConnectInfo.TotalSlideLen = totalSlideLen);
     }
 
+    private void InstantiateTouchSlide(
+        SimaiTimingPoint timing,
+        SimaiNote note,
+        List<TouchDrop> touchMembers)
+    {
+        var isEach = timing.noteList.Count > 1;
+        var slideObject = new GameObject(
+            $"TouchSlide_{note.touchArea}{note.startPosition}{note.touchSlideShape}" +
+            $"{note.touchEndArea}{note.touchEndPosition}");
+        slideObject.transform.SetParent(notes.transform, false);
+        var component = slideObject.AddComponent<TouchSlideDrop>();
+        component.previewOnly = previewOnly;
+        component.timeStart = (float)timing.time;
+        component.time = (float)note.slideStartTime;
+        component.duration = Mathf.Max(0.01f, (float)note.slideTime);
+        component.speed = noteSpeed * GetHSpeedAt(
+            "slide", timing.time, timing.HSpeed, false, isEach);
+        component.starSpeed = starSpeed;
+        component.startArea = note.touchArea;
+        component.endArea = note.touchEndArea;
+        component.startPosition = note.startPosition;
+        component.endPosition = note.touchEndPosition;
+        component.isDZone = note.isDZone;
+        component.isDZoneEnd = note.isDZoneEnd;
+        component.shape = note.touchSlideShape;
+        component.pathExpression = note.noteContent;
+        component.bodyBreak = note.isSlideBreak;
+        component.pathSprite = note.isSlideBreak
+            ? customSkin.Slide_Break
+            : isEach ? customSkin.Slide_Each : customSkin.Slide;
+        component.barTemplate =
+            slidePrefab[SLIDE_PREFAB_MAP["line3"]].transform.GetChild(0).gameObject;
+        component.pathMaterial = GetSlideMaterial(
+            note.isSlideBreak, timing.time, note.isSlideMono);
+        var slideSize = GetSizeAt("slide", timing.time, false, isEach);
+        component.barScale = slideSize;
+
+        component.star = Instantiate(star_slidePrefab, notes.transform);
+        var starRenderer = component.star.GetComponent<SpriteRenderer>();
+        starRenderer.sprite = note.isSlideBreak
+            ? customSkin.Star_Break
+            : isEach ? customSkin.Star_Each : customSkin.Star;
+        component.starMaterial = component.pathMaterial;
+        component.starScale = Vector2.one;
+        component.star.SetActive(false);
+        component.sortingOrder = slideLayer;
+        slideLayer -= 24;
+
+        if (note.isSlideNoHead)
+            return;
+        if (note.touchArea == 'K')
+        {
+            slideObject.SetActive(false);
+            InstantiateTouchSlideKeyHead(timing, note, slideObject, isEach);
+        }
+        else
+        {
+            InstantiateTouchSlideHead(timing, note, touchMembers, isEach);
+        }
+    }
+
+    private void InstantiateTouchSlideKeyHead(
+        SimaiTimingPoint timing,
+        SimaiNote note,
+        GameObject slideObject,
+        bool isEach)
+    {
+        var starObject = Instantiate(starPrefab, notes.transform);
+        AddJudgeNote(starObject, note);
+        var star = PrepareNote<StarDrop>(starObject);
+        star.noteSortOrder = noteSortOrder;
+        noteSortOrder -= NOTE_LAYER_COUNT[SimaiNoteType.Slide];
+        star.tapSpr = customSkin.Star;
+        star.eachSpr = customSkin.Star_Each;
+        star.breakSpr = customSkin.Star_Break;
+        star.exSpr = customSkin.Star_Ex;
+        star.tapSpr_Double = customSkin.Star_Double;
+        star.eachSpr_Double = customSkin.Star_Each_Double;
+        star.breakSpr_Double = customSkin.Star_Break_Double;
+        star.exSpr_Double = customSkin.Star_Ex_Double;
+        star.BreakShine = BreakShine;
+        star.time = (float)timing.time;
+        star.startPosition = note.startPosition;
+        star.isDZone = note.isDZone;
+        star.rotateSpeed = Mathf.Max(0.01f, (float)note.slideTime);
+        star.isEach = isEach;
+        star.isBreak = note.isBreak;
+        star.isEX = note.isEx;
+        star.isFirework = note.isHanabi;
+        star.slide = slideObject;
+        star.speed = noteSpeed * GetHSpeedAt(
+            "star", timing.time, timing.HSpeed, note.isBreak, isEach);
+        star.scrollType = ResolveSvType("star", note.isBreak, isEach);
+        star.noteScrollPos = SvController.GetCumulativeScroll(timing.time, star.scrollType);
+        star.spawnRadius = GetSpawnRadiusAt("star", timing.time, note.isBreak, isEach);
+        star.bounceDuration = GetBounceDurationAt("star", timing.time, note.isBreak, isEach);
+        star.colorOverrideMaterial = GetStarMaterial(
+            note.isBreak, isEach, timing.time, note.isMonoHead);
+        var size = GetSizeAt("star", timing.time, note.isBreak, isEach);
+        star.noteScaleX = size.x;
+        star.noteScaleY = size.y;
+    }
+
+    private void InstantiateTouchSlideHead(
+        SimaiTimingPoint timing,
+        SimaiNote note,
+        List<TouchDrop> touchMembers,
+        bool isEach)
+    {
+        var touchObject = Instantiate(touchPrefab, notes.transform);
+        AddJudgeTouch(
+            touchObject,
+            TouchBase.GetSensor(note.touchArea, note.startPosition));
+        var touch = PrepareNote<TouchDrop>(touchObject);
+        touch.noteSortOrder = noteSortOrder;
+        noteSortOrder -= NOTE_LAYER_COUNT[SimaiNoteType.Touch];
+        touch.time = (float)timing.time;
+        touch.areaPosition = note.touchArea;
+        touch.startPosition = note.startPosition;
+        touch.fanNormalSprite = note.isBreak ? customSkin.Touch_Break : customSkin.Touch;
+        touch.fanEachSprite = note.isBreak ? customSkin.Touch_Break : customSkin.Touch_Each;
+        touch.pointNormalSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint;
+        touch.pointEachSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint_Each;
+        touch.justSprite = customSkin.TouchJust;
+        Array.Copy(customSkin.TouchBorder, touch.multTouchNormalSprite, 2);
+        Array.Copy(customSkin.TouchBorder_Each, touch.multTouchEachSprite, 2);
+        touch.isEach = isEach;
+        touch.isBreak = note.isBreak;
+        touch.isFirework = note.isHanabi;
+        if (isEach)
+            touchMembers.Add(touch);
+        touch.speed = touchSpeed * GetHSpeedAt(
+            "touch", timing.time, timing.HSpeed, note.isBreak, isEach);
+        touch.scrollType = ResolveSvType("touch", note.isBreak, isEach);
+        touch.noteScrollPos = SvController.GetCumulativeScroll(
+            timing.time, touch.scrollType);
+        touch.GroupInfo = null;
+        touch.colorOverrideMaterial = note.isMonoHead
+            ? CreateTintMaterial(null, GetAlphaAt("touch", timing.time), grayscale: true)
+            : CreateTintMaterial(GetColorAt("touch", timing.time), GetAlphaAt("touch", timing.time));
+        var touchSize = GetSizeAt("touch", timing.time, note.isBreak, isEach);
+        touch.noteScaleX = touchSize.x;
+        touch.noteScaleY = touchSize.y;
+    }
+
     private GameObject InstantiateWifi(SimaiTimingPoint timing, SimaiNote note)
     {
         var str = note.noteContent.Substring(0, 3);
@@ -1209,10 +1533,10 @@ public class JsonDataLoader : MonoBehaviour
 
         var GOnote = Instantiate(starPrefab, notes.transform);
         var NDCompo = PrepareNote<StarDrop>(GOnote);
-        noteManager.AddNote(GOnote, noteIndex[note.startPosition]++);
+        AddJudgeNote(GOnote, note);
 
 
-        // note的图层顺序
+        // Note layer order
         NDCompo.noteSortOrder = noteSortOrder;
         noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
 
@@ -1231,6 +1555,8 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.rotateSpeed = (float)note.slideTime;
         NDCompo.isEX = note.isEx;
         NDCompo.isBreak = note.isBreak;
+        NDCompo.isFirework = note.isHanabi;
+        NDCompo.isDZone = note.isDZone;
 
         var slideWifi = Instantiate(slidePrefab[SLIDE_PREFAB_MAP["wifi"]], notes.transform);
         slideWifi.SetActive(false);
@@ -1247,6 +1573,9 @@ public class JsonDataLoader : MonoBehaviour
         WifiCompo.judgeQueues = new(WIFISLIDE_JUDGE_QUEUE[startPos]);
         WifiCompo.slideConst = SLIDE_AREA_CONST["wifi"];
         WifiCompo.smoothSlideAnime = smoothSlideAnime;
+        WifiCompo.starSpeed = starSpeed;
+        WifiCompo.isDZone = note.isDZone;
+        WifiCompo.isDZoneEnd = note.isDZoneEnd;
 
         Array.Copy(customSkin.Wifi, WifiCompo.normalSlide, 11);
         Array.Copy(customSkin.Wifi_Each, WifiCompo.eachSlide, 11);
@@ -1263,7 +1592,7 @@ public class JsonDataLoader : MonoBehaviour
             var count = timing.noteList.FindAll(
                 o => o.noteType == SimaiNoteType.Slide &&
                      o.startPosition == note.startPosition).Count;
-            if (count > 1) //有同起点
+            if (count > 1) // Multiple notes share the same start
             {
                 NDCompo.isDouble = true;
                 if (count == timing.noteList.Count)
@@ -1282,12 +1611,27 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.isNoHead = note.isSlideNoHead;
         NDCompo.time = (float)timing.time;
         NDCompo.startPosition = note.startPosition;
-        NDCompo.speed = noteSpeed * timing.HSpeed;
-        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
+        NDCompo.speed = noteSpeed * GetHSpeedAt(
+            "star", timing.time, timing.HSpeed, note.isBreak, NDCompo.isEach);
+        NDCompo.scrollType = ResolveSvType("star", note.isBreak, NDCompo.isEach);
+        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time, NDCompo.scrollType);
+        NDCompo.spawnRadius = GetSpawnRadiusAt(
+            "star", timing.time, note.isBreak, NDCompo.isEach);
+        NDCompo.bounceDuration = GetBounceDurationAt(
+            "star", timing.time, note.isBreak, NDCompo.isEach);
+        var wifiStarSize = GetSizeAt("star", timing.time, note.isBreak, NDCompo.isEach);
+        NDCompo.noteScaleX = wifiStarSize.x;
+        NDCompo.noteScaleY = wifiStarSize.y;
 
         WifiCompo.isJustR = detectJustType(note.noteContent, out endPos);
         WifiCompo.endPosition = endPos;
-        WifiCompo.speed = noteSpeed * timing.HSpeed;
+        WifiCompo.speed = noteSpeed * GetHSpeedAt(
+            "slide", timing.time, timing.HSpeed, note.isSlideBreak, WifiCompo.isEach);
+        WifiCompo.scrollType = ResolveSvType("slide", note.isSlideBreak, WifiCompo.isEach);
+        var wifiSlideSize = GetSizeAt(
+            "slide", timing.time, note.isSlideBreak, WifiCompo.isEach);
+        WifiCompo.noteScaleX = wifiSlideSize.x;
+        WifiCompo.noteScaleY = wifiSlideSize.y;
         WifiCompo.timeStart = (float)timing.time;
         WifiCompo.startPosition = note.startPosition;
         WifiCompo.time = (float)note.slideStartTime;
@@ -1304,8 +1648,8 @@ public class JsonDataLoader : MonoBehaviour
         var GOnote = Instantiate(starPrefab, notes.transform);
         var NDCompo = PrepareNote<StarDrop>(GOnote);
         if(!note.isSlideNoHead)
-            noteManager.AddNote(GOnote, noteIndex[note.startPosition]++);
-        // note的图层顺序
+            AddJudgeNote(GOnote, note);
+        // Note layer order
         NDCompo.noteSortOrder = noteSortOrder;
         noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
 
@@ -1324,6 +1668,8 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.rotateSpeed = (float)note.slideTime;
         NDCompo.isEX = note.isEx;
         NDCompo.isBreak = note.isBreak;
+        NDCompo.isFirework = note.isHanabi;
+        NDCompo.isDZone = note.isDZone;
 
         string slideShape = detectShapeFromText(note.noteContent);
         var isMirror = false;
@@ -1348,6 +1694,8 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.slide = slide;
         var SliCompo = slide.AddComponent<SlideDrop>();
         SliCompo.previewOnly = previewOnly;
+        SliCompo.isDZone = note.isDZone;
+        SliCompo.isDZoneEnd = note.isDZoneEnd;
 
         SliCompo.slideType = slideShape;
         SliCompo.spriteNormal = customSkin.Slide;
@@ -1359,6 +1707,7 @@ public class JsonDataLoader : MonoBehaviour
         SliCompo.areaStep = new List<int>(SLIDE_AREA_STEP_MAP[slideShape]);
         SliCompo.slideConst = SLIDE_AREA_CONST[slideShape];
         SliCompo.smoothSlideAnime = smoothSlideAnime;
+        SliCompo.starSpeed = starSpeed;
 
         if (timing.noteList.Count > 1)
         {
@@ -1389,9 +1738,15 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.isNoHead = note.isSlideNoHead;
         NDCompo.time = (float)timing.time;
         NDCompo.startPosition = note.startPosition;
-        NDCompo.speed = noteSpeed * timing.HSpeed;
-        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time);
+        NDCompo.speed = noteSpeed * GetHSpeedAt(
+            "star", timing.time, timing.HSpeed, note.isBreak, NDCompo.isEach);
+        NDCompo.scrollType = ResolveSvType("star", note.isBreak, NDCompo.isEach);
+        NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time, NDCompo.scrollType);
+        NDCompo.spawnRadius = GetSpawnRadiusAt(
+            "star", timing.time, note.isBreak, NDCompo.isEach);
 
+        NDCompo.bounceDuration = GetBounceDurationAt(
+            "star", timing.time, note.isBreak, NDCompo.isEach);
         SliCompo.isMirror = isMirror;
         SliCompo.isJustR = detectJustType(note.noteContent, out int endPos);
         SliCompo.endPosition = endPos;
@@ -1411,7 +1766,12 @@ public class JsonDataLoader : MonoBehaviour
         {
             SliCompo.isSpecialFlip = isMirror;
         }
-        SliCompo.speed = noteSpeed * timing.HSpeed;
+        SliCompo.speed = noteSpeed * GetHSpeedAt(
+            "slide", timing.time, timing.HSpeed, note.isSlideBreak, SliCompo.isEach);
+        SliCompo.scrollType = ResolveSvType("slide", note.isSlideBreak, SliCompo.isEach);
+        var slideSize = GetSizeAt("slide", timing.time, note.isSlideBreak, SliCompo.isEach);
+        SliCompo.noteScaleX = slideSize.x;
+        SliCompo.noteScaleY = slideSize.y;
         SliCompo.timeStart = (float)timing.time;
         SliCompo.startPosition = note.startPosition;
         SliCompo.star_slide = slide_star;
@@ -1423,12 +1783,13 @@ public class JsonDataLoader : MonoBehaviour
         var slideMat = GetSlideMaterial(note.isSlideBreak, timing.time, note.isSlideMono);
         SliCompo.colorOverrideMaterial = slideMat;
         if (slideMat != null) SliCompo.noteTintColor = slideMat.GetColor("_NoteColor");
-        // ALPHA: star head uses "star" key (independent from slide arc color)
         var starMat = GetStarMaterial(
             note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
         NDCompo.colorOverrideMaterial = starMat;
         if (starMat != null) NDCompo.noteTintColor = starMat.GetColor("_NoteColor");
-        NDCompo.noteScale = GetSizeAt(timing.time); // ALPHA: note size
+        var starSize = GetSizeAt("star", timing.time, note.isBreak, NDCompo.isEach);
+        NDCompo.noteScaleX = starSize.x;
+        NDCompo.noteScaleY = starSize.y;
         //slideLayer += 5;
         return slide;
     }
@@ -1536,7 +1897,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (content.Contains('>'))
         {
-            // circle 默认顺时针
+            // Circle defaults to clockwise
             var str = content.Substring(0, 3);
             var digits = str.Split('>');
             var startPos = int.Parse(digits[0]);
@@ -1553,7 +1914,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (content.Contains('<'))
         {
-            // circle 默认顺时针
+            // Circle defaults to clockwise
             var str = content.Substring(0, 3);
             var digits = str.Split('<');
             var startPos = int.Parse(digits[0]);
@@ -1628,7 +1989,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (content.Contains("pp"))
         {
-            // ppqq 默认为pp
+            // ppqq defaults to pp
             var str = content.Substring(0, 4);
             var digits = str.Split('p');
             var startPos = int.Parse(digits[0]);
@@ -1639,7 +2000,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (content.Contains("qq"))
         {
-            // ppqq 默认为pp
+            // ppqq defaults to pp
             var str = content.Substring(0, 4);
             var digits = str.Split('q');
             var startPos = int.Parse(digits[0]);
@@ -1651,7 +2012,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (content.Contains('p'))
         {
-            // pq 默认为p
+            // pq defaults to p
             var str = content.Substring(0, 3);
             var digits = str.Split('p');
             var startPos = int.Parse(digits[0]);
@@ -1662,7 +2023,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (content.Contains('q'))
         {
-            // pq 默认为p
+            // pq defaults to p
             var str = content.Substring(0, 3);
             var digits = str.Split('q');
             var startPos = int.Parse(digits[0]);
@@ -1686,7 +2047,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (content.Contains('z'))
         {
-            // s镜像
+            // Mirrored s
             var str = content.Substring(0, 3);
             var digits = str.Split('z');
             var startPos = int.Parse(digits[0]);
@@ -1737,6 +2098,77 @@ public class JsonDataLoader : MonoBehaviour
         return "";
     }
 
+    public bool TryGetSlideRoute(
+        string content,
+        out List<SensorType> path,
+        out List<Vector3> positions)
+    {
+        path = new List<SensorType>();
+        positions = new List<Vector3>();
+        try
+        {
+            var shape = detectShapeFromText(content);
+            var isMirror = shape.StartsWith("-", StringComparison.Ordinal);
+            if (isMirror)
+                shape = shape.Substring(1);
+            var isReverse = shape.StartsWith("r", StringComparison.Ordinal);
+            if (isReverse)
+                shape = shape.Substring(1);
+            if (!SLIDE_PREFAB_MAP.TryGetValue(shape, out var prefabIndex))
+                return false;
+
+            var startPosition = content[0] - '0';
+            detectJustType(content, out var endPosition);
+            var rotationPosition = isReverse ? endPosition : startPosition;
+            var rotation = isMirror
+                ? Quaternion.Euler(0f, 0f, -45f * rotationPosition)
+                : Quaternion.Euler(0f, 0f, -45f * (rotationPosition - 1));
+            var scale = isMirror ? new Vector3(-1f, 1f, 1f) : Vector3.one;
+            var prefab = slidePrefab[prefabIndex].transform;
+            var sensorRoot = GameObject.Find("Sensors")?.transform;
+            if (sensorRoot == null)
+                return false;
+
+            Sensor lastSensor = null;
+            for (var barIndex = 0; barIndex < prefab.childCount - 1; barIndex++)
+            {
+                var local = Vector3.Scale(prefab.GetChild(barIndex).localPosition, scale);
+                var position = rotation * local;
+                positions.Add(position);
+                for (var sensorIndex = 0; sensorIndex < sensorRoot.childCount; sensorIndex++)
+                {
+                    var rect = sensorRoot.GetChild(sensorIndex).GetComponent<RectTransform>();
+                    var sensor = rect?.GetComponent<Sensor>();
+                    if (sensor == null || sensor.Group is SensorGroup.D or SensorGroup.E)
+                        continue;
+                    var radius = Math.Max(rect.rect.width * rect.lossyScale.x,
+                                          rect.rect.height * rect.lossyScale.y) / 2f;
+                    if ((position - rect.position).sqrMagnitude > radius * radius)
+                        continue;
+                    if (sensor != lastSensor)
+                    {
+                        path.Add(sensor.Type);
+                        lastSensor = sensor;
+                    }
+                    break;
+                }
+            }
+
+            if (isReverse)
+            {
+                path.Reverse();
+                positions.Reverse();
+            }
+            return path.Count > 0;
+        }
+        catch
+        {
+            path.Clear();
+            positions.Clear();
+            return false;
+        }
+    }
+
     private bool isUpperHalf(int key)
     {
         if (key == 7) return true;
@@ -1757,8 +2189,6 @@ public class JsonDataLoader : MonoBehaviour
         return false;
     }
 
-    // ---- ALPHA: Note color tinting ----
-    // Per-type sorted timelines of (time, color) from colorTable
     private Dictionary<string, List<(double time, string color)>> _colorTimeline
         = new Dictionary<string, List<(double, string)>>();
 
@@ -1768,11 +2198,11 @@ public class JsonDataLoader : MonoBehaviour
         if (colorTable == null) return;
         foreach (var ev in colorTable)
         {
-            if (!_colorTimeline.ContainsKey(ev.noteType))
-                _colorTimeline[ev.noteType] = new List<(double, string)>();
-            // "NULL" resets to default (stored as null so GetColorAt returns null → no tint)
+            var key = NormalizeNoteType(ev.noteType);
+            if (!_colorTimeline.ContainsKey(key))
+                _colorTimeline[key] = new List<(double, string)>();
             string colorValue = string.Equals(ev.color, "NULL", StringComparison.OrdinalIgnoreCase) ? null : ev.color;
-            _colorTimeline[ev.noteType].Add((ev.time, colorValue));
+            _colorTimeline[key].Add((ev.time, colorValue));
         }
         foreach (var kv in _colorTimeline)
             kv.Value.Sort((a, b) => a.time.CompareTo(b.time));
@@ -1782,42 +2212,216 @@ public class JsonDataLoader : MonoBehaviour
     /// or null if no override is defined yet.
     private string GetColorAt(string noteType, double time)
     {
-        if (!_colorTimeline.TryGetValue(noteType, out var list)) return null;
-        string last = null;
-        foreach (var ev in list)
-        {
-            if (ev.time <= time) last = ev.color;
-            else break;
-        }
-        return last;
+        if (!_colorTimeline.TryGetValue(NormalizeNoteType(noteType), out var list)) return null;
+        var index = FindTimelineIndex(list, time);
+        return index >= 0 ? list[index].color : null;
     }
 
-    // ---- ALPHA: Note size scaling ----
-    private List<(double time, float scale)> _sizeTimeline = new();
+    private Dictionary<string, List<(double time, Vector2 scale)>> _sizeTimeline = new();
 
     private void BuildSizeTimeline(List<SizeChange> sizeTable)
     {
         _sizeTimeline.Clear();
         if (sizeTable == null) return;
         foreach (var ev in sizeTable)
-            _sizeTimeline.Add((ev.time, ev.scale));
-        _sizeTimeline.Sort((a, b) => a.time.CompareTo(b.time));
-    }
-
-    /// Returns the scale multiplier active at <paramref name="time"/> (default 1.0).
-    private float GetSizeAt(double time)
-    {
-        float last = 1f;
-        foreach (var ev in _sizeTimeline)
         {
-            if (ev.time <= time) last = ev.scale;
-            else break;
+            string key = NormalizeNoteType(ev.noteType);
+            if (!_sizeTimeline.ContainsKey(key))
+                _sizeTimeline[key] = new List<(double, Vector2)>();
+            var x = ev.scaleX == 0f ? ev.scale : ev.scaleX;
+            var y = ev.scaleY == 0f ? ev.scale : ev.scaleY;
+            if (x == 0f) x = 1f;
+            if (y == 0f) y = 1f;
+            _sizeTimeline[key].Add((ev.time, new Vector2(x, y)));
         }
-        return last;
+        foreach (var kv in _sizeTimeline)
+            kv.Value.Sort((a, b) => a.time.CompareTo(b.time));
     }
 
-    // ---- ALPHA: Note alpha timeline ----
-    // Key "" = global; key "tap"/"hold"/etc = per-type. Per-type takes precedence over global.
+    /// Returns the scale multiplier active for <paramref name="noteType"/> at
+    /// <paramref name="time"/> (per-type over global, default 1.0).
+    private Vector2 GetSizeAt(
+        string noteType,
+        double time,
+        bool isBreak = false,
+        bool isEach = false)
+    {
+        Vector2? Lookup(string key)
+        {
+            if (!_sizeTimeline.TryGetValue(key, out var list)) return null;
+            var index = FindTimelineIndex(list, time);
+            return index >= 0 ? list[index].scale : null;
+        }
+        var resolvedType = ResolveTimelineType(_sizeTimeline, NormalizeNoteType(noteType), isBreak, isEach);
+        var typedScale = Lookup(resolvedType);
+        if (typedScale.HasValue)
+            return typedScale.Value;
+
+        // A slide body is a path made from many sprites. Scaling it with the global
+        // note size changes both sprite size and spacing, so only SIZE*slide=...
+        // may alter it. The star head still follows the global/star setting.
+        if (string.Equals(noteType, "slide", StringComparison.OrdinalIgnoreCase))
+            return Vector2.one;
+
+        return Lookup("") ?? Vector2.one;
+    }
+
+    private Dictionary<string, List<(double time, float multiplier)>> _hSpeedTimeline = new();
+
+    private Dictionary<string, List<(double time, SpawnChange value)>> _spawnTimeline = new();
+
+    private readonly Dictionary<string, List<(double time, BounceChange value)>> _bounceTimeline = new();
+
+    private void BuildBounceTimeline(List<BounceChange> changes)
+    {
+        _bounceTimeline.Clear();
+        if (changes == null)
+            return;
+        foreach (var change in changes)
+        {
+            var key = NormalizeNoteType(change.noteType);
+            if (!_bounceTimeline.TryGetValue(key, out var values))
+                _bounceTimeline[key] = values = new List<(double, BounceChange)>();
+            values.Add((change.time, change));
+        }
+        foreach (var values in _bounceTimeline.Values)
+            values.Sort((left, right) => left.time.CompareTo(right.time));
+    }
+
+    private float GetBounceDurationAt(string noteType, double time, bool isBreak, bool isEach)
+    {
+        var resolvedType = ResolveTimelineType(
+            _bounceTimeline, NormalizeNoteType(noteType), isBreak, isEach);
+        if (!_bounceTimeline.TryGetValue(resolvedType, out var values))
+            return 0f;
+        var index = FindTimelineIndex(values, time);
+        if (index < 0 || values[index].value.reset)
+            return 0f;
+        return Math.Max(0f, values[index].value.duration);
+    }
+
+    private void BuildSpawnTimeline(List<SpawnChange> changes)
+    {
+        _spawnTimeline.Clear();
+        if (changes == null) return;
+        foreach (var change in changes)
+        {
+            var key = NormalizeNoteType(change.noteType);
+            if (!_spawnTimeline.TryGetValue(key, out var list))
+                _spawnTimeline[key] = list = new List<(double, SpawnChange)>();
+            list.Add((change.time, change));
+        }
+        foreach (var list in _spawnTimeline.Values)
+            list.Sort((left, right) => left.time.CompareTo(right.time));
+    }
+
+    private float GetSpawnRadiusAt(
+        string noteType,
+        double time,
+        bool isBreak = false,
+        bool isEach = false)
+    {
+        SpawnChange Lookup(string key)
+        {
+            if (!_spawnTimeline.TryGetValue(key, out var list)) return null;
+            var index = FindTimelineIndex(list, time);
+            return index >= 0 ? list[index].value : null;
+        }
+
+        float Resolve(SpawnChange change) =>
+            change == null || change.reset ? NoteDrop.DefaultSpawnRadius : change.radius;
+
+        if (isBreak)
+        {
+            var special = Lookup("break");
+            if (special != null)
+                return special.reset ? Resolve(Lookup("")) : special.radius;
+        }
+        if (isEach)
+        {
+            var special = Lookup("each");
+            if (special != null)
+                return special.reset ? Resolve(Lookup("")) : special.radius;
+        }
+
+        var typed = Lookup(NormalizeNoteType(noteType));
+        if (typed != null)
+            return typed.reset ? Resolve(Lookup("")) : typed.radius;
+        return Resolve(Lookup(""));
+    }
+
+    private void BuildHSpeedTimeline(List<SpeedChange> changes)
+    {
+        _hSpeedTimeline.Clear();
+        if (changes == null) return;
+        foreach (var change in changes)
+        {
+            var key = NormalizeNoteType(change.noteType);
+            if (!_hSpeedTimeline.TryGetValue(key, out var list))
+                _hSpeedTimeline[key] = list = new List<(double, float)>();
+            list.Add((change.time, change.multiplier));
+        }
+        foreach (var list in _hSpeedTimeline.Values)
+            list.Sort((left, right) => left.time.CompareTo(right.time));
+    }
+
+    private float GetHSpeedAt(
+        string noteType,
+        double time,
+        float fallback,
+        bool isBreak = false,
+        bool isEach = false)
+    {
+        var resolvedType = ResolveTimelineType(_hSpeedTimeline, NormalizeNoteType(noteType), isBreak, isEach);
+        if (!_hSpeedTimeline.TryGetValue(resolvedType, out var list))
+            return fallback;
+        var index = FindTimelineIndex(list, time);
+        return index >= 0 ? list[index].multiplier : fallback;
+    }
+
+    private static string ResolveTimelineType<T>(
+        Dictionary<string, List<T>> timeline,
+        string baseType,
+        bool isBreak,
+        bool isEach)
+    {
+        if (isBreak && timeline.ContainsKey("break"))
+            return "break";
+        if (isEach && timeline.ContainsKey("each"))
+            return "each";
+        return baseType;
+    }
+
+    private static string ResolveSvType(string baseType, bool isBreak, bool isEach)
+    {
+        if (isBreak && SvController.HasTypedCurve("break"))
+            return "break";
+        if (isEach && SvController.HasTypedCurve("each"))
+            return "each";
+        return baseType;
+    }
+
+    private static int FindTimelineIndex<T>(List<(double time, T value)> timeline, double time)
+    {
+        var low = 0;
+        var high = timeline.Count - 1;
+        var result = -1;
+        while (low <= high)
+        {
+            var middle = low + (high - low) / 2;
+            if (timeline[middle].time <= time)
+            {
+                result = middle;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+        return result;
+    }
+
     private Dictionary<string, List<(double time, float alpha)>> _alphaTimeline = new();
 
     private void BuildAlphaTimeline(List<AlphaChange> alphaTable)
@@ -1826,7 +2430,7 @@ public class JsonDataLoader : MonoBehaviour
         if (alphaTable == null) return;
         foreach (var ev in alphaTable)
         {
-            string key = ev.noteType ?? "";
+            string key = NormalizeNoteType(ev.noteType);
             if (!_alphaTimeline.ContainsKey(key))
                 _alphaTimeline[key] = new List<(double, float)>();
             _alphaTimeline[key].Add((ev.time, ev.alpha));
@@ -1840,33 +2444,73 @@ public class JsonDataLoader : MonoBehaviour
         float? Lookup(string key)
         {
             if (!_alphaTimeline.TryGetValue(key, out var list)) return null;
-            float? last = null;
-            foreach (var ev in list)
-            {
-                if (ev.time <= time) last = ev.alpha;
-                else break;
-            }
-            return last;
+            var index = FindTimelineIndex(list, time);
+            return index >= 0 ? list[index].alpha : null;
         }
-        return Lookup(noteType) ?? Lookup("") ?? 1f;
+        return Lookup(NormalizeNoteType(noteType)) ?? Lookup("") ?? 1f;
     }
 
     private static Shader _tintShader;
+    private static bool renderingMaterialsWarmed;
     private readonly Dictionary<string, Material> _tintMaterialCache = new();
 
-    /// Creates a new NoteColorTint material instance.
-    /// hex: 6-digit "FF8800" or 8-digit "FF880080" (last 2 bytes = opacity 0x00–0xFF).
-    /// alpha: additional opacity multiplier from <ALPHA*x> (multiplied with hex alpha).
-    /// srcHue: 0 enables break-detail preservation without retaining source hues.
-    // each/break sprites pack their pattern into HUE differences, which plain hue
-    // replacement flattens (looks like a flat over-saturated block). Driving these with
-    // srcHue=0 (turns hue contrast into value/brightness contrast so the texture stays
-    // visible) + tintCoverage=1 (saturation follows the *target* dye colour instead of
-    // the sprite's own high saturation) fixes both. tap/hold/slide keep coverage 0 and
-    // are untouched. Keep this below 1 so each/break/excellent textures retain
-    // their original light/dark contrast instead of becoming flat neon blocks.
-    private const float DetailedTintCoverage = 0f;
+    public void WarmupRenderingMaterials()
+    {
+        if (renderingMaterialsWarmed)
+            return;
 
+        RenderTexture target = null;
+        Material tintWarmup = null;
+        Material breakWarmup = null;
+        try
+        {
+            target = RenderTexture.GetTemporary(8, 8, 0, RenderTextureFormat.ARGB32);
+            _tintShader ??= Shader.Find("Sprites/NoteColorTint");
+            if (_tintShader != null)
+            {
+                tintWarmup = new Material(_tintShader) { hideFlags = HideFlags.HideAndDontSave };
+                Graphics.Blit(Texture2D.whiteTexture, target, tintWarmup);
+                tintWarmup.EnableKeyword("PIXELSNAP_ON");
+                Graphics.Blit(Texture2D.whiteTexture, target, tintWarmup);
+            }
+
+            if (breakMaterial != null)
+            {
+                breakWarmup = new Material(breakMaterial) { hideFlags = HideFlags.HideAndDontSave };
+                Graphics.Blit(Texture2D.whiteTexture, target, breakWarmup);
+            }
+            renderingMaterialsWarmed = true;
+        }
+        catch (System.Exception exception)
+        {
+            UnityEngine.Debug.LogWarning("[RenderWarmup] Material warmup failed: " + exception.Message);
+        }
+        finally
+        {
+            if (target != null)
+                RenderTexture.ReleaseTemporary(target);
+            if (tintWarmup != null)
+                Destroy(tintWarmup);
+            if (breakWarmup != null)
+                Destroy(breakWarmup);
+        }
+    }
+
+    private void ClearTintMaterialCache()
+    {
+        foreach (var material in _tintMaterialCache.Values)
+        {
+            if (material == null)
+                continue;
+            if (Application.isPlaying)
+                Destroy(material);
+            else
+                DestroyImmediate(material);
+        }
+        _tintMaterialCache.Clear();
+    }
+
+    /// Creates a cached tint material while preserving the source texture shading.
     private Material CreateTintMaterial(
         string hex,
         float alpha = 1f,
@@ -1917,10 +2561,8 @@ public class JsonDataLoader : MonoBehaviour
         return mat;
     }
 
-    // ---- ALPHA: 8-type color model ----
-    // Keys: tap | each | hold | slide | star | break | touch | touchhold
-    // Break uses hue-rotation (srcHue=0) to preserve the red→orange→yellow gradient.
-    // Fallback order: specific type → shape type → null (no tint).
+    private static string NormalizeNoteType(string noteType) =>
+        string.IsNullOrWhiteSpace(noteType) ? "" : noteType.Trim().ToLowerInvariant();
 
     private Material GetTapMaterial(bool isBreak, bool isEach, double time, bool isMono = false)
     {
@@ -1929,11 +2571,10 @@ public class JsonDataLoader : MonoBehaviour
                 GetAlphaAt(isBreak ? "break" : isEach ? "each" : "tap", time),
                 grayscale: true);
         if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time), GetAlphaAt("break", time), 0f,
-                tintCoverage: DetailedTintCoverage);
+            return CreateTintMaterial(GetColorAt("break", time), GetAlphaAt("break", time));
         if (isEach)
             return CreateTintMaterial(GetColorAt("each", time) ?? GetColorAt("tap", time),
-                GetAlphaAt("each", time), tintCoverage: DetailedTintCoverage);
+                GetAlphaAt("each", time));
         return CreateTintMaterial(GetColorAt("tap", time), GetAlphaAt("tap", time));
     }
 
@@ -1945,10 +2586,10 @@ public class JsonDataLoader : MonoBehaviour
                 grayscale: true);
         if (isBreak)
             return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("hold", time),
-                GetAlphaAt("break", time), 0f, tintCoverage: DetailedTintCoverage);
+                GetAlphaAt("break", time));
         if (isEach)
             return CreateTintMaterial(GetColorAt("each", time) ?? GetColorAt("hold", time),
-                GetAlphaAt("each", time), tintCoverage: DetailedTintCoverage);
+                GetAlphaAt("each", time));
         return CreateTintMaterial(GetColorAt("hold", time), GetAlphaAt("hold", time));
     }
 
@@ -1960,7 +2601,7 @@ public class JsonDataLoader : MonoBehaviour
                 grayscale: true);
         if (isBreak)
             return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("slide", time),
-                GetAlphaAt("break", time), 0f, tintCoverage: DetailedTintCoverage);
+                GetAlphaAt("break", time));
         return CreateTintMaterial(GetColorAt("slide", time), GetAlphaAt("slide", time));
     }
 
@@ -1974,13 +2615,14 @@ public class JsonDataLoader : MonoBehaviour
         if (isBreak)
         {
             string c = GetColorAt("break", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time);
-            return CreateTintMaterial(c, GetAlphaAt("break", time), 0f, tintCoverage: DetailedTintCoverage);
+            return CreateTintMaterial(c, GetAlphaAt("break", time));
         }
         if (isEach)
             return CreateTintMaterial(
                 GetColorAt("each", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time),
-                GetAlphaAt("each", time), tintCoverage: DetailedTintCoverage);
-        return CreateTintMaterial(GetColorAt("star", time) ?? GetColorAt("tap", time),
+                GetAlphaAt("each", time));
+        return CreateTintMaterial(
+            GetColorAt("star", time) ?? GetColorAt("tap", time),
             GetAlphaAt("star", time));
     }
 

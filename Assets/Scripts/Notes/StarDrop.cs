@@ -17,9 +17,20 @@ public class StarDrop : TapBase
     public Sprite exSpr_Double;
 
     public GameObject slide;
+    private float slideAppearanceStartOffset;
     private void Start()
     {
         PreLoad();
+
+        if (!isFakeStar && slide != null)
+        {
+            if (slide.TryGetComponent<SlideDrop>(out var slideDrop))
+                slideAppearanceStartOffset = slideDrop.GetAppearanceStartOffset();
+            else if (slide.TryGetComponent<WifiDrop>(out var wifiDrop))
+                slideAppearanceStartOffset = wifiDrop.GetAppearanceStartOffset();
+            else if (slide.TryGetComponent<TouchSlideDrop>(out var touchSlideDrop))
+                slideAppearanceStartOffset = touchSlideDrop.GetAppearanceStartOffset();
+        }
 
         if (isDouble)
         {
@@ -76,36 +87,72 @@ public class StarDrop : TapBase
         if(!isNoHead)
         {
             sensor = GameObject.Find("Sensors")
-                                   .transform.GetChild(startPosition - 1)
+                                   .transform.GetChild(SensorChildIndex)
                                    .GetComponent<Sensor>();
             manager = GameObject.Find("Sensors")
                                     .GetComponent<SensorManager>();
             inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
-            sensorPos = (SensorType)(startPosition - 1);
+            sensorPos = (SensorType)SensorChildIndex;
             if (!previewOnly)
-                inputManager.BindArea(Check, sensorPos);
+                BindJudgeInput(Check);
         }
         State = NoteStatus.Initialized;
     }
     // Update is called once per frame
     protected override void Update()
     {
-        if (!timeProvider.isStart)
+        if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < 0f)
         {
             tapLine.SetActive(false);
+            spriteRenderer.forceRenderingOff = true;
+            if (isEX) exSpriteRender.forceRenderingOff = true;
+            if (!isFakeStar && slide != null)
+                slide.SetActive(false);
             return;
         }
 
         var songSpeed = timeProvider.CurrentSpeed;
-        var distance = GetSvDistance();
-        var destScale = distance * 0.4f + 0.51f;
-        if (!isNoHead)
-            UpdateTapLineRotation(distance);
+        var judgeOffset = timeProvider.AudioTime - time;
+        if (!isFakeStar && slide != null && !slide.activeSelf &&
+            timeProvider.AudioTime >= time + slideAppearanceStartOffset)
+            slide.SetActive(true);
 
-        switch (State)
+        if (IsBeforeBounceWindow(judgeOffset))
+        {
+            tapLine.SetActive(false);
+            spriteRenderer.forceRenderingOff = true;
+            if (isEX) exSpriteRender.forceRenderingOff = true;
+            return;
+        }
+
+        var isBouncing = IsBounceActive(judgeOffset);
+        var distance = isBouncing ? GetBounceDistance(judgeOffset) : GetSvDistance();
+        var destScale = GetSpawnScale(distance);
+        var hasLeftSpawn = HasLeftSpawnAtCurrentTime(noteScrollPos);
+
+        if (isBouncing)
+        {
+            State = NoteStatus.Running;
+            transform.position = getPositionFromDistance(distance);
+            transform.localScale = new Vector3(
+                noteScale * noteScaleX,
+                noteScale * noteScaleY,
+                1f);
+            var bounceLineScale = Mathf.Clamp01(distance / 4.8f);
+            if (!isNoHead)
+                tapLine.SetActive(distance > 0.001f && distance <= 4.8f);
+            tapLine.transform.localScale = new Vector3(
+                bounceLineScale, bounceLineScale, 1f);
+        }
+        else switch (State)
         {
             case NoteStatus.Initialized:
+                if (hasLeftSpawn)
+                {
+                    State = NoteStatus.Running;
+                    goto case NoteStatus.Running;
+                }
                 if (destScale >= 0f)
                 {
                     State = NoteStatus.Pending;
@@ -116,21 +163,12 @@ public class StarDrop : TapBase
                 return;
             case NoteStatus.Pending:
                 {
-                    if (destScale > 0.3f && !isNoHead)
-                        tapLine.SetActive(true);
-                    if (distance < 1.225f)
-                    {
-                        transform.localScale = new Vector3(destScale * noteScale, destScale * noteScale);
-                        transform.position = getPositionFromDistance(1.225f);
-                        var lineScale = Mathf.Abs(1.225f / 4.8f);
-                        tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
-                    }
-                    else
+                    if (hasLeftSpawn)
                     {
                         if (!isFakeStar && !slide.activeSelf)
                         {
                             slide.SetActive(true);
-                            if(isNoHead)
+                            if (isNoHead)
                             {
                                 Destroy(tapLine);
                                 Destroy(gameObject);
@@ -140,17 +178,37 @@ public class StarDrop : TapBase
                         State = NoteStatus.Running;
                         goto case NoteStatus.Running;
                     }
+                    var pendingScale = Mathf.Clamp01(destScale);
+                    if (!isNoHead)
+                        tapLine.SetActive(pendingScale > 0.3f);
+                    transform.localScale = new Vector3(
+                        pendingScale * noteScale * noteScaleX,
+                        pendingScale * noteScale * noteScaleY,
+                        1f);
+                    transform.position = getPositionFromDistance(spawnRadius);
+                    var lineScale = Mathf.Abs(spawnRadius / 4.8f);
+                    tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
                 }
                 break;
             case NoteStatus.Running:
                 {
                     transform.position = getPositionFromDistance(distance);
-                    transform.localScale = new Vector3(noteScale, noteScale);
+                    transform.localScale = new Vector3(
+                        noteScale * noteScaleX,
+                        noteScale * noteScaleY,
+                        1f);
+                    if (!isNoHead)
+                    {
+                        var absoluteDistance = Mathf.Abs(distance);
+                        tapLine.SetActive(absoluteDistance > 0.001f && absoluteDistance <= 4.8f);
+                    }
                     var lineScale = Mathf.Abs(distance / 4.8f);
                     tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
                 }
                 break;
         }
+        if (!isNoHead)
+            UpdateTapLineRotation(State == NoteStatus.Pending ? spawnRadius : distance);
 
         if (isNoHead)
         {
@@ -170,7 +228,13 @@ public class StarDrop : TapBase
     }
     protected override void OnDestroy()
     {
-        if(!isNoHead || isFakeStar)
+        if (!isNoHead || isFakeStar)
+        {
             base.OnDestroy();
+            return;
+        }
+
+        if (tapLine != null)
+            Destroy(tapLine);
     }
 }

@@ -80,20 +80,20 @@ public class AutoSaveRecoverer : IAutoSaveRecoverer
 
     public bool RecoverFile(AutoSaveIndex.FileInfo recoveredFileInfo)
     {
-        // 原始的maidata路径
+        // Original maidata path
         var rawMaidataPath = recoveredFileInfo.RawPath + "/maidata.txt";
-        // 原始maidata恢复前备份路径
+        // Backup path for the original maidata before recovery
         var backupMaidataPath = recoveredFileInfo.RawPath + "/maidata.before_recovery.txt";
-        // 自动保存maidata路径
+        // Autosaved maidata path
         var autosaveMaidataPath = recoveredFileInfo.FileName;
 
         try
         {
-            // 删除之前的备份（若有）
+            // Delete the previous backup, if any.
             if (File.Exists(backupMaidataPath)) File.Delete(backupMaidataPath);
-            // 备份恢复前的maidata
+            // Back up maidata before recovery.
             File.Move(rawMaidataPath, backupMaidataPath);
-            // 将自动保存maidata恢复到原目录
+            // Restore the autosaved maidata to its original directory.
             File.Copy(autosaveMaidataPath!, rawMaidataPath);
         }
         catch

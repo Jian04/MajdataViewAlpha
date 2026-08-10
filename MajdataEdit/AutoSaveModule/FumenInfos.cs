@@ -9,7 +9,7 @@ using System.Text;
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     谱面信息
+///     Chart information.
 /// </summary>
 public class FumenInfos
 {
@@ -38,7 +38,7 @@ public class FumenInfos
     }
 
     /// <summary>
-    ///     从path中读取谱面信息
+    ///     Reads chart information from path.
     /// </summary>
     /// <param name="path"></param>
     /// <returns></returns>

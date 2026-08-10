@@ -39,6 +39,7 @@ public class ObjectCounter : MonoBehaviour
     private Text table;
     private Text judgeResultCount;
     private Text judgeResultText;
+    private Font defaultDisplayFont;
 
     private EditorComboIndicator textMode = EditorComboIndicator.Combo;
 
@@ -74,6 +75,15 @@ public class ObjectCounter : MonoBehaviour
         notes = GameObject.Find("Notes").GetComponent<NoteManager>();
         judgeResultCount = GameObject.Find("JudgeResultCount").GetComponent<Text>();
         judgeResultText = GameObject.Find("JudgeResultText").GetComponent<Text>();
+        judgeResultText.text = judgeResultText.text
+            .Replace("Critical Pf", "CriticalPf")
+            .Replace("CriPf", "CriticalPf");
+        var judgeTextRect = judgeResultText.rectTransform;
+        const float extraJudgeTextWidth = 2.5f;
+        judgeTextRect.sizeDelta = new Vector2(
+            judgeTextRect.sizeDelta.x + extraJudgeTextWidth,
+            judgeTextRect.sizeDelta.y);
+        judgeTextRect.anchoredPosition += Vector2.right * (extraJudgeTextWidth * 0.5f);
         table = GameObject.Find("ObjectCount").GetComponent<Text>();
         rate = GameObject.Find("ObjectRate").GetComponent<Text>();
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
@@ -82,6 +92,7 @@ public class ObjectCounter : MonoBehaviour
         statusScore = GameObject.Find("ScoreText").GetComponent<Text>();
         statusAchievement = GameObject.Find("AchievementText").GetComponent<Text>();
         statusDXScore = GameObject.Find("DXScoreText").GetComponent<Text>();
+        defaultDisplayFont = judgeResultText.font;
 
         statusCombo.gameObject.SetActive(false);
         statusScore.gameObject.SetActive(false);
@@ -207,6 +218,54 @@ public class ObjectCounter : MonoBehaviour
             {JudgeType.LateGood, 0 },
             {JudgeType.Miss, 0 },
         };
+    }
+
+    public void SetDisplayFont(int preset)
+    {
+        var font = preset switch
+        {
+            0 => defaultDisplayFont,
+            1 => CreateSystemFont(new[] { "Cascadia Mono", "JetBrains Mono", "Cascadia Code", "Consolas" }),
+            2 => CreateSystemFont(new[] { "Cascadia Code", "Consolas" }),
+            3 => CreateSystemFont(new[] { "Microsoft YaHei UI", "Microsoft YaHei" }),
+            4 => Resources.Load<Font>("Fonts/NotoSansSC-VF"),
+            5 => CreateSystemFont(new[] { "NSimSun", "SimSun" }),
+            6 => CreateSystemFont(new[] { "DengXian", "Microsoft YaHei UI" }),
+            7 => CreateSystemFont(new[] { "Noto Serif SC", "SimSun" }),
+            8 => CreateSystemFont(new[] { "Global Monospace", "Consolas" }),
+            9 => Resources.Load<Font>("Fonts/Aileron-Regular"),
+            10 => Resources.Load<Font>("Fonts/Allerta-Regular"),
+            _ => defaultDisplayFont
+        };
+        if (font == null)
+            font = defaultDisplayFont;
+        if (font == null)
+            return;
+
+        foreach (var text in GetDisplayTexts())
+            if (text != null)
+                text.font = font;
+
+        foreach (var objectName in new[] { "TimeText", "TimeText (1)" })
+        {
+            var text = GameObject.Find(objectName)?.GetComponent<UnityEngine.UI.Text>();
+            if (text != null)
+                text.font = font;
+        }
+    }
+
+    private Text[] GetDisplayTexts() => new[]
+    {
+        judgeResultCount, judgeResultText, table, rate,
+        statusCombo, statusScore, statusAchievement, statusDXScore
+    };
+
+    private static Font CreateSystemFont(string[] names)
+    {
+        foreach (var name in names)
+            if (Font.GetOSInstalledFontNames().Contains(name))
+                return Font.CreateDynamicFontFromOSFont(name, 24);
+        return null;
     }
 
     // Update is called once per frame
@@ -429,12 +488,28 @@ public class ObjectCounter : MonoBehaviour
                 }
                 break;
             case SimaiNoteType.Touch:
-                judgedTouchCount[result]++; 
-                touchCount++;
+                if (isBreak)
+                {
+                    judgedBreakCount[result]++;
+                    breakCount++;
+                }
+                else
+                {
+                    judgedTouchCount[result]++;
+                    touchCount++;
+                }
                 break;
             case SimaiNoteType.TouchHold:
-                judgedTouchHoldCount[result]++;
-                holdCount++;
+                if (isBreak)
+                {
+                    judgedBreakCount[result]++;
+                    breakCount++;
+                }
+                else
+                {
+                    judgedTouchHoldCount[result]++;
+                    holdCount++;
+                }
                 break;
 
         }
@@ -483,6 +558,7 @@ public class ObjectCounter : MonoBehaviour
         HoldDrop => SimaiNoteType.Hold,
         SlideDrop => SimaiNoteType.Slide,
         WifiDrop => SimaiNoteType.Slide,
+        TouchSlideDrop => SimaiNoteType.Slide,
         TouchHoldDrop => SimaiNoteType.TouchHold,
         TouchDrop => SimaiNoteType.Touch,
         _ => throw new InvalidOperationException()

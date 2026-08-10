@@ -1,0 +1,54 @@
+<Window x:Class="MajdataLauncher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Majdata Pet"
+        Width="190" Height="216"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True"
+        ShowActivated="False" Focusable="False"
+        SourceInitialized="Window_SourceInitialized"
+        Loaded="Window_Loaded" Closed="Window_Closed"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
+  <Grid Background="Transparent" MouseLeftButtonUp="Pet_MouseLeftButtonUp"
+        MouseRightButtonUp="Pet_MouseRightButtonUp" Cursor="Hand">
+    <Grid.ContextMenu>
+      <ContextMenu>
+        <MenuItem x:Name="LaunchMenuItem" Click="Launch_Click" />
+        <MenuItem x:Name="OpenFolderMenuItem" Click="OpenFolder_Click" />
+        <Separator />
+        <MenuItem x:Name="ExitMenuItem" Click="Close_Click" />
+      </ContextMenu>
+    </Grid.ContextMenu>
+
+    <Image x:Name="PetPreviousImage" Width="168" Height="182" VerticalAlignment="Bottom" Margin="0,0,0,22"
+           Stretch="Uniform" Opacity="0" Visibility="Collapsed" IsHitTestVisible="False"
+           RenderOptions.BitmapScalingMode="LowQuality" />
+    <Image x:Name="PetImage" Width="168" Height="182" VerticalAlignment="Bottom" Margin="0,0,0,22"
+           Stretch="Uniform" IsHitTestVisible="False"
+           RenderOptions.BitmapScalingMode="LowQuality" />
+
+    <Grid x:Name="SpeechBubbleHost" HorizontalAlignment="Left" VerticalAlignment="Top"
+          MaxWidth="176" Margin="4,2,4,0" Visibility="Collapsed" IsHitTestVisible="False">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="8" />
+      </Grid.RowDefinitions>
+      <Border Grid.Row="0" Padding="10,6" CornerRadius="11"
+              Background="#F7FFFFFF" BorderBrush="#5537424D" BorderThickness="1">
+        <TextBlock x:Name="SpeechText" Foreground="#FF26313B" FontSize="11.5"
+                   TextWrapping="Wrap" TextAlignment="Left" />
+      </Border>
+      <Path Grid.Row="1" HorizontalAlignment="Left" Margin="22,-1,0,0"
+            Data="M 0,0 L 12,0 L 9,8 Z" Fill="#F7FFFFFF"
+            Stroke="#5537424D" StrokeThickness="1" />
+    </Grid>
+
+    <Border x:Name="StatusBorder" VerticalAlignment="Bottom" HorizontalAlignment="Center"
+            MaxWidth="126" Margin="6,0,6,3" Padding="9,3"
+            CornerRadius="9" Background="#A622262B" IsHitTestVisible="False">
+      <TextBlock x:Name="StatusText"
+                 Foreground="#FFF2F5F7" FontSize="10.5" TextWrapping="NoWrap"
+                 TextAlignment="Center" />
+    </Border>
+  </Grid>
+</Window>

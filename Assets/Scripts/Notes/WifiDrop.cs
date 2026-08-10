@@ -7,6 +7,7 @@ using UnityEngine;
 #nullable enable
 public class WifiDrop : NoteLongDrop,IFlasher
 {
+    public bool isDZoneEnd;
     // Start is called before the first frame update
     public GameObject star_slidePrefab;
 
@@ -31,12 +32,15 @@ public class WifiDrop : NoteLongDrop,IFlasher
     public int sortIndex;
 
     public float fadeInTime;
+    public float starSpeed;
     public float slideConst;
     float arriveTime = -1;
     public float fullFadeInTime;
 
     public Material breakMaterial;
     public Material colorOverrideMaterial;
+    public float noteScaleX = 1f;
+    public float noteScaleY = 1f;
 
     bool canShine = false;
 
@@ -60,6 +64,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
     bool isChecking = false;
     bool isFinished { get => _judgeQueues.All(x => x.Count == 0); }
     bool canCheck = false;
+    bool isJudgeInputBound = false;
     Dictionary<GameObject, Guid> guids = new();
     SensorManager sManager;
     List<GameObject> sensors = new();
@@ -69,9 +74,15 @@ public class WifiDrop : NoteLongDrop,IFlasher
     public Dictionary<GameObject, List<Sensor>> triggerSensors = new();
     private List<List<JudgeArea>> judgeQueueTemplate = new();
 
+    public float GetAppearanceStartOffset()
+    {
+        var fadeLeadScale = 1f - Mathf.Clamp(starSpeed, -1f, 1f);
+        return (-3f / speed) * fadeLeadScale;
+    }
+
     private void Start()
     {
-        fadeInTime = -3.926913f / speed;
+        fadeInTime = GetAppearanceStartOffset();
         fullFadeInTime = Math.Min(fadeInTime + 0.2f, 0);
         var fadeAnimator = GetComponent<Animator>();
         if (fadeAnimator != null)
@@ -87,17 +98,30 @@ public class WifiDrop : NoteLongDrop,IFlasher
             if (isBreak) spriteRenderer_star[i].sprite = breakStar;
             else if (isEach) spriteRenderer_star[i].sprite = eachStar;
             else spriteRenderer_star[i].sprite = normalStar;
-            star_slide[i].transform.rotation = Quaternion.Euler(0, 0, -22.5f * (8 + i + 2 * (startPosition - 1)));
+            var visualStart = isDZone ? startPosition - 0.5f : startPosition;
+            star_slide[i].transform.rotation = Quaternion.Euler(
+                0, 0, -22.5f * (8 + i + 2 * (visualStart - 1f)));
             //SlidePositionEnd[i] = getPositionFromDistance(4.8f, i + 3 + startPosition);
             star_slide[i].SetActive(false);
         }
 
-        SlidePositionEnd[0] = GameObject.Find("NoteEffects").transform.GetChild(0).GetChild(endPosition - 2 < 0 ? 7 : endPosition - 2).position;// R
-        SlidePositionEnd[1] = GameObject.Find("NoteEffects").transform.GetChild(0).GetChild(endPosition - 1).position;// Center
-        SlidePositionEnd[2] = GameObject.Find("NoteEffects").transform.GetChild(0).GetChild(endPosition >= 8 ? 0 : endPosition).position; // L
+        if (isDZoneEnd)
+        {
+            var visualEnd = endPosition - 0.5f;
+            SlidePositionEnd[0] = getPositionFromDistance(4.8f, visualEnd - 1f);
+            SlidePositionEnd[1] = getPositionFromDistance(4.8f, visualEnd);
+            SlidePositionEnd[2] = getPositionFromDistance(4.8f, visualEnd + 1f);
+        }
+        else
+        {
+            SlidePositionEnd[0] = GameObject.Find("NoteEffects").transform.GetChild(0).GetChild(endPosition - 2 < 0 ? 7 : endPosition - 2).position;
+            SlidePositionEnd[1] = GameObject.Find("NoteEffects").transform.GetChild(0).GetChild(endPosition - 1).position;
+            SlidePositionEnd[2] = GameObject.Find("NoteEffects").transform.GetChild(0).GetChild(endPosition >= 8 ? 0 : endPosition).position;
+        }
 
 
-        transform.rotation = Quaternion.Euler(0f, 0f, -45f * (startPosition - 1));
+        var wifiVisualStart = isDZone ? startPosition - 0.5f : startPosition;
+        transform.rotation = Quaternion.Euler(0f, 0f, -45f * (wifiVisualStart - 1f));
         slideBars.Clear();
         for (var i = 0; i < transform.childCount - 1; i++) slideBars.Add(transform.GetChild(i).gameObject);
         slideOK = transform.GetChild(transform.childCount - 1).gameObject; //slideok is the last one
@@ -127,6 +151,8 @@ public class WifiDrop : NoteLongDrop,IFlasher
 
         for (var i = 0; i < slideBars.Count; i++)
         {
+            slideBars[i].transform.localScale = Vector3.Scale(
+                slideBars[i].transform.localScale, new Vector3(noteScaleX, noteScaleY, 1f));
             var sr = slideBars[i].GetComponent<SpriteRenderer>();
 
             if (isBreak)
@@ -194,17 +220,23 @@ public class WifiDrop : NoteLongDrop,IFlasher
                                     .Select(x => x.Key);
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
         boundSensors.AddRange(allSensors);
-        if (!previewOnly)
-            foreach (var sensor in allSensors)
-                inputManager.BindSensor(Check, sensor);
+    }
+    private void BindJudgeInputWhenReady()
+    {
+        if (previewOnly || isJudgeInputBound || !canCheck)
+            return;
+
+        foreach (var sensor in boundSensors)
+            inputManager.BindSensor(Check, sensor);
+        isJudgeInputBound = true;
     }
     private void FixedUpdate()
     {
         if (previewOnly)
             return;
-        /// time      是Slide启动的时间点
-        /// timeStart 是Slide完全显示但未启动
-        /// LastFor   是Slide的时值
+        /// time      is when the Slide starts
+        /// timeStart is when the Slide is fully visible but not yet moving
+        /// LastFor   is the Slide duration
         var timing = timeProvider.AudioTime - time;
         var startTiming = timeProvider.AudioTime - timeStart;
         var forceJudgeTiming = time + LastFor + 0.6;
@@ -213,7 +245,9 @@ public class WifiDrop : NoteLongDrop,IFlasher
             canCheck = true;
         else if (timing > 0)
             Running();        
-        
+
+        BindJudgeInputWhenReady();
+
         if (isFinished)
         {
             HideBar(areaStep.LastOrDefault());
@@ -324,23 +358,23 @@ public class WifiDrop : NoteLongDrop,IFlasher
         var timing = timeProvider.AudioTime - time;
         var starTiming = timeStart + (time - timeStart) * 0.667;
         var pTime = LastFor / areaStep.Last();
-        var judgeTime = time + pTime * (areaStep.LastOrDefault() - 2.1f);// 正解帧
-        var stayTime = (time + LastFor) - judgeTime; // 停留时间
+        var judgeTime = time + pTime * (areaStep.LastOrDefault() - 2.1f);// Correct judgement frame
+        var stayTime = (time + LastFor) - judgeTime; // Dwell time
         if (!isJudged)
         {
             arriveTime = timeProvider.AudioTime;
             var triggerTime = timeProvider.AudioTime;
 
-            const float totalInterval = 1.2f; // 秒
-            const float nPInterval = 0.4666667f; // Perfect基础区间
+            const float totalInterval = 1.2f; // Seconds
+            const float nPInterval = 0.4666667f; // Base Perfect interval
 
-            float extInterval = MathF.Min(stayTime / 4, 0.733333f);           // Perfect额外区间
-            float pInterval = MathF.Min(nPInterval + extInterval, totalInterval);// Perfect总区间
+            float extInterval = MathF.Min(stayTime / 4, 0.733333f);           // Extra Perfect interval
+            float pInterval = MathF.Min(nPInterval + extInterval, totalInterval);// Total Perfect interval
             var ext = MathF.Max(extInterval - 0.4f, 0);
-            float grInterval = MathF.Max(0.4f - extInterval, 0);        // Great总区间
-            float gdInterval = MathF.Max(0.3333334f - ext, 0); // Good总区间
+            float grInterval = MathF.Max(0.4f - extInterval, 0);        // Total Great interval
+            float gdInterval = MathF.Max(0.3333334f - ext, 0); // Total Good interval
 
-            var diff = judgeTime - triggerTime; // 大于0为Fast，小于为Late
+            var diff = judgeTime - triggerTime; // Positive is Fast; negative is Late
             bool isFast = false;
             JudgeType? judge = null;
 
@@ -432,7 +466,9 @@ public class WifiDrop : NoteLongDrop,IFlasher
         if (startiming <= 0f)
         {
             RestoreBars();
-            var alpha = Mathf.Clamp01(startiming * (speed / 3f) + 1f);
+            var alpha = fadeInTime >= -0.0001f
+                ? (startiming >= 0f ? 1f : 0f)
+                : Mathf.InverseLerp(fadeInTime, 0f, startiming);
             setSlideBarAlpha(alpha);
             return;
         }
@@ -466,9 +502,8 @@ public class WifiDrop : NoteLongDrop,IFlasher
     }
     void UpdateStar()
     {
-        var timing = timeProvider.AudioTime - time;
-        var process = (LastFor - timing) / LastFor;
-        process = 1f - process;
+        var process = SvController.GetTypedOnlyProgress(
+            time, LastFor, timeProvider.AudioTime, "slide");
 
         if (process >= 1)
         {
@@ -613,8 +648,9 @@ public class WifiDrop : NoteLongDrop,IFlasher
         if (isDestroying)
             return;
         isDestroying = true;
-        foreach (var sensor in boundSensors)
-            inputManager?.UnbindSensor(Check, sensor);
+        if (isJudgeInputBound)
+            foreach (var sensor in boundSensors)
+                inputManager?.UnbindSensor(Check, sensor);
 
         if (previewOnly || HttpHandler.IsReloding)
             return;

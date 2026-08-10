@@ -8,12 +8,12 @@ using Timer = System.Timers.Timer;
 namespace MajdataEdit;
 
 /// <summary>
-///     SoundSetting.xaml 的交互逻辑
+///     Interaction logic for SoundSetting.xaml
 /// </summary>
 public partial class SoundSetting : Window
 {
     private readonly MainWindow MainWindow;
-    private readonly Dictionary<Slider, Label> SliderValueBindingMap = new(); // Slider和ValueLabel的绑定关系
+    private readonly Dictionary<Slider, Label> SliderValueBindingMap = new(); // Slider-to-value-label bindings
 
     private readonly Timer UpdateLevelTimer = new(1);
 

@@ -48,11 +48,27 @@ internal sealed class FumenEditorAdapter
 
     public void Focus() => editor.Focus();
 
+    public bool Undo()
+    {
+        if (!editor.Document.UndoStack.CanUndo)
+            return false;
+
+        editor.Document.UndoStack.Undo();
+        return true;
+    }
+
     public void ReplaceSelection(string text)
     {
         var start = editor.SelectionStart;
         editor.Document.Replace(start, editor.SelectionLength, text ?? string.Empty);
         editor.Select(start, text?.Length ?? 0);
+    }
+
+    public void ReplaceAll(string text)
+    {
+        editor.Document.Replace(0, editor.Document.TextLength, text ?? string.Empty);
+        editor.CaretOffset = 0;
+        editor.ScrollToHome();
     }
 
     public void Select(int start, int length)

@@ -6,14 +6,14 @@
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     自动保存行为接口
-///     职责仅为进行自动保存行为
+///     Autosave operation interface.
+///     Responsible only for performing autosave.
 /// </summary>
 internal interface IAutoSave
 {
     /// <summary>
-    ///     执行自动保存行为
+    ///     Performs an autosave.
     /// </summary>
-    /// <returns>是否成功保存</returns>
+    /// <returns>Whether the save succeeded.</returns>
     bool DoAutoSave();
 }

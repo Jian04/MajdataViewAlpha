@@ -8,8 +8,8 @@ using System.IO;
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     异常退出检测器
-///     单例运行，生命周期等同于Edit
+///     Abnormal-termination detector.
+///     Runs as a singleton for the lifetime of Edit.
 /// </summary>
 public sealed class SafeTerminationDetector
 {
@@ -20,9 +20,9 @@ public sealed class SafeTerminationDetector
     }
 
     /// <summary>
-    ///     检查上一次退出是否为正常退出
+    ///     Checks whether the previous exit was normal.
     /// </summary>
-    /// <returns>如果上次为正常退出则返回true，否则返回false</returns>
+    /// <returns>true if the previous exit was normal; otherwise false.</returns>
     public bool IsLastTerminationSafe()
     {
         if (File.Exists(RecordPath)) return false;
@@ -31,8 +31,8 @@ public sealed class SafeTerminationDetector
     }
 
     /// <summary>
-    ///     启动程序时，调用此函数
-    ///     **注意！需在IsLastTerminationSafe之前调用！**
+    ///     Call this function when starting the application.
+    ///     **Important: call it before IsLastTerminationSafe!**
     /// </summary>
     public void RecordProgramStart()
     {
@@ -45,7 +45,7 @@ public sealed class SafeTerminationDetector
     }
 
     /// <summary>
-    ///     退出程序时，调用此函数
+    ///     Call this function when exiting the application.
     /// </summary>
     public void RecordProgramClose()
     {

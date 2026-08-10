@@ -115,10 +115,12 @@ public class InputManager : MonoBehaviour
         var sensor = sensors.Find(x => x.Type == sType);
         var button = buttons.Find(x => x.Type == sType);
 
-        if (sensor == null || button is null)
-            throw new Exception($"{sType} Sensor or Button not found.");
+        if (sensor == null)
+            throw new Exception($"{sType} Sensor not found.");
 
-        return sensor.Status == targetStatus || button.Status == targetStatus; 
+        // For sensor-only areas such as D zone, check only the sensor when button is null
+        return sensor.Status == targetStatus ||
+               (button != null && button.Status == targetStatus);
     }
     public bool CheckSensorStatus(SensorType target,SensorStatus targetStatus)
     {
@@ -133,12 +135,15 @@ public class InputManager : MonoBehaviour
 
         return button.Status == targetStatus;
     }
-    public void ClickSensor(SensorType target)
+    public bool ClickSensor(SensorType target, bool autoPlayPulse = false)
     {
         var sensor = GetSensor(target);
         if (sensor is null)
             throw new Exception($"{target} Sensor not found.");
+        if (autoPlayPulse)
+            return sensor.PulseForAutoPlay();
         sensor.Click();
+        return true;
     }
 
     public void SetBusy(InputEventArgs args)
@@ -223,23 +228,40 @@ public class InputManager : MonoBehaviour
     }
     public void ResetInputState(bool clearBindings = false)
     {
+        // Reloading a chart must not publish an "Off" event to the old notes.
+        // Those callbacks can still mutate judge state while the new chart is loading.
+        if (clearBindings)
+        {
+            triggerSensors.Clear();
+
+            foreach (var sensor in sensors)
+            {
+                if (sensor == null)
+                    continue;
+                sensor.ClearEventHandlers();
+                sensor.ResetState();
+            }
+
+            foreach (var button in buttons)
+            {
+                button.ClearEventHandlers();
+                button.IsJudging = false;
+                button.Status = SensorStatus.Off;
+            }
+            return;
+        }
+
         foreach (var id in triggerSensors.Keys.ToList())
             Untrigger(id);
         triggerSensors.Clear();
 
         foreach (var sensor in sensors)
             if (sensor != null)
-            {
                 sensor.ResetState();
-                if (clearBindings)
-                    sensor.ClearEventHandlers();
-            }
         foreach (var button in buttons)
         {
             button.IsJudging = false;
             button.Status = SensorStatus.Off;
-            if (clearBindings)
-                button.ClearEventHandlers();
         }
     }
     void Untrigger(int id)

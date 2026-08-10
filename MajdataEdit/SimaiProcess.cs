@@ -1,5 +1,7 @@
 ﻿using System.IO;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows;
 
 namespace MajdataEdit;
@@ -26,17 +28,21 @@ internal static class SimaiProcess
     /// </summary>
     public static List<SimaiTimingPoint> timinglist = new();
 
-    // ALPHA: true SV points collected during Serialize()
     public static List<SvPoint> svTable = new();
-    // ALPHA: note color change events from <COLOR*...> tokens
+    public static List<SpeedChange> hsTable = new();
+    public static List<SpawnChange> spawnTable = new();
+    public static List<BounceChange> bounceTable = new();
     public static List<ColorChange> colorTable = new();
-    // ALPHA: note size change events from <SIZE*x> tokens
     public static List<SizeChange> sizeTable = new();
-    // ALPHA: note alpha change events from <ALPHA*x> tokens
     public static List<AlphaChange> alphaTable = new();
     public static List<DisplayChange> displayTable = new();
     public static List<SubtitleChange> subtitleTable = new();
     public static List<EffectChange> effectTable = new();
+    public static List<MediaChange> mediaTable = new();
+    // Editor-only time signature markers used by the waveform grid.
+    public static List<MeterChange> meterTable = new();
+    public static double? mediaTrimStart;
+    public static double? mediaTrimEnd;
 
     /// <summary>
     ///     Reset all the data in the static class.
@@ -48,18 +54,26 @@ internal static class SimaiProcess
         designer = "";
         wholeBpm = "";
         clockCount = "";
+        other_commands = "";
         first = 0;
         fumens = new string[7];
         levels = new string[7];
         notelist = new List<SimaiTimingPoint>();
         timinglist = new List<SimaiTimingPoint>();
         svTable = new List<SvPoint>();
+        hsTable = new List<SpeedChange>();
+        spawnTable = new List<SpawnChange>();
+        bounceTable = new List<BounceChange>();
         colorTable = new List<ColorChange>();
         sizeTable = new List<SizeChange>();
         alphaTable = new List<AlphaChange>();
         displayTable = new List<DisplayChange>();
         subtitleTable = new List<SubtitleChange>();
         effectTable = new List<EffectChange>();
+        mediaTable = new List<MediaChange>();
+        meterTable = new List<MeterChange>();
+        mediaTrimStart = null;
+        mediaTrimEnd = null;
     }
 
     /// <summary>
@@ -117,7 +131,9 @@ internal static class SimaiProcess
         }
         catch (Exception e)
         {
-            MessageBox.Show("在maidata.txt第" + (i + 1) + "行:\n" + e.Message, "读取谱面时出现错误");
+            MessageBox.Show(
+                string.Format(MainWindow.GetLocalizedString("ChartReadErrorBody"), i + 1, e.Message),
+                MainWindow.GetLocalizedString("ChartReadErrorTitle"));
             return false;
         }
     }
@@ -253,12 +269,12 @@ internal static class SimaiProcess
 
     private static bool IsEditorSectionMarker(string line)
     {
-        if (line.Length >= 5 &&
-            string.Equals(line.Substring(0, 5), "&NULL", StringComparison.OrdinalIgnoreCase))
+        if (line.Length >= 5 && line[0] is '@' or '&' &&
+            string.Equals(line.Substring(1, 4), "NULL", StringComparison.OrdinalIgnoreCase))
             return true;
 
         return line.Length >= 7 &&
-               line[0] == '&' &&
+               line[0] is '@' or '&' &&
                line.Substring(1, 6).All(Uri.IsHexDigit);
     }
 
@@ -272,14 +288,22 @@ internal static class SimaiProcess
     {
         text = StripBlockComments(text);
         var _notelist = new List<SimaiTimingPoint>();
+        var overlayNotes = new List<SimaiTimingPoint>();
         var _timinglist = new List<SimaiTimingPoint>();
-        var svPoints     = new List<SvPoint>();    // ALPHA: true SV
-        var colorPoints  = new List<ColorChange>(); // ALPHA: note color
-        var sizePoints   = new List<SizeChange>();  // ALPHA: note size
-        var alphaPoints  = new List<AlphaChange>(); // ALPHA: note alpha
-        var displayPoints = new List<DisplayChange>(); // ALPHA: display transitions
-        var subtitlePoints = new List<SubtitleChange>(); // ALPHA: timed subtitles
-        var effectPoints = new List<EffectChange>(); // ALPHA: screen effects
+        var svPoints     = new List<SvPoint>();
+        var hsPoints     = new List<SpeedChange>();
+        var spawnPoints  = new List<SpawnChange>();
+        var bouncePoints = new List<BounceChange>();
+        var colorPoints  = new List<ColorChange>();
+        var sizePoints   = new List<SizeChange>();
+        var alphaPoints  = new List<AlphaChange>();
+        var displayPoints = new List<DisplayChange>();
+        var subtitlePoints = new List<SubtitleChange>();
+        var effectPoints = new List<EffectChange>();
+        var mediaPoints = new List<MediaChange>();
+        var meterPoints = new List<MeterChange>();
+        double? trimStart = null;
+        double? trimEnd = null;
         try
         {
             float bpm = 0;
@@ -295,7 +319,7 @@ internal static class SimaiProcess
             {
                 if (text[i] == '|' && i + 1 < text.Length && text[i + 1] == '|')
                 {
-                    // 跳过注释
+                    // Skip block comments.
                     Xcount++;
                     while (i < text.Length && text[i] != '\n')
                     {
@@ -320,8 +344,58 @@ internal static class SimaiProcess
 
                 if (i - 1 < position) requestedTime = time;
 
-                if (text[i] == '&' && !haveNote)
+                if (text[i] == '@' && !haveNote &&
+                    TryReadOverlayLine(
+                        text, i, time, bpm, curHSpeed, Xcount, Ycount, position,
+                        overlayNotes, out var overlayEnd, out var overlayCaretTime))
                 {
+                    if (overlayCaretTime.HasValue)
+                        requestedTime = overlayCaretTime.Value;
+                    Xcount += overlayEnd - i - 1;
+                    i = overlayEnd - 1;
+                    noteTemp = "";
+                    haveNote = false;
+                    continue;
+                }
+
+                if (text[i] is '@' or '&' && !haveNote)
+                {
+                    // @4/4, @3/4 and legacy ampersand markers only control the editor grid.
+                    // They are deliberately ignored by the View chart serializer.
+                    var meterEnd = text.IndexOfAny(new[] { '\r', '\n' }, i + 1);
+                    if (meterEnd < 0) meterEnd = text.Length;
+                    var meterText = text.Substring(i + 1, meterEnd - i - 1).Trim();
+                    if (text[i] == '@' &&
+                        (string.Equals(meterText, "start", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(meterText, "end", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        if (string.Equals(meterText, "start", StringComparison.OrdinalIgnoreCase))
+                            trimStart = time;
+                        else
+                            trimEnd = time;
+                        Xcount += meterEnd - i - 1;
+                        i = meterEnd - 1;
+                        noteTemp = "";
+                        continue;
+                    }
+                    var slash = meterText.IndexOf('/');
+                    if (slash > 0 &&
+                        int.TryParse(meterText.Substring(0, slash).Trim(), out var numerator) &&
+                        int.TryParse(meterText.Substring(slash + 1).Trim(), out var denominator) &&
+                        numerator > 0 && denominator > 0)
+                    {
+                        meterPoints.Add(new MeterChange
+                        {
+                            time = time,
+                            numerator = numerator,
+                            denominator = denominator
+                        });
+                        Xcount += meterEnd - i - 1;
+                        i = meterEnd - 1;
+                        noteTemp = "";
+                        continue;
+                    }
+
                     var markerLength = i + 4 < text.Length &&
                                        string.Equals(text.Substring(i + 1, 4), "NULL",
                                            StringComparison.OrdinalIgnoreCase)
@@ -378,13 +452,29 @@ internal static class SimaiProcess
                     continue;
                 }
 
-                // ALPHA display controls use the same <> pass as COLOR/SV/SIZE/ALPHA.
-                if (text[i] == '<' && !haveNote)
+                if (text[i] == '<' && !haveNote && AlphaCommandBoundary.IsPotentialStart(text, i))
                 {
                     var tokenEnd = text.IndexOf('>', i + 1);
+                    var looksLikeAlphaCommand = true;
                     if (tokenEnd >= 0)
                     {
                         var token = text.Substring(i + 1, tokenEnd - i - 1);
+                        if (TryParseMediaChange(token, time, bpm, out var mediaChange))
+                        {
+                            if (!string.IsNullOrEmpty(mediaChange.kind))
+                                mediaPoints.Add(mediaChange);
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                        if (TryParseTypedSvChange(token, time, svPoints))
+                        {
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
                         if (token.StartsWith("SV*", StringComparison.OrdinalIgnoreCase) &&
                             float.TryParse(token.Substring(3).Trim(),
                                 System.Globalization.NumberStyles.Float,
@@ -392,6 +482,27 @@ internal static class SimaiProcess
                                 out var svMultiplier))
                         {
                             svPoints.Add(new SvPoint { time = time, multiplier = svMultiplier });
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                        if (TryParseTypedSpeedChange(token, time, hsPoints))
+                        {
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                        if (TryParseSpawnChange(token, time, spawnPoints))
+                        {
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                        if (TryParseBounceChange(token, time, bpm, bouncePoints))
+                        {
                             Xcount += tokenEnd - i;
                             i = tokenEnd;
                             noteTemp = "";
@@ -409,7 +520,7 @@ internal static class SimaiProcess
                             noteTemp = "";
                             continue;
                         }
-                        if (TryParseScreenEffect(token, time, out var effectChange))
+                        if (TryParseScreenEffect(token, time, bpm, out var effectChange))
                         {
                             if (!string.IsNullOrEmpty(effectChange.effect))
                                 effectPoints.Add(effectChange);
@@ -418,7 +529,7 @@ internal static class SimaiProcess
                             noteTemp = "";
                             continue;
                         }
-                        if (TryParseSubtitleChange(token, time, out var subtitleChange))
+                        if (TryParseSubtitleChange(token, time, bpm, out var subtitleChange))
                         {
                             subtitlePoints.Add(subtitleChange);
                             Xcount += tokenEnd - i;
@@ -426,7 +537,7 @@ internal static class SimaiProcess
                             noteTemp = "";
                             continue;
                         }
-                        if (TryParseDisplayChange(token, time, out var displayChange))
+                        if (TryParseDisplayChange(token, time, bpm, out var displayChange))
                         {
                             if (!string.IsNullOrEmpty(displayChange.property))
                                 displayPoints.Add(displayChange);
@@ -435,6 +546,39 @@ internal static class SimaiProcess
                             noteTemp = "";
                             continue;
                         }
+                        if (TryParseColorChange(token, time, colorPoints) ||
+                            TryParseSizeChange(token, time, sizePoints) ||
+                            TryParseAlphaChange(token, time, alphaPoints) ||
+                            TryParseJudgeLineChange(token, time, bpm, colorPoints))
+                        {
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+
+                        // An invalid or not-yet-supported Alpha command is still an angle
+                        // command, not a slide. Validation reports it separately; consuming
+                        // it here prevents malformed preview/playback notes at position zero.
+                        if (looksLikeAlphaCommand)
+                        {
+                            Xcount += tokenEnd - i;
+                            i = tokenEnd;
+                            noteTemp = "";
+                            continue;
+                        }
+                    }
+                    else if (looksLikeAlphaCommand)
+                    {
+                        // While the user is typing, ignore the unfinished command through
+                        // the current cell. It becomes active after the closing '>' exists.
+                        var fragmentEnd = text.IndexOfAny(new[] { ',', '\r', '\n' }, i + 1);
+                        if (fragmentEnd < 0)
+                            fragmentEnd = text.Length;
+                        Xcount += fragmentEnd - i - 1;
+                        i = fragmentEnd - 1;
+                        noteTemp = "";
+                        continue;
                     }
                 }
 
@@ -462,7 +606,6 @@ internal static class SimaiProcess
                     continue;
                 }
 
-                // ALPHA: <SV*X> — true scroll velocity change at this time
                 if (text[i] == 'S' && !haveNote && i + 1 < text.Length && text[i + 1] == 'V'
                     && i + 2 < text.Length && text[i + 2] == '*')
                 {
@@ -484,126 +627,6 @@ internal static class SimaiProcess
                     continue;
                 }
 
-                // ALPHA: <COLOR*RRGGBB> or <COLOR*key=RRGGBB,...> — note color change at this time
-                // e.g. <COLOR*FF8800>  or  <COLOR*tap=FF0000,break=00FFEE>
-                // Trigger on '<' because 'C' is a touch-note character (isNote returns true for C).
-                if (text[i] == '<' && !haveNote
-                    && i + 6 < text.Length
-                    && text[i+1]=='C' && text[i+2]=='O' && text[i+3]=='L' && text[i+4]=='O' && text[i+5]=='R' && text[i+6]=='*')
-                {
-                    noteTemp = "";
-                    var nc_s = "";
-                    i += 7; // skip '<COLOR*'
-                    Xcount += 7;
-                    while (i < text.Length && text[i] != '>')
-                    {
-                        nc_s += text[i];
-                        i++;
-                        Xcount++;
-                    }
-                    // nc_s is either "NULL", a bare hex "FF8800", or "tap=FF8800,each=00FF88"
-                    var nc_trimmed = nc_s.Trim();
-                    string[] allNoteTypes = { "tap", "each", "hold", "slide", "star", "break", "touch", "touchhold" };
-                    if (string.Equals(nc_trimmed, "NULL", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Reset all note types to default color
-                        foreach (var t in allNoteTypes)
-                            colorPoints.Add(new ColorChange { time = time, noteType = t, color = "NULL" });
-                    }
-                    else if (!nc_trimmed.Contains('='))
-                    {
-                        // bare color — apply to all note types
-                        var color = nc_trimmed.TrimStart('#');
-                        if (color.Length == 6 || color.Length == 8)
-                        {
-                            foreach (var t in allNoteTypes)
-                                colorPoints.Add(new ColorChange { time = time, noteType = t, color = color });
-                        }
-                    }
-                    else
-                    {
-                        foreach (var pair in nc_trimmed.Split(','))
-                        {
-                            var kv = pair.Trim().Split('=');
-                            if (kv.Length == 2)
-                            {
-                                var noteType = kv[0].Trim();
-                                var colorStr = kv[1].Trim();
-                                if (string.Equals(colorStr, "NULL", StringComparison.OrdinalIgnoreCase))
-                                    colorPoints.Add(new ColorChange { time = time, noteType = noteType, color = "NULL" });
-                                else
-                                {
-                                    var color = colorStr.TrimStart('#');
-                                    if (color.Length == 6 || color.Length == 8)
-                                        colorPoints.Add(new ColorChange { time = time, noteType = noteType, color = color });
-                                }
-                            }
-                        }
-                    }
-                    continue;
-                }
-
-                // ALPHA: <SIZE*X> — note size multiplier change at this time
-                if (text[i] == '<' && !haveNote
-                    && i + 5 < text.Length
-                    && text[i+1]=='S' && text[i+2]=='I' && text[i+3]=='Z' && text[i+4]=='E' && text[i+5]=='*')
-                {
-                    noteTemp = "";
-                    var ns_s = "";
-                    i += 6; // skip '<SIZE*'
-                    Xcount += 6;
-                    while (i < text.Length && text[i] != '>')
-                    {
-                        ns_s += text[i];
-                        i++;
-                        Xcount++;
-                    }
-                    if (float.TryParse(ns_s, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out var nsScale))
-                    {
-                        sizePoints.Add(new SizeChange { time = time, scale = nsScale });
-                    }
-                    continue;
-                }
-
-                // ALPHA: <ALPHA*x> — note opacity change (0.0=transparent, 1.0=opaque)
-                // Trigger on '<' because 'A' is a touch-note character (isNote returns true for A).
-                if (text[i] == '<' && !haveNote
-                    && i + 6 < text.Length
-                    && text[i+1]=='A' && text[i+2]=='L' && text[i+3]=='P' && text[i+4]=='H' && text[i+5]=='A' && text[i+6]=='*')
-                {
-                    noteTemp = "";
-                    var na_s = "";
-                    i += 7; // skip '<ALPHA*'
-                    Xcount += 7;
-                    while (i < text.Length && text[i] != '>')
-                    {
-                        na_s += text[i];
-                        i++;
-                        Xcount++;
-                    }
-                    var na_trimmed = na_s.Trim();
-                    if (na_trimmed.Contains('='))
-                    {
-                        // per-type: <ALPHA*tap=0.5,hold=0.8>
-                        foreach (var pair in na_trimmed.Split(','))
-                        {
-                            var kv = pair.Trim().Split('=');
-                            if (kv.Length == 2 && float.TryParse(kv[1].Trim(),
-                                    System.Globalization.NumberStyles.Float,
-                                    System.Globalization.CultureInfo.InvariantCulture, out var ptAlpha))
-                                alphaPoints.Add(new AlphaChange { time = time, noteType = kv[0].Trim(), alpha = Math.Clamp(ptAlpha, 0f, 1f) });
-                        }
-                    }
-                    else if (float.TryParse(na_trimmed, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out var naAlpha))
-                    {
-                        // global: <ALPHA*0.5>
-                        alphaPoints.Add(new AlphaChange { time = time, noteType = null, alpha = Math.Clamp(naAlpha, 0f, 1f) });
-                    }
-                    continue;
-                }
-
                 if (isNote(text[i])) haveNote = true;
                 if (haveNote && text[i] != ',') noteTemp += text[i];
                 if (text[i] == ',')
@@ -612,10 +635,10 @@ internal static class SimaiProcess
                     {
                         if (noteTemp.Contains('`'))
                         {
-                            // 伪双
+                            // Fake each notes are separated by backticks.
                             var fakeEachList = noteTemp.Split('`');
                             var fakeTime = time;
-                            var timeInterval = 1.875 / bpm; // 128分音
+                            var timeInterval = 1.875 / bpm; // One 128th-note interval.
                             foreach (var fakeEachGroup in fakeEachList)
                             {
                                 Console.WriteLine(fakeEachGroup);
@@ -642,15 +665,23 @@ internal static class SimaiProcess
                 }
             }
 
+            AddOverlayNotes(_notelist, overlayNotes);
             notelist  = _notelist;
             timinglist = _timinglist;
-            svTable    = svPoints;    // ALPHA: true SV
-            colorTable = colorPoints; // ALPHA: note color
-            sizeTable  = sizePoints;  // ALPHA: note size
-            alphaTable = alphaPoints; // ALPHA: note alpha
-            displayTable = displayPoints; // ALPHA: display transitions
-            subtitleTable = subtitlePoints; // ALPHA: timed subtitles
-            effectTable = effectPoints; // ALPHA: screen effects
+            svTable    = svPoints;
+            hsTable    = hsPoints;
+            spawnTable = spawnPoints;
+            bounceTable = bouncePoints;
+            colorTable = colorPoints;
+            sizeTable  = sizePoints;
+            alphaTable = alphaPoints;
+            displayTable = displayPoints;
+            subtitleTable = subtitlePoints;
+            effectTable = effectPoints;
+            mediaTable = mediaPoints;
+            meterTable = meterPoints;
+            mediaTrimStart = trimStart;
+            mediaTrimEnd = trimEnd;
             return requestedTime;
         }
         catch (Exception e)
@@ -658,6 +689,146 @@ internal static class SimaiProcess
             Console.WriteLine(e.Message);
             return 0;
         }
+    }
+
+    private static bool TryReadOverlayLine(
+        string text,
+        int markerIndex,
+        double startTime,
+        float bpm,
+        float hSpeed,
+        int markerColumn,
+        int line,
+        long caretPosition,
+        ICollection<SimaiTimingPoint> output,
+        out int lineEnd,
+        out double? caretTime)
+    {
+        lineEnd = markerIndex;
+        caretTime = null;
+        if (markerIndex + 2 >= text.Length || text[markerIndex + 1] != '{')
+            return false;
+
+        lineEnd = text.IndexOfAny(new[] { '\r', '\n' }, markerIndex + 2);
+        if (lineEnd < 0)
+            lineEnd = text.Length;
+        var closeBrace = text.IndexOf('}', markerIndex + 2);
+        if (closeBrace < 0 || closeBrace >= lineEnd ||
+            !int.TryParse(text.Substring(markerIndex + 2, closeBrace - markerIndex - 2),
+                out var division) || division <= 0)
+            return false;
+
+        var localBpm = bpm;
+        var localHSpeed = hSpeed;
+        var localDivision = division;
+        var slotTime = startTime;
+        var slotColumn = closeBrace + 1;
+        var slotContent = new StringBuilder();
+        double? localCaretTime = null;
+
+        void AddSlot(int commaIndex)
+        {
+            var content = slotContent.ToString().Trim();
+            if (localBpm > 0f && content.Any(isNote))
+            {
+                if (content.Contains('`'))
+                {
+                    var fakeTime = slotTime;
+                    foreach (var fakeEachGroup in content.Split('`'))
+                    {
+                        if (!string.IsNullOrWhiteSpace(fakeEachGroup))
+                            output.Add(new SimaiTimingPoint(
+                                fakeTime, markerColumn + slotColumn - markerIndex, line,
+                                fakeEachGroup, localBpm, localHSpeed));
+                        fakeTime += 1.875d / localBpm;
+                    }
+                }
+                else
+                {
+                    output.Add(new SimaiTimingPoint(
+                        slotTime, markerColumn + slotColumn - markerIndex, line,
+                        content, localBpm, localHSpeed));
+                }
+            }
+
+            if (caretPosition >= slotColumn && caretPosition <= commaIndex)
+                localCaretTime = slotTime;
+            if (localBpm > 0f && localDivision > 0)
+                slotTime += 240d / localBpm / localDivision;
+            slotContent.Clear();
+            slotColumn = commaIndex + 1;
+        }
+
+        for (var index = closeBrace + 1; index < lineEnd; index++)
+        {
+            if (text[index] == '<' && AlphaCommandBoundary.IsPotentialStart(text, index))
+            {
+                var commandEnd = text.IndexOf('>', index + 1);
+                if (commandEnd >= 0 && commandEnd < lineEnd)
+                {
+                    var token = text.Substring(index + 1, commandEnd - index - 1);
+                    if (token.StartsWith("HS*", StringComparison.OrdinalIgnoreCase) &&
+                        float.TryParse(token[3..].Trim(), NumberStyles.Float,
+                            CultureInfo.InvariantCulture, out var parsedHSpeed))
+                    {
+                        localHSpeed = parsedHSpeed;
+                    }
+                    index = commandEnd;
+                    slotColumn = commandEnd + 1;
+                    continue;
+                }
+            }
+
+            if (text[index] == '(')
+            {
+                var bpmEnd = text.IndexOf(')', index + 1);
+                if (bpmEnd >= 0 && bpmEnd < lineEnd &&
+                    float.TryParse(text.Substring(index + 1, bpmEnd - index - 1),
+                        NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedBpm) &&
+                    parsedBpm > 0f)
+                {
+                    localBpm = parsedBpm;
+                    index = bpmEnd;
+                    slotColumn = bpmEnd + 1;
+                    continue;
+                }
+            }
+
+            if (text[index] == '{')
+            {
+                var divisionEnd = text.IndexOf('}', index + 1);
+                if (divisionEnd >= 0 && divisionEnd < lineEnd &&
+                    int.TryParse(text.Substring(index + 1, divisionEnd - index - 1),
+                        out var parsedDivision) && parsedDivision > 0)
+                {
+                    localDivision = parsedDivision;
+                    index = divisionEnd;
+                    slotColumn = divisionEnd + 1;
+                    continue;
+                }
+            }
+
+            if (text[index] == ',')
+            {
+                AddSlot(index);
+                continue;
+            }
+
+            slotContent.Append(text[index]);
+        }
+
+        if (caretPosition >= slotColumn && caretPosition <= lineEnd)
+            localCaretTime = slotTime;
+        caretTime = localCaretTime;
+        return true;
+    }
+
+    private static void AddOverlayNotes(
+        List<SimaiTimingPoint> mainNotes,
+        IEnumerable<SimaiTimingPoint> overlayNotes)
+    {
+        mainNotes.AddRange(overlayNotes);
+        mainNotes.Sort((left, right) => left.time.CompareTo(right.time));
     }
 
     private static string StripBlockComments(string text)
@@ -686,13 +857,561 @@ internal static class SimaiProcess
         return new string(result);
     }
 
+    internal static IReadOnlyList<AlphaCommandError> ValidateAlphaCommands(string text)
+    {
+        var source = StripBlockComments(text);
+        var errors = new List<AlphaCommandError>();
+        var line = 0;
+        var lineStart = 0;
+
+        for (var i = 0; i < source.Length; i++)
+        {
+            if (source[i] == '\n')
+            {
+                line++;
+                lineStart = i + 1;
+                continue;
+            }
+            if (source[i] == '|' && i + 1 < source.Length && source[i + 1] == '|')
+            {
+                while (i < source.Length && source[i] != '\n')
+                    i++;
+                if (i < source.Length)
+                {
+                    line++;
+                    lineStart = i + 1;
+                }
+                continue;
+            }
+            if (source[i] != '<' || !AlphaCommandBoundary.IsPotentialStart(source, i))
+                continue;
+
+            var end = source.IndexOf('>', i + 1);
+            var newline = source.IndexOf('\n', i + 1);
+            if (end < 0 || newline >= 0 && newline < end)
+            {
+                errors.Add(new AlphaCommandError(
+                    i - lineStart,
+                    line,
+                    MainWindow.GetLocalizedString("AlphaMissingClose")));
+                continue;
+            }
+
+            var token = source.Substring(i + 1, end - i - 1).Trim();
+            if (!TryValidateAlphaCommand(token, out var message))
+                errors.Add(new AlphaCommandError(i - lineStart, line, message));
+            i = end;
+        }
+        return errors;
+    }
+
+    private static bool TryValidateAlphaCommand(string token, out string message)
+    {
+        message = MainWindow.GetLocalizedString("AlphaFormatError");
+        var separator = token.IndexOf('*');
+        if (separator <= 0)
+        {
+            message = MainWindow.GetLocalizedString("AlphaMissingAsterisk");
+            return false;
+        }
+
+        var command = token[..separator].Trim().ToUpperInvariant();
+        const float bpm = 120f;
+        switch (command)
+        {
+            case "SV":
+            {
+                var points = new List<SvPoint>();
+                if (TryParseTypedSvChange(token, 0d, points))
+                    return points.Count > 0;
+                return float.TryParse(token[(separator + 1)..].Trim(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out _);
+            }
+            case "HS":
+            {
+                var points = new List<SpeedChange>();
+                if (TryParseTypedSpeedChange(token, 0d, points))
+                    return points.Count > 0;
+                return float.TryParse(token[(separator + 1)..].Trim(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out _);
+            }
+            case "SPAWN":
+            {
+                var points = new List<SpawnChange>();
+                TryParseSpawnChange(token, 0d, points);
+                return points.Count > 0;
+            }
+            case "BOUNCE":
+            {
+                var points = new List<BounceChange>();
+                TryParseBounceChange(token, 0d, bpm, points);
+                return points.Count > 0;
+            }
+            case "COLOR":
+            {
+                var points = new List<ColorChange>();
+                TryParseColorChange(token, 0d, points);
+                return points.Count > 0 && points.All(point =>
+                    string.Equals(point.color, "NULL", StringComparison.OrdinalIgnoreCase) ||
+                    point.color.Length == 6 && point.color.All(Uri.IsHexDigit));
+            }
+            case "SIZE":
+            {
+                var points = new List<SizeChange>();
+                TryParseSizeChange(token, 0d, points);
+                return points.Count > 0;
+            }
+            case "ALPHA":
+            {
+                var points = new List<AlphaChange>();
+                TryParseAlphaChange(token, 0d, points);
+                return points.Count > 0;
+            }
+            case "JLINE":
+            {
+                var points = new List<ColorChange>();
+                TryParseJudgeLineChange(token, 0d, bpm, points);
+                return points.Count > 0;
+            }
+            case "TEXT":
+            {
+                TryParseSubtitleChange(token, 0d, bpm, out var subtitle);
+                var body = token[(separator + 1)..].Trim();
+                return !string.IsNullOrWhiteSpace(subtitle.text) &&
+                       (!body.StartsWith('(') || body.EndsWith(')'));
+            }
+            case "AUDIO":
+            case "PVOVERLAY":
+                return TryParseMediaChange(token, 0d, bpm, out var media) &&
+                       !string.IsNullOrEmpty(media.kind);
+        }
+
+        if (TryParseScreenEffect(token, 0d, bpm, out var effect))
+            return !string.IsNullOrEmpty(effect.effect);
+        if (TryParseDisplayChange(token, 0d, bpm, out var display))
+            return !string.IsNullOrEmpty(display.property);
+
+        message = string.Format(MainWindow.GetLocalizedString("AlphaUnknownCommand"), command);
+        return false;
+    }
+
     public static void ClearNoteListPlayedState()
     {
         notelist.Sort((x, y) => x.time.CompareTo(y.time));
         for (var i = 0; i < notelist.Count; i++) notelist[i].havePlayed = false;
     }
 
-    private static bool TryParseDisplayChange(string token, double time, out DisplayChange change)
+    private static bool TryParseMediaChange(string token, double time, float bpm, out MediaChange change)
+    {
+        change = new MediaChange();
+        var separator = token.IndexOf('*');
+        if (separator <= 0)
+            return false;
+
+        var command = token[..separator].Trim().ToUpperInvariant();
+        if (command is not ("AUDIO" or "PVOVERLAY"))
+            return false;
+
+        var body = token[(separator + 1)..].Trim();
+        if (body.Length < 3 || body[0] != '(' || body[^1] != ')')
+            return true;
+
+        var values = body[1..^1].Split(',', StringSplitOptions.TrimEntries);
+        if (values.Length < 1 || !bool.TryParse(values[0], out var enabled))
+            return true;
+
+        change.time = time;
+        change.kind = command == "AUDIO" ? "audio" : "pvOverlay";
+        change.enabled = enabled;
+        if (!enabled)
+        {
+            if (command == "AUDIO" && values.Length != 1)
+                change.kind = "";
+            else if (command == "PVOVERLAY" &&
+                     (values.Length > 2 ||
+                      values.Length == 2 &&
+                      (!TryParseCommandDuration(values[1], bpm, out change.transition) ||
+                       change.transition < 0f)))
+                change.kind = "";
+            return true;
+        }
+
+        var expectedMaximum = command == "PVOVERLAY" ? 3 : 2;
+        if (values.Length < 2 || values.Length > expectedMaximum)
+        {
+            change.kind = "";
+            return true;
+        }
+
+        if (command == "PVOVERLAY" && values.Length == 3 &&
+            (!TryParseCommandDuration(values[2], bpm, out change.transition) ||
+             change.transition < 0f))
+        {
+            change.kind = "";
+            return true;
+        }
+
+        var mediaPath = values[1].Trim().Trim('"').Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(mediaPath) || Path.IsPathRooted(mediaPath) ||
+            mediaPath.Split('/').Any(part => part == ".."))
+        {
+            change.kind = "";
+            return true;
+        }
+
+        var extension = Path.GetExtension(mediaPath);
+        var supported = command == "AUDIO"
+            ? extension.Equals(".ogg", StringComparison.OrdinalIgnoreCase) ||
+              extension.Equals(".wav", StringComparison.OrdinalIgnoreCase) ||
+              extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
+            : extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+              extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+              extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+              extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase);
+        if (!supported)
+        {
+            change.kind = "";
+            return true;
+        }
+
+        change.path = mediaPath;
+        return true;
+    }
+
+    // Reserved note-type keys usable in <COLOR*key=..> / <ALPHA*key=..>.
+    private static readonly string[] ColorNoteTypes =
+        { "tap", "each", "hold", "slide", "star", "break", "touch", "touchhold" };
+
+    private static bool TryParseTypedSvChange(string token, double time, List<SvPoint> into)
+    {
+        if (!token.StartsWith("SV*", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var body = token[3..].Trim();
+        if (!body.Contains('='))
+            return false;
+
+        foreach (var pair in body.Split(','))
+        {
+            var kv = pair.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (kv.Length != 2 || !ColorNoteTypes.Contains(kv[0], StringComparer.OrdinalIgnoreCase))
+                continue;
+            if (string.Equals(kv[1], "NULL", StringComparison.OrdinalIgnoreCase))
+                into.Add(new SvPoint { time = time, noteType = kv[0].ToLowerInvariant(), reset = true });
+            else if (float.TryParse(kv[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                into.Add(new SvPoint
+                {
+                    time = time,
+                    noteType = kv[0].ToLowerInvariant(),
+                    multiplier = value
+                });
+        }
+        return true;
+    }
+
+    private static bool TryParseTypedSpeedChange(string token, double time, List<SpeedChange> into)
+    {
+        if (!token.StartsWith("HS*", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var body = token[3..].Trim();
+        if (!body.Contains('='))
+            return false;
+
+        foreach (var pair in body.Split(','))
+        {
+            var kv = pair.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (kv.Length != 2 || !ColorNoteTypes.Contains(kv[0], StringComparer.OrdinalIgnoreCase))
+                continue;
+            var value = 1f;
+            if (!string.Equals(kv[1], "NULL", StringComparison.OrdinalIgnoreCase) &&
+                !float.TryParse(kv[1], NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+                continue;
+            into.Add(new SpeedChange
+            {
+                time = time,
+                noteType = kv[0].ToLowerInvariant(),
+                multiplier = value
+            });
+        }
+        return true;
+    }
+
+    private static readonly string[] SpawnNoteTypes =
+        { "tap", "each", "hold", "star", "break" };
+
+    private static bool TryParseSpawnChange(string token, double time, List<SpawnChange> into)
+    {
+        if (!token.StartsWith("SPAWN*", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        static bool TryValue(string text, out float radius, out bool reset)
+        {
+            reset = string.Equals(text.Trim(), "NULL", StringComparison.OrdinalIgnoreCase);
+            if (reset)
+            {
+                radius = 1.225f;
+                return true;
+            }
+
+            return float.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture,
+                       out radius) &&
+                   radius is >= -4.8f and <= 4.8f;
+        }
+
+        var body = token.Substring(6).Trim();
+        if (!body.Contains('='))
+        {
+            if (TryValue(body, out var radius, out var reset))
+                into.Add(new SpawnChange
+                {
+                    time = time,
+                    radius = radius,
+                    reset = reset
+                });
+            return true;
+        }
+
+        foreach (var pair in body.Split(','))
+        {
+            var kv = pair.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (kv.Length != 2 ||
+                !SpawnNoteTypes.Contains(kv[0], StringComparer.OrdinalIgnoreCase) ||
+                !TryValue(kv[1], out var radius, out var reset))
+                continue;
+            into.Add(new SpawnChange
+            {
+                time = time,
+                noteType = kv[0].ToLowerInvariant(),
+                radius = radius,
+                reset = reset
+            });
+        }
+        return true;
+    }
+
+    private static bool TryParseBounceChange(
+        string token,
+        double time,
+        float bpm,
+        List<BounceChange> into)
+    {
+        if (!token.StartsWith("BOUNCE*", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var body = token[7..].Trim();
+        var defaultTypes = new[] { "tap", "star", "each", "hold" };
+
+        static bool IsBounceType(string value) =>
+            value.Equals("tap", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("star", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("each", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("hold", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("break", StringComparison.OrdinalIgnoreCase);
+
+        if (!body.Contains('='))
+        {
+            var reset = string.Equals(body, "NULL", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(body, "FALSE", StringComparison.OrdinalIgnoreCase);
+            var duration = 0f;
+            if (!reset && (!TryParseCommandDuration(body, bpm, out duration) || duration <= 0f))
+                return true;
+            foreach (var noteType in defaultTypes)
+                into.Add(new BounceChange
+                {
+                    time = time,
+                    noteType = noteType,
+                    duration = reset ? 0f : duration,
+                    reset = reset
+                });
+            return true;
+        }
+
+        foreach (var pair in body.Split(','))
+        {
+            var keyValue = pair.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (keyValue.Length != 2 || !IsBounceType(keyValue[0]))
+                continue;
+            var reset = string.Equals(keyValue[1], "NULL", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(keyValue[1], "FALSE", StringComparison.OrdinalIgnoreCase);
+            var duration = 0f;
+            if (!reset && (!TryParseCommandDuration(keyValue[1], bpm, out duration) || duration <= 0f))
+                continue;
+            into.Add(new BounceChange
+            {
+                time = time,
+                noteType = keyValue[0].ToLowerInvariant(),
+                duration = reset ? 0f : duration,
+                reset = reset
+            });
+        }
+        return true;
+    }
+
+    private static bool TryParseColorChange(string token, double time, List<ColorChange> into)
+    {
+        if (!token.StartsWith("COLOR*", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var body = token.Substring(6).Trim();
+        if (string.Equals(body, "NULL", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var t in ColorNoteTypes)
+                into.Add(new ColorChange { time = time, noteType = t, color = "NULL" });
+        }
+        else if (!body.Contains('='))
+        {
+            var color = body.TrimStart('#');
+            if (color.Length == 6 && color.All(Uri.IsHexDigit))
+                foreach (var t in ColorNoteTypes)
+                    into.Add(new ColorChange { time = time, noteType = t, color = color });
+        }
+        else
+        {
+            foreach (var pair in body.Split(','))
+            {
+                var kv = pair.Trim().Split('=');
+                if (kv.Length != 2)
+                    continue;
+                var noteType = kv[0].Trim();
+                var colorStr = kv[1].Trim();
+                if (string.Equals(colorStr, "NULL", StringComparison.OrdinalIgnoreCase))
+                    into.Add(new ColorChange { time = time, noteType = noteType, color = "NULL" });
+                else
+                {
+                    var color = colorStr.TrimStart('#');
+                    if (color.Length == 6 && color.All(Uri.IsHexDigit))
+                        into.Add(new ColorChange { time = time, noteType = noteType, color = color });
+                }
+            }
+        }
+        return true;
+    }
+
+    // Global size does not scale slide bodies; slide size must be set explicitly.
+    private static bool TryParseSizeChange(string token, double time, List<SizeChange> into)
+    {
+        if (!token.StartsWith("SIZE*", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var body = token.Substring(5).Trim();
+        if (body.Contains('='))
+        {
+            foreach (Match match in Regex.Matches(body,
+                         @"(?<type>[A-Za-z]+)\s*=\s*(?<value>NULL|[-+]?\d*\.?\d+|\(\s*[-+]?\d*\.?\d+\s*,\s*[-+]?\d*\.?\d+\s*\))",
+                         RegexOptions.IgnoreCase))
+            {
+                var noteType = match.Groups["type"].Value.Trim();
+                var val = match.Groups["value"].Value.Trim();
+                if (string.Equals(val, "NULL", StringComparison.OrdinalIgnoreCase))
+                    into.Add(NewSizeChange(time, noteType, 1f, 1f));
+                else if (TryParseScalePair(val, out var x, out var y))
+                    into.Add(NewSizeChange(time, noteType, x, y));
+                else if (float.TryParse(val, System.Globalization.NumberStyles.Float,
+                             System.Globalization.CultureInfo.InvariantCulture, out var s))
+                    into.Add(NewSizeChange(time, noteType, s, s));
+            }
+        }
+        else if (string.Equals(body, "NULL", StringComparison.OrdinalIgnoreCase))
+        {
+            into.Add(NewSizeChange(time, null, 1f, 1f));
+        }
+        else if (TryParseScalePair(body, out var x, out var y))
+        {
+            into.Add(NewSizeChange(time, null, x, y));
+        }
+        else if (float.TryParse(body, System.Globalization.NumberStyles.Float,
+                     System.Globalization.CultureInfo.InvariantCulture, out var scale))
+        {
+            into.Add(NewSizeChange(time, null, scale, scale));
+        }
+        return true;
+    }
+
+    private static SizeChange NewSizeChange(double time, string? noteType, float x, float y) => new()
+    {
+        time = time,
+        noteType = noteType,
+        scale = MathF.Sqrt(MathF.Abs(x * y)),
+        scaleX = x,
+        scaleY = y
+    };
+
+    private static bool TryParseScalePair(string value, out float x, out float y)
+    {
+        x = y = 1f;
+        var match = Regex.Match(value,
+            @"^\(\s*(?<x>[-+]?\d*\.?\d+)\s*,\s*(?<y>[-+]?\d*\.?\d+)\s*\)$");
+        return match.Success &&
+               float.TryParse(match.Groups["x"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out x) &&
+               float.TryParse(match.Groups["y"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out y);
+    }
+
+    private static bool TryParseAlphaChange(string token, double time, List<AlphaChange> into)
+    {
+        if (!token.StartsWith("ALPHA*", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var body = token.Substring(6).Trim();
+        if (body.Contains('='))
+        {
+            foreach (var pair in body.Split(','))
+            {
+                var kv = pair.Trim().Split('=');
+                if (kv.Length != 2)
+                    continue;
+                var noteType = kv[0].Trim();
+                var val = kv[1].Trim();
+                if (string.Equals(val, "NULL", StringComparison.OrdinalIgnoreCase))
+                    into.Add(new AlphaChange { time = time, noteType = noteType, alpha = 1f });
+                else if (float.TryParse(val, System.Globalization.NumberStyles.Float,
+                             System.Globalization.CultureInfo.InvariantCulture, out var ptAlpha))
+                    into.Add(new AlphaChange { time = time, noteType = noteType, alpha = Math.Clamp(ptAlpha, 0f, 1f) });
+            }
+        }
+        else if (string.Equals(body, "NULL", StringComparison.OrdinalIgnoreCase))
+        {
+            into.Add(new AlphaChange { time = time, noteType = null, alpha = 1f });
+        }
+        else if (float.TryParse(body, System.Globalization.NumberStyles.Float,
+                     System.Globalization.CultureInfo.InvariantCulture, out var naAlpha))
+        {
+            into.Add(new AlphaChange { time = time, noteType = null, alpha = Math.Clamp(naAlpha, 0f, 1f) });
+        }
+        return true;
+    }
+
+    private static bool TryParseJudgeLineChange(
+        string token,
+        double time,
+        float bpm,
+        List<ColorChange> into)
+    {
+        if (!token.StartsWith("JLINE*", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var body = token.Substring(6).Trim();
+        if (body.Length >= 2 && body[0] == '(' && body[^1] == ')')
+            body = body.Substring(1, body.Length - 2);
+
+        var values = body.Split(',', StringSplitOptions.TrimEntries);
+        if (values.Length is < 1 or > 2)
+            return true;
+
+        var color = values[0].Trim().TrimStart('#');
+        if (!string.Equals(color, "NULL", StringComparison.OrdinalIgnoreCase) &&
+            (color.Length is not (6 or 8) || !color.All(Uri.IsHexDigit)))
+            return true;
+
+        var duration = 0f;
+        if (values.Length == 2 && !TryParseCommandDuration(values[1], bpm, out duration))
+            return true;
+
+        into.Add(new ColorChange
+        {
+            time = time,
+            noteType = "judgeline",
+            color = color.ToUpperInvariant(),
+            duration = Math.Max(0f, duration)
+        });
+        return true;
+    }
+
+    private static bool TryParseDisplayChange(string token, double time, float bpm, out DisplayChange change)
     {
         change = new DisplayChange();
         var separator = token.IndexOf('*');
@@ -702,6 +1421,7 @@ internal static class SimaiProcess
         var canonicalProperty = token.Substring(0, separator).Trim().ToUpperInvariant() switch
         {
             "SHOWJUDGELINE" => "ShowJudgeLine",
+            "SHOWJUDGEAREA" => "ShowJudgeArea",
             "SHOWJUDGEINFO" => "ShowJudgeInfo",
             "SHOWCOMBOINFO" => "ShowComboInfo",
             "OUTERBRIGHTNESS" => "OuterBrightness",
@@ -718,9 +1438,10 @@ internal static class SimaiProcess
             return true;
 
         var values = body.Substring(1, body.Length - 2).Split(',');
-        if (values.Length != 2 ||
-            !float.TryParse(values[1].Trim(), System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var duration))
+        if (values.Length is < 1 or > 2)
+            return true;
+        var duration = 0f;
+        if (values.Length == 2 && !TryParseCommandDuration(values[1], bpm, out duration))
             return true;
 
         float target;
@@ -791,7 +1512,7 @@ internal static class SimaiProcess
         return Enum.TryParse(value, true, out mode);
     }
 
-    private static bool TryParseSubtitleChange(string token, double time, out SubtitleChange change)
+    private static bool TryParseSubtitleChange(string token, double time, float bpm, out SubtitleChange change)
     {
         change = new SubtitleChange();
         if (!token.StartsWith("TEXT*", StringComparison.OrdinalIgnoreCase))
@@ -806,10 +1527,7 @@ internal static class SimaiProcess
             var inner = body.Substring(1, body.Length - 2);
             var separator = inner.LastIndexOf(',');
             if (separator >= 0 &&
-                float.TryParse(inner.Substring(separator + 1).Trim(),
-                    System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    out var parsedDuration))
+                TryParseCommandDuration(inner.Substring(separator + 1), bpm, out var parsedDuration))
             {
                 content = inner.Substring(0, separator).Trim();
                 duration = Math.Max(0f, parsedDuration);
@@ -829,7 +1547,7 @@ internal static class SimaiProcess
         return true;
     }
 
-    private static bool TryParseScreenEffect(string token, double time, out EffectChange change)
+    private static bool TryParseScreenEffect(string token, double time, float bpm, out EffectChange change)
     {
         change = new EffectChange();
         var separator = token.IndexOf('*');
@@ -851,6 +1569,11 @@ internal static class SimaiProcess
             "ZOOM" => "Zoom",
             "GLITCH" => "Glitch",
             "TVNOISE" => "TVNoise",
+            "HUE" => "Hue",
+            "TINT" => "Tint",
+            "MOVE" => "Move",
+            "ROTATE" => "Rotate",
+            "SHAKE" => "Shake",
             _ => null
         };
         if (effect == null)
@@ -861,22 +1584,233 @@ internal static class SimaiProcess
             return true;
 
         var values = body.Substring(1, body.Length - 2).Split(',');
-        if (values.Length != 2 ||
-            !float.TryParse(values[0].Trim(), System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var duration) ||
-            !float.TryParse(values[1].Trim(), System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var intensity))
-            return true;
+        float F(int i) => float.TryParse(values[i].Trim(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var v)
+            ? v
+            : float.NaN;
+        float D(int i) => TryParseCommandDuration(values[i], bpm, out var v) ? v : float.NaN;
 
-        change = new EffectChange
+        if (values.Length >= 1 && bool.TryParse(values[0].Trim(), out var enabled))
+        {
+            var state = new EffectChange
+            {
+                time = time,
+                effect = effect,
+                stateful = true,
+                enabled = enabled
+            };
+
+            if (!enabled)
+            {
+                if (values.Length > 2)
+                    return true;
+                var transition = values.Length == 2 ? D(1) : 0f;
+                if (float.IsNaN(transition))
+                    return true;
+                state.transition = Math.Max(0f, transition);
+                state.duration = state.transition;
+                change = state;
+                return true;
+            }
+
+            var transitionIndex = -1;
+            switch (effect)
+            {
+                case "Move":
+                {
+                    if (values.Length is < 3 or > 4)
+                        return true;
+                    var dx = F(1);
+                    var dy = F(2);
+                    if (float.IsNaN(dx) || float.IsNaN(dy))
+                        return true;
+                    state.intensity = 1f;
+                    state.paramA = dx;
+                    state.paramB = dy;
+                    transitionIndex = values.Length >= 4 ? 3 : -1;
+                    break;
+                }
+                case "Tint":
+                {
+                    if (values.Length is < 3 or > 4)
+                        return true;
+                    var hex = values[1].Trim().TrimStart('#');
+                    var amount = F(2);
+                    if (float.IsNaN(amount) || hex.Length != 6 || !hex.All(Uri.IsHexDigit))
+                        return true;
+                    state.intensity = amount;
+                    state.color = hex.ToUpperInvariant();
+                    transitionIndex = values.Length >= 4 ? 3 : -1;
+                    break;
+                }
+                case "Shake":
+                {
+                    if (values.Length is < 3 or > 5)
+                        return true;
+                    var strength = F(1);
+                    var frequency = F(2);
+                    if (float.IsNaN(strength) || float.IsNaN(frequency) || frequency <= 0f)
+                        return true;
+                    state.intensity = strength;
+                    state.paramA = frequency;
+                    if (values.Length >= 4 && !string.IsNullOrWhiteSpace(values[3]))
+                    {
+                        var angle = F(3);
+                        if (float.IsNaN(angle))
+                            return true;
+                        state.hasDirection = true;
+                        state.paramB = angle * (float)Math.PI / 180f;
+                    }
+                    if (values.Length == 5)
+                    {
+                        transitionIndex = 4;
+                    }
+                    break;
+                }
+                default:
+                {
+                    if (values.Length is < 2 or > 3)
+                        return true;
+                    var intensity = F(1);
+                    if (float.IsNaN(intensity))
+                        return true;
+                    state.intensity = token.StartsWith("FADE*", StringComparison.OrdinalIgnoreCase)
+                        ? -Math.Abs(intensity)
+                        : intensity;
+                    transitionIndex = values.Length >= 3 ? 2 : -1;
+                    break;
+                }
+            }
+
+            if (transitionIndex >= 0)
+            {
+                var transition = D(transitionIndex);
+                if (float.IsNaN(transition))
+                    return true;
+                state.transition = Math.Max(0f, transition);
+                state.duration = state.transition;
+            }
+
+            change = state;
+            return true;
+        }
+
+        if (values.Length == 2)
+        {
+            var duration = D(0);
+            var intensity = F(1);
+            if (float.IsNaN(duration) || float.IsNaN(intensity))
+                return true;
+
+            change = new EffectChange
+            {
+                time = time,
+                effect = effect,
+                duration = Math.Max(0f, duration),
+                intensity = token.StartsWith("FADE*", StringComparison.OrdinalIgnoreCase)
+                    ? -Math.Abs(intensity)
+                    : intensity
+            };
+            if (effect == "Tint")
+                change.color = "FFFFFF";
+            else if (effect == "Move")
+            {
+                change.intensity = 1f;
+                change.paramA = intensity;
+                change.paramB = 0f;
+            }
+            return true;
+        }
+
+        if (values.Length < 4)
+            return true;
+        var attack = D(0);
+        var holdFor = D(1);
+        var release = D(2);
+        if (float.IsNaN(attack) || float.IsNaN(holdFor) || float.IsNaN(release))
+            return true;
+        attack = Math.Max(0f, attack);
+        holdFor = Math.Max(0f, holdFor);
+        release = Math.Max(0f, release);
+
+        var v2 = new EffectChange
         {
             time = time,
             effect = effect,
-            duration = Math.Max(0f, duration),
-            intensity = token.StartsWith("FADE*", StringComparison.OrdinalIgnoreCase)
-                ? -Math.Abs(intensity)
-                : intensity
+            attack = attack,
+            holdTime = holdFor,
+            release = release,
+            duration = attack + holdFor + release
         };
+
+        switch (effect)
+        {
+            case "Move":
+            {
+                var dx = F(3);
+                var dy = values.Length >= 5 ? F(4) : 0f;
+                if (float.IsNaN(dx) || float.IsNaN(dy))
+                    return true;
+                v2.intensity = 1f;
+                v2.paramA = dx;
+                v2.paramB = dy;
+                break;
+            }
+            case "Tint":
+            {
+                var amount = F(3);
+                if (float.IsNaN(amount))
+                    return true;
+                var hex = values.Length >= 5 ? values[4].Trim().TrimStart('#') : "FFFFFF";
+                if (hex.Length != 6 || !hex.All(Uri.IsHexDigit))
+                    return true;
+                v2.intensity = amount;
+                v2.color = hex.ToUpperInvariant();
+                break;
+            }
+            case "Shake":
+            {
+                var strength = F(3);
+                if (float.IsNaN(strength))
+                    return true;
+                v2.intensity = strength;
+                var freq = values.Length >= 5 ? F(4) : 18f;
+                v2.paramA = float.IsNaN(freq) || freq <= 0f ? 18f : freq;
+                break;
+            }
+            default:
+            {
+                var intensity = F(3);
+                if (float.IsNaN(intensity))
+                    return true;
+                v2.intensity = token.StartsWith("FADE*", StringComparison.OrdinalIgnoreCase)
+                    ? -Math.Abs(intensity)
+                    : intensity;
+                break;
+            }
+        }
+
+        change = v2;
+        return true;
+    }
+
+    private static bool TryParseCommandDuration(string value, float bpm, out float seconds)
+    {
+        value = value.Trim();
+        if (float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds))
+            return true;
+
+        var parts = value.Split(':', StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 || bpm <= 0f ||
+            !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var division) ||
+            !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) ||
+            division <= 0 || count < 0)
+        {
+            seconds = 0f;
+            return false;
+        }
+
+        seconds = 60f / bpm * 4f / division * count;
         return true;
     }
 
@@ -909,6 +1843,7 @@ internal class SimaiTimingPoint
     public bool havePlayed;
     public float HSpeed = 1f;
     public List<SimaiNote> noteList = new(); //only used for json serialize
+    [Newtonsoft.Json.JsonIgnore] public string? noteParseError;
     public string notesContent;
     public int rawTextPositionX;
     public int rawTextPositionY;
@@ -942,7 +1877,7 @@ internal class SimaiTimingPoint
         try
         {
             var dummy = 0;
-            if (notesContent.Length == 2 && int.TryParse(notesContent, out dummy)) //连写数字
+            if (notesContent.Length == 2 && int.TryParse(notesContent, out dummy))
             {
                 simaiNotes.Add(getSingleNote(notesContent[0].ToString()));
                 simaiNotes.Add(getSingleNote(notesContent[1].ToString()));
@@ -977,8 +1912,9 @@ internal class SimaiTimingPoint
             notesParsed = true;
             return noteList;
         }
-        catch
+        catch (Exception e)
         {
+            noteParseError = e.Message;
             noteList = new List<SimaiNote>();
             notesParsed = true;
             return noteList;
@@ -993,7 +1929,7 @@ internal class SimaiTimingPoint
         simaiNotes.Add(note1);
         var newNoteContent = noteContents.ToList();
         newNoteContent.RemoveAt(0);
-        //删除第一个NOTE
+        // The first parsed note is a temporary seed.
         foreach (var item in newNoteContent)
         {
             var note2text = note1.startPosition + item;
@@ -1004,6 +1940,8 @@ internal class SimaiTimingPoint
             note2.isMonoHead = false;
             note2.isSlideMono = false;
             note2.isSlideBreak = false;
+            note2.isDZone = note1.isDZone;
+            note2.isDZoneEnd = note1.isDZoneEnd;
             simaiNotes.Add(note2);
         }
 
@@ -1013,6 +1951,53 @@ internal class SimaiTimingPoint
     private SimaiNote getSingleNote(string noteText)
     {
         var simaiNote = new SimaiNote();
+        var touchSlide = Regex.Match(
+            noteText,
+            @"^(?<start>(?:[1-8]d?|[ABDE][1-8]|C1?))(?<headMods>[bxfm!?]*)" +
+            @"(?:(?<shape>[-<>^])(?<end>(?:[1-8]d?|[ABDE][1-8]|C1?))(?<bodyMods>[bxfm]*))+" +
+            @"(?<duration>\[[^\[\]]+\])$",
+            RegexOptions.CultureInvariant);
+        var hasTouchEndpoint = touchSlide.Success &&
+                               (char.IsLetter(touchSlide.Groups["start"].Value[0]) ||
+                                touchSlide.Groups["end"].Captures.Cast<Capture>()
+                                    .Any(capture => char.IsLetter(capture.Value[0])));
+        if (hasTouchEndpoint)
+        {
+            static (char Area, int Position, bool IsDZone) ParseTouchSlidePosition(string value)
+                => char.IsDigit(value[0])
+                    ? ('K', value[0] - '0', value.EndsWith("d", StringComparison.Ordinal))
+                    : value[0] == 'C'
+                    ? ('C', 8, false)
+                    : (value[0], value[1] - '0', false);
+
+            var start = ParseTouchSlidePosition(touchSlide.Groups["start"].Value);
+            var endCaptures = touchSlide.Groups["end"].Captures;
+            var shapeCaptures = touchSlide.Groups["shape"].Captures;
+            var end = ParseTouchSlidePosition(endCaptures[^1].Value);
+            var headModifiers = touchSlide.Groups["headMods"].Value;
+            var bodyModifiers = string.Concat(
+                touchSlide.Groups["bodyMods"].Captures.Cast<Capture>().Select(capture => capture.Value));
+            simaiNote.noteType = SimaiNoteType.Slide;
+            simaiNote.isTouchSlide = true;
+            simaiNote.isSlideNoHead = headModifiers.Contains('!') || headModifiers.Contains('?');
+            simaiNote.isBreak = headModifiers.Contains('b');
+            simaiNote.isSlideBreak = bodyModifiers.Contains('b');
+            simaiNote.isEx = headModifiers.Contains('x') || bodyModifiers.Contains('x');
+            simaiNote.isHanabi = headModifiers.Contains('f');
+            simaiNote.isMonoHead = headModifiers.Contains('m');
+            simaiNote.isSlideMono = bodyModifiers.Contains('m');
+            simaiNote.touchArea = start.Area;
+            simaiNote.touchEndArea = end.Area;
+            simaiNote.startPosition = start.Position;
+            simaiNote.touchEndPosition = end.Position;
+            simaiNote.isDZone = start.IsDZone;
+            simaiNote.isDZoneEnd = end.IsDZone;
+            simaiNote.touchSlideShape = shapeCaptures[0].Value[0];
+            simaiNote.slideStartTime = time + getStarWaitTime(noteText);
+            simaiNote.slideTime = getTimeFromBeats(noteText);
+            simaiNote.noteContent = noteText;
+            return simaiNote;
+        }
 
         if (isTouchNote(noteText))
         {
@@ -1027,7 +2012,30 @@ internal class SimaiTimingPoint
             simaiNote.noteType = SimaiNoteType.Tap; //if nothing happen in following if
         }
 
-        if (noteText.Contains('f')) simaiNote.isHanabi = true;
+        // Preserve D-zone ownership before normalizing for the existing parser.
+        var originalNoteText = noteText;
+        var isSlide = isSlideNote(originalNoteText);
+        if (originalNoteText.Length >= 2 && originalNoteText[1] == 'd')
+            simaiNote.isDZone = true;
+        if (isSlide)
+        {
+            var timingStart = originalNoteText.IndexOf('[');
+            var slideHead = timingStart >= 0
+                ? originalNoteText.Substring(0, timingStart)
+                : originalNoteText;
+            simaiNote.isDZoneEnd = slideHead.EndsWith("d", StringComparison.Ordinal);
+        }
+        if (simaiNote.isDZone || simaiNote.isDZoneEnd)
+        {
+            noteText = noteText.Replace("d", "");
+        }
+
+        // Firework is a modifier, not part of the underlying note grammar.
+        if (noteText.Contains('f'))
+        {
+            simaiNote.isHanabi = true;
+            noteText = noteText.Replace("f", "");
+        }
         //hold
         if (noteText.Contains('h'))
         {
@@ -1076,17 +2084,10 @@ internal class SimaiTimingPoint
                 {
                     '-', '^', 'v', '<', '>', 'p', 'q', 's', 'z', 'V', 'w'
                 });
-                var monoIndex = noteText.IndexOf('m');
-                if (monoIndex >= 0 && monoIndex < slidePathIndex)
-                {
-                    // 1bm-5: only the starting note is monochrome.
-                    simaiNote.isMonoHead = true;
-                }
-                else
-                {
-                    // 1-5m: only the slide body and moving star are monochrome.
-                    simaiNote.isSlideMono = true;
-                }
+                simaiNote.isMonoHead = slidePathIndex > 0 &&
+                                       noteText.AsSpan(0, slidePathIndex).Contains('m');
+                simaiNote.isSlideMono = slidePathIndex >= 0 &&
+                                        noteText.AsSpan(slidePathIndex).Contains('m');
             }
             else
             {
@@ -1100,25 +2101,20 @@ internal class SimaiTimingPoint
         {
             if (simaiNote.noteType == SimaiNoteType.Slide)
             {
-                // 如果是Slide 则要检查这个b到底是星星头的还是Slide本体的
-
-                // !!! **SHIT CODE HERE** !!!
+                // A slide break marker may belong to either the star head or the path.
                 var startIndex = 0;
                 while ((startIndex = noteText.IndexOf('b', startIndex)) != -1)
                 {
                     if (startIndex < noteText.Length - 1)
                     {
-                        // 如果b不是最后一个字符 我们就检查b之后一个字符是不是`[`符号：如果是 那么就是break slide
                         if (noteText[startIndex + 1] == '[')
                             simaiNote.isSlideBreak = true;
                         else
-                            // 否则 那么不管这个break出现在slide的哪一个地方 我们都认为他是星星头的break
-                            // SHIT CODE!
+                            // A marker not followed by a duration belongs to the head.
                             simaiNote.isBreak = true;
                     }
                     else
                     {
-                        // 如果b符号是整个文本的最后一个字符 那么也是break slide（Simai语法）
                         simaiNote.isSlideBreak = true;
                     }
 
@@ -1127,7 +2123,6 @@ internal class SimaiTimingPoint
             }
             else
             {
-                // 除此之外的Break就无所谓了
                 simaiNote.isBreak = true;
             }
 
@@ -1176,7 +2171,7 @@ internal class SimaiTimingPoint
     {
         if (noteText.Count(c => { return c == '['; }) > 1)
         {
-            // 组合slide 有多个时长
+            // Connected slides may define one duration per segment.
             double wholeTime = 0;
 
             var partStartIndex = 0;
@@ -1205,7 +2200,26 @@ internal class SimaiTimingPoint
                 if (innerString.Count(o => o == '#') == 2)
                 {
                     var times = innerString.Split('#');
-                    wholeTime += double.Parse(times[2]);
+                    if (times[2].Contains(':'))
+                    {
+                        var ratioParts = times[2].Split(':');
+                        wholeTime += timeOneBeat * 4d /
+                                     int.Parse(ratioParts[0]) * int.Parse(ratioParts[1]);
+                    }
+                    else
+                    {
+                        wholeTime += double.Parse(times[2]);
+                    }
+                    continue;
+                }
+
+                if (innerString.Count(o => o == '#') == 3)
+                {
+                    var times = innerString.Split('#');
+                    var ratioParts = times[3].Split(':');
+                    timeOneBeat = 1d / (double.Parse(times[2]) / 60d);
+                    wholeTime += timeOneBeat * 4d /
+                                 int.Parse(ratioParts[0]) * int.Parse(ratioParts[1]);
                     continue;
                 }
 
@@ -1242,7 +2256,21 @@ internal class SimaiTimingPoint
             if (innerString.Count(o => o == '#') == 2)
             {
                 var times = innerString.Split('#');
-                return double.Parse(times[2]);
+                if (!times[2].Contains(':'))
+                    return double.Parse(times[2]);
+
+                var ratio = times[2].Split(':');
+                return timeOneBeat * 4d /
+                       int.Parse(ratio[0]) * int.Parse(ratio[1]);
+            }
+
+            if (innerString.Count(o => o == '#') == 3)
+            {
+                var times = innerString.Split('#');
+                var ratio = times[3].Split(':');
+                timeOneBeat = 1d / (double.Parse(times[2]) / 60d);
+                return timeOneBeat * 4d /
+                       int.Parse(ratio[0]) * int.Parse(ratio[1]);
             }
 
             var numbers = innerString.Split(':'); //TODO:customBPM
@@ -1266,7 +2294,7 @@ internal class SimaiTimingPoint
             bpm = double.Parse(times[0]);
         }
 
-        if (innerString.Count(o => o == '#') == 2)
+        if (innerString.Count(o => o == '#') >= 2)
         {
             var times = innerString.Split('#');
             return double.Parse(times[0]);
@@ -1285,6 +2313,8 @@ internal enum SimaiNoteType
     TouchHold
 }
 
+internal readonly record struct AlphaCommandError(int PositionX, int PositionY, string Message);
+
 internal class SimaiNote
 {
     public double holdTime;
@@ -1297,6 +2327,9 @@ internal class SimaiNote
     public bool isSlideMono;
     public bool isSlideBreak;
     public bool isSlideNoHead;
+    public bool isTouchSlide;
+    public bool isDZone;
+    public bool isDZoneEnd;
 
     public string? noteContent; //used for star explain
     public SimaiNoteType noteType;
@@ -1304,6 +2337,16 @@ internal class SimaiNote
     public double slideStartTime;
     public double slideTime;
 
-    public int startPosition = 1; //键位（1-8）
+    public int startPosition = 1;
     public char touchArea = ' ';
+    public int touchEndPosition = 1;
+    public char touchEndArea = ' ';
+    public char touchSlideShape = '-';
+}
+
+internal class MeterChange
+{
+    public double time;
+    public int numerator;
+    public int denominator;
 }

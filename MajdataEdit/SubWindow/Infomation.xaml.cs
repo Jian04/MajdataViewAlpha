@@ -8,7 +8,7 @@ using Microsoft.Win32;
 namespace MajdataEdit;
 
 /// <summary>
-///     Infomation.xaml 的交互逻辑
+///     Interaction logic for Infomation.xaml
 /// </summary>
 public partial class Infomation : Window
 {

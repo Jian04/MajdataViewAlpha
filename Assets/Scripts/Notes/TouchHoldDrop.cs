@@ -6,9 +6,11 @@ public class TouchHoldDrop : NoteLongDrop
 {
     public bool isFirework;
     public char touchArea = 'C';
-    // ALPHA: set by JsonDataLoader to override fill color
+    public bool isBreak;
     public Material colorOverrideMaterial;
     public float noteScale = 1f;
+    public float noteScaleX = 1f;
+    public float noteScaleY = 1f;
     public GameObject tapEffect;
     public GameObject judgeEffect;
 
@@ -32,6 +34,7 @@ public class TouchHoldDrop : NoteLongDrop
     private NoteEffectManager noteEffectManager;
 
     Sprite[] judgeText;
+    Sprite judgeTextBreak;
 
     // Start is called before the first frame update
     private void Start()
@@ -79,7 +82,6 @@ public class TouchHoldDrop : NoteLongDrop
         mask.enabled = false;
         mask.gameObject.SetActive(false);
 
-        // ALPHA: apply color override to all fan sprites including border (index 5)
         if (colorOverrideMaterial != null)
             for (var fi = 0; fi < 6; fi++)
                 fansSprite[fi].sharedMaterial = colorOverrideMaterial;
@@ -93,9 +95,11 @@ public class TouchHoldDrop : NoteLongDrop
         {
             transform.position = GetAreaPos(startPosition, touchArea);
         }
-        transform.localScale *= noteScale;
+        transform.localScale = Vector3.Scale(transform.localScale,
+            new Vector3(noteScale * noteScaleX, noteScale * noteScaleY, 1f));
         var customSkin = GameObject.Find("Outline").GetComponent<CustomSkin>();
         judgeText = customSkin.JudgeText;
+        judgeTextBreak = customSkin.JudgeText_Break;
         if (!previewOnly)
             inputManager.BindSensor(Check, touchSensor);
     }
@@ -109,10 +113,12 @@ public class TouchHoldDrop : NoteLongDrop
             return;
         else if (arg.IsClick)
         {
-            if (!inputManager.IsIdle(arg))
-                return;
-            else
+            if (InputManager.Mode != AutoPlayMode.DJAuto)
+            {
+                if (!inputManager.IsIdle(arg))
+                    return;
                 inputManager.SetBusy(arg);
+            }
             Judge();
             if (isJudged)
             {
@@ -173,7 +179,7 @@ public class TouchHoldDrop : NoteLongDrop
         }
         else if (timing >= -0.01f)
         {
-            // AutoPlay相关
+            // AutoPlay behavior
             switch (InputManager.Mode)
             {
                 case AutoPlayMode.Enable:
@@ -185,6 +191,8 @@ public class TouchHoldDrop : NoteLongDrop
                     return;
                 case AutoPlayMode.DJAuto:
                     if (!isJudged)
+                        inputManager.ClickSensor(sensor.Type, true);
+                    if (isJudged)
                         manager.SetSensorOn(sensor.Type, guid);
                     break;
                 case AutoPlayMode.Random:
@@ -204,11 +212,11 @@ public class TouchHoldDrop : NoteLongDrop
 
         if (isJudged)
         {
-            if (timing <= 0.25f) // 忽略头部15帧
+            if (timing <= 0.25f) // Ignore the first 15 frames
                 return;
-            else if (remainingTime <= 0.2f) // 忽略尾部12帧
+            else if (remainingTime <= 0.2f) // Ignore the last 12 frames
                 return;
-            else if (!timeProvider.isStart) // 忽略暂停
+            else if (!timeProvider.isStart) // Ignore paused time
                 return;
 
             var on = inputManager.CheckSensorStatus(sensor.Type, SensorStatus.On);
@@ -322,7 +330,7 @@ public class TouchHoldDrop : NoteLongDrop
                 break;
         }
 
-        objectCounter.ReportResult(this, result);
+        objectCounter.ReportResult(this, result, isBreak);
         if (!isJudged)
             objectCounter.NextTouch(sensor.Type);
         if (isFirework && result != JudgeType.Miss)
@@ -397,9 +405,24 @@ public class TouchHoldDrop : NoteLongDrop
             default:
                 break;
         }
+        if (judgeObj.childCount > 1)
+        {
+            var breakRenderer = judgeObj.GetChild(1).GetComponent<SpriteRenderer>();
+            breakRenderer.sprite = judgeTextBreak;
+            NoteEffectManager.ApplyJudgeTextAlpha(breakRenderer);
+        }
         NoteEffectManager.ApplyJudgeTextAlpha(judgeObj.GetChild(0).GetComponent<SpriteRenderer>());
         noteEffectManager.PlayFastLate(_obj, flAnim, judgeResult);
-        anim.SetTrigger("touch");
+        if (isBreak && judgeResult == JudgeType.Perfect)
+        {
+            anim.SetTrigger("break");
+            // Like TouchDrop, JudgeBreak has no ifDestroy curve, so destroy it in code
+            Destroy(obj, 1f);
+        }
+        else
+        {
+            anim.SetTrigger("touch");
+        }
     }
     protected override void StopHoldEffect()
     {

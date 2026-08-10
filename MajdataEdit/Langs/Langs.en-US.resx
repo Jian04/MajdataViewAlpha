@@ -150,6 +150,9 @@
   <data name="ShowJudgeLine" xml:space="preserve">
     <value>Show judge line during playback</value>
   </data>
+  <data name="ShowJudgeArea" xml:space="preserve">
+    <value>Show judge area</value>
+  </data>
   <data name="ShowAllPerfect" xml:space="preserve">
     <value>Show and play All Perfect</value>
   </data>
@@ -429,10 +432,10 @@ Click OK to start render.</value>
     <value>Display at Center</value>
   </data>
   <data name="ExportVideo" xml:space="preserve">
-    <value>Export Video</value>
+    <value>Export Video (60 FPS)</value>
   </data>
   <data name="ExportVideo60" xml:space="preserve">
-    <value>Export Video (60 FPS)</value>
+    <value>Export Video (120 FPS)</value>
   </data>
   <data name="ComboDisplayAccClassic" xml:space="preserve">
     <value>Achievement (+) (Classic)</value>
@@ -544,4 +547,571 @@ Click OK to start render.</value>
   <data name="FormatBrush32" xml:space="preserve">
     <value>Beat Brush (1/32)</value>
   </data>
+  <data name="ExportNoAlpha" xml:space="preserve"><value>Export chart without effects</value></data>
+  <data name="RecordVideo" xml:space="preserve"><value>Record video…</value></data>
+  <data name="ChartLibrarySearch" xml:space="preserve"><value>Chart library search</value></data>
+  <data name="AlphaSyntaxHelp" xml:space="preserve"><value>Alpha syntax help</value></data>
+  <data name="NoteDensity" xml:space="preserve"><value>Note density graph</value></data>
+  <data name="FormatBrush12" xml:space="preserve"><value>Beat Brush (1/12)</value></data>
+  <data name="FormatBrush24" xml:space="preserve"><value>Beat Brush (1/24)</value></data>
+  <data name="AutoOrganize16" xml:space="preserve"><value>Auto-organize (whole chart, 1/16)</value></data>
+  <data name="MuriCheckExternal" xml:space="preserve"><value>Impossibility check (MaiMuriDX)</value></data>
+  <data name="ConvertAudio44100" xml:space="preserve"><value>Convert audio to 44100 Hz</value></data>
+  <data name="CutMediaRange" xml:space="preserve"><value>Remove an audio/video segment</value></data>
+  <data name="PrependFourBeats" xml:space="preserve"><value>Prepend blank beats to audio/video</value></data>
+  <data name="MediaMarkersRequired" xml:space="preserve"><value>Add @start and @end on separate chart timeline lines first.</value></data>
+  <data name="PrependFourBeatsDone" xml:space="preserve"><value>Prepended {0:0.###} blank beats ({1:0.###} seconds). The original file was saved in backup.</value></data>
+  <data name="BeatCountTitle" xml:space="preserve"><value>Prepend blank beats</value></data>
+  <data name="BeatCount" xml:space="preserve"><value>Beat count</value></data>
+  <data name="InvalidBeatCount" xml:space="preserve"><value>Enter a valid beat count greater than zero.</value></data>
+  <data name="Confirm" xml:space="preserve"><value>OK</value></data>
+  <data name="MediaAccessDenied" xml:space="preserve"><value>Could not replace media file: {0}. Close programs using it and make sure it is not read-only.</value></data>
+  <data name="NoValidBpm" xml:space="preserve"><value>No valid BPM was found to calculate four beats.</value></data>
+  <data name="MediaToolBusy" xml:space="preserve"><value>Another media operation is still running.</value></data>
+  <data name="UnsupportedMediaType" xml:space="preserve"><value>This media format is not supported.</value></data>
+  <data name="CreateMeasure44" xml:space="preserve"><value>Create 4/4 measures</value></data>
+  <data name="CreateMeasure34" xml:space="preserve"><value>Create 3/4 measures</value></data>
+  <data name="MeasureCount1" xml:space="preserve"><value>1 measure</value></data>
+  <data name="MeasureCount2" xml:space="preserve"><value>2 measures</value></data>
+  <data name="MeasureCount3" xml:space="preserve"><value>3 measures</value></data>
+  <data name="MeasureCount4" xml:space="preserve"><value>4 measures</value></data>
+  <data name="MirrorSelection" xml:space="preserve"><value>Mirror selection</value></data>
+  <data name="FormatSelection" xml:space="preserve"><value>Apply beat brush to selection</value></data>
+  <data name="HighestDivision" xml:space="preserve"><value>Highest division</value></data>
+  <data name="Division8" xml:space="preserve"><value>1/8</value></data>
+  <data name="Division12" xml:space="preserve"><value>1/12</value></data>
+  <data name="Division16" xml:space="preserve"><value>1/16</value></data>
+  <data name="Division24" xml:space="preserve"><value>1/24</value></data>
+  <data name="Division32" xml:space="preserve"><value>1/32</value></data>
+  <data name="SearchSelectedInLibrary" xml:space="preserve"><value>Search selected pattern in library</value></data>
+  <data name="SongTitleLabel" xml:space="preserve"><value>Title</value></data>
+  <data name="ArtistLabel" xml:space="preserve"><value>Artist</value></data>
+  <data name="DesignerLabel" xml:space="preserve"><value>Designer</value></data>
+  <data name="LevelLabel" xml:space="preserve"><value>Level</value></data>
+  <data name="ExportOptions" xml:space="preserve"><value>Export options</value></data>
+  <data name="FrameRate" xml:space="preserve"><value>Frame rate</value></data>
+  <data name="Resolution" xml:space="preserve"><value>Resolution</value></data>
+  <data name="KeepCurrentResolution" xml:space="preserve"><value>Keep current</value></data>
+  <data name="CustomOption" xml:space="preserve"><value>Custom…</value></data>
+  <data name="EvenResolutionTip" xml:space="preserve"><value>Even dimensions, for example 1600×900</value></data>
+  <data name="RecordingSafeLimit" xml:space="preserve"><value>Recommended: up to 2560×1440 at 60 fps or 1920×1080 at 120 fps.</value></data>
+  <data name="SongCard" xml:space="preserve"><value>Song card</value></data>
+  <data name="OriginalStyle" xml:space="preserve"><value>Original</value></data>
+  <data name="OfficialStyleCover" xml:space="preserve"><value>Official-style cover</value></data>
+  <data name="ShowSongIntro" xml:space="preserve"><value>Show the opening song cover</value></data>
+  <data name="ShowAllPerfectEnding" xml:space="preserve"><value>Play the All Perfect animation after the chart</value></data>
+  <data name="ExportLayers" xml:space="preserve"><value>Export layers</value></data>
+  <data name="BackgroundPvLayer" xml:space="preserve"><value>Background / PV</value></data>
+  <data name="NotesLayer" xml:space="preserve"><value>Notes</value></data>
+  <data name="EffectsLayer" xml:space="preserve"><value>Effects (judgment / full-screen filters)</value></data>
+  <data name="UiLayer" xml:space="preserve"><value>UI (judge line / information / song card)</value></data>
+  <data name="LayeredExport" xml:space="preserve"><value>Layered export: create one video per selected layer</value></data>
+  <data name="StartRecording" xml:space="preserve"><value>Start recording</value></data>
+  <data name="Close" xml:space="preserve"><value>Close</value></data>
+  <data name="RecordOpenChartFirst" xml:space="preserve"><value>Open a chart first.</value></data>
+  <data name="RecordInvalidResolution" xml:space="preserve"><value>Enter positive even dimensions such as 1920×1080, or keep the current resolution.</value></data>
+  <data name="RecordResolutionHighWarning" xml:space="preserve"><value>Raw capture at {0}×{1}, {2} fps is very demanding and may cause severe lag, exhaust GPU memory, or trigger a display-driver black screen. Up to 2560×1440 at 60 fps or 1920×1080 at 120 fps is recommended. Continue anyway?</value></data>
+  <data name="RecordSelectLayer" xml:space="preserve"><value>Select at least one export layer.</value></data>
+  <data name="RecordRenderingAudio" xml:space="preserve"><value>{0}: rendering the audio and hit-sound track (the UI may pause briefly)…</value></data>
+  <data name="RecordPreparing" xml:space="preserve"><value>{0}: preparing (reloading the chart / starting the encoder)…</value></data>
+  <data name="RecordPreparingElapsed" xml:space="preserve"><value>{0}: preparing (reloading the chart / starting the encoder)… {1:0}s</value></data>
+  <data name="RecordProgress" xml:space="preserve"><value>{0}: recording… {1:0}s elapsed, {2:0.0} MB written</value></data>
+  <data name="RecordCancelled" xml:space="preserve"><value>Cancelled. Remaining layers will not be recorded; View will finish the current pass.</value></data>
+  <data name="RecordTimeout" xml:space="preserve"><value>Timed out waiting for {0}; recording stopped. Check the error shown in View.</value></data>
+  <data name="RecordAllLayersDone" xml:space="preserve"><value>All {0} layers were recorded to the chart folder (out_layer.mp4).</value></data>
+  <data name="RecordDone" xml:space="preserve"><value>Recording complete. The video is out.mp4 in the chart folder.</value></data>
+  <data name="Cancelling" xml:space="preserve"><value>Cancelling…</value></data>
+  <data name="CancellingBeforeClose" xml:space="preserve"><value>Cancelling; close the window after cancellation finishes…</value></data>
+  <data name="AutoOrganize" xml:space="preserve"><value>Auto-organize</value></data>
+  <data name="AddMeasureCommentsQuestion" xml:space="preserve"><value>Add a measure comment every four measures?</value></data>
+  <data name="AddComments" xml:space="preserve"><value>Add comments</value></data>
+  <data name="SkipComments" xml:space="preserve"><value>Do not add</value></data>
+  <data name="ChartLibraryTitle" xml:space="preserve"><value>Chart rhythm search</value></data>
+  <data name="RhythmPattern" xml:space="preserve"><value>Rhythm pattern</value></data>
+  <data name="RhythmPatternExample" xml:space="preserve"><value>Example: {16}1,,2,,3, or 1/5,,2/6</value></data>
+  <data name="ExactPosition" xml:space="preserve"><value>Exact positions</value></data>
+  <data name="Fuzzy" xml:space="preserve"><value>Fuzzy</value></data>
+  <data name="Search" xml:space="preserve"><value>Search</value></data>
+  <data name="Sort" xml:space="preserve"><value>Sort</value></data>
+  <data name="Count" xml:space="preserve"><value>Count</value></data>
+  <data name="Level" xml:space="preserve"><value>Level</value></data>
+  <data name="DensityPerCombo" xml:space="preserve"><value>Density/CB</value></data>
+  <data name="StarCount" xml:space="preserve"><value>Stars</value></data>
+  <data name="Descending" xml:space="preserve"><value>Descending</value></data>
+  <data name="Song" xml:space="preserve"><value>Song</value></data>
+  <data name="Path" xml:space="preserve"><value>Path</value></data>
+  <data name="CopyMatch" xml:space="preserve"><value>Copy match</value></data>
+  <data name="CopyContext" xml:space="preserve"><value>Copy context</value></data>
+  <data name="CopyPath" xml:space="preserve"><value>Copy path</value></data>
+  <data name="OpenChart" xml:space="preserve"><value>Open chart</value></data>
+  <data name="NoteDensityTitle" xml:space="preserve"><value>Note density graph</value></data>
+  <data name="SlideHeadLegend" xml:space="preserve"><value>Tap / Hold / Slide head</value></data>
+  <data name="SlideBodyLegend" xml:space="preserve"><value>Slide body</value></data>
+  <data name="AudioIntensityLegend" xml:space="preserve"><value>Audio intensity</value></data>
+  <data name="AssetsSection" xml:space="preserve"><value>Assets</value></data>
+  <data name="DefaultFolder" xml:space="preserve"><value>Default folder</value></data>
+  <data name="OverallTheme" xml:space="preserve"><value>Overall theme</value></data>
+  <data name="WindowBackground" xml:space="preserve"><value>Window background</value></data>
+  <data name="DefaultOption" xml:space="preserve"><value>Default</value></data>
+  <data name="IntroBackground" xml:space="preserve"><value>Opening cover background</value></data>
+  <data name="EditorFont" xml:space="preserve"><value>Editor font</value></data>
+  <data name="EditorFontSize" xml:space="preserve"><value>Editor font size</value></data>
+  <data name="ViewDisplayFont" xml:space="preserve"><value>Player font</value></data>
+  <data name="EnableVisualChartEditor" xml:space="preserve"><value>Click View to create notes</value></data>
+  <data name="SongInfoCard" xml:space="preserve"><value>Song information card</value></data>
+  <data name="EditorLightMode" xml:space="preserve"><value>Light editor area</value></data>
+  <data name="ShowGeneratedMark" xml:space="preserve"><value>Show bottom-left watermark and time</value></data>
+  <data name="ShowSongDetail" xml:space="preserve"><value>Show opening cover</value></data>
+  <data name="ChartLibraryMissing" xml:space="preserve"><value>The charts library was not found (make sure the program folder contains a charts directory).</value></data>
+  <data name="ChartLibraryPrompt" xml:space="preserve"><value>Enter a rhythm pattern, then click Search.</value></data>
+  <data name="ChartLibraryPath" xml:space="preserve"><value>Chart library: {0}</value></data>
+  <data name="ChartLibraryEnterPattern" xml:space="preserve"><value>Enter a rhythm pattern.</value></data>
+  <data name="ChartLibrarySearching" xml:space="preserve"><value>Searching…</value></data>
+  <data name="ChartLibraryReading" xml:space="preserve"><value>Reading the chart library and matching the rhythm pattern.</value></data>
+  <data name="ChartLibraryProgress" xml:space="preserve"><value>Progress: {0}/{1} charts  {2}</value></data>
+  <data name="ChartLibraryComplete" xml:space="preserve"><value>Complete: {0} results, {1} matches.</value></data>
+  <data name="ChartLibraryElapsed" xml:space="preserve"><value>Elapsed {0:F2}s; difficulties: {1}</value></data>
+  <data name="ChartLibraryCancelled" xml:space="preserve"><value>Cancelled.</value></data>
+  <data name="ChartLibraryFailed" xml:space="preserve"><value>Search failed.</value></data>
+  <data name="ChartLibraryCopiedMatch" xml:space="preserve"><value>Copied the matching section.</value></data>
+  <data name="ChartLibraryCopiedContext" xml:space="preserve"><value>Copied the surrounding context.</value></data>
+  <data name="ChartLibraryCopiedPath" xml:space="preserve"><value>Copied the maidata path.</value></data>
+  <data name="ChartLibraryPosition" xml:space="preserve"><value>BPM={0}   starts at {1}cb / {2}cb total   ☆{3}   {4:F2}s -&gt; {5:F2}s</value></data>
+  <data name="NoteDensityWindowTitle" xml:space="preserve"><value>Note density graph - {0}</value></data>
+  <data name="NoteDensitySummary" xml:space="preserve"><value>{0} notes total · {1}</value></data>
+  <data name="NoteDensityRenderFailed" xml:space="preserve"><value>Could not render the density graph: {0}</value></data>
+  <data name="AlphaHelpText" xml:space="preserve"><value><![CDATA[
+Alpha Syntax Help
+=================
+
+Basic rules
+-----------
+<> commands are placed on the chart timeline and do not consume comma time slots.
+Available note types: tap, each, hold, slide, star, break, touch, and touchhold.
+Per-type values override global values; use NULL to restore the inherited value.
+Durations accept seconds or beat lengths such as 8:1 and 16:1. Beat lengths use the latest BPM before the command, with the same conversion as Slide durations.
+When a parameter is empty, Tab inserts its recommended default. Otherwise, Tab moves to the next parameter.
+
+Meter, background, and comments
+-------------------------------
+@4/4                 Set 4/4 meter
+@3/4                 Set 3/4 meter
+@start               Mark media trim start (standalone line)
+@end                 Mark media trim end (standalone line)
+@FF00FF              Tint the following editor area
+@NULL                Clear the editor background tint
+|| Measures 1-4      Line comment
+|* block comment *|  Block comment
+
+Note color and opacity
+----------------------
+<COLOR*FF00FF>       Color all following notes
+<COLOR*tap=FF77AA,slide=66DDFF>
+<COLOR*NULL>         Restore every default color
+<COLOR*tap=NULL>     Restore Tap only
+<ALPHA*0.5>          Opacity for every note, from 0 to 1
+<ALPHA*tap=0.4,slide=0.8>
+<ALPHA*NULL>
+<ALPHA*tap=NULL>
+
+Note size
+---------
+<SIZE*1.25>          Scale regular notes and star heads, but not Slide bodies
+<SIZE*(1.2,0.8)>     Set local X and Y scales separately
+<SIZE*tap=(1,2)>     Change only the Tap X and Y scales
+<SIZE*tap=0.9,star=1.2>
+<SIZE*slide=1.25>    Scale Slide bodies only
+<SIZE*hold=(1.1,0.8),touch=0.9>
+<SIZE*NULL>
+<SIZE*tap=NULL>
+<SIZE*slide=NULL>
+
+Speed
+-----
+<SV*2>               True scroll-speed multiplier
+<SV*tap=1.5,slide=0.8>
+<SV*tap=NULL>        Make this type inherit the global SV again
+<HS*1.2>             Traditional fall-speed multiplier
+<HS*hold=0.8,star=1.4>
+<HS*hold=NULL>
+
+Judge line and display
+----------------------
+<JLINE*00FF00>       Change the judge-line color immediately
+<JLINE*(00FF00,0.3)> Transition over 0.3 seconds
+<JLINE*(00FF00,8:1)> Transition over an eighth note at the current BPM
+<JLINE*NULL>         Restore the skin's default color
+Display commands change immediately when the final transition duration is omitted. Durations also accept 8:1, 16:1, and similar beat lengths.
+<ShowJudgeLine*(False)>
+<ShowJudgeLine*(False,1)>
+<ShowJudgeLine*(False,8:1)>
+<ShowJudgeArea*(True,1)>
+<ShowJudgeText*(False,1)>
+<ShowJudgeInfo*(False,1)>
+<ShowComboInfo*(False,1)>
+<InnerBrightness*(0.5,1)>
+<OuterBrightness*(0.8,1)>
+<ComboDisplay*(combo,0)>
+
+Captions
+--------
+<TEXT*Hello>          Keep until the next TEXT command
+<TEXT*(Hello,2)>      Show for 2 seconds
+<TEXT*(Hello,16:1)>   Show for one sixteenth note at the current BPM
+<TEXT*>               Clear the caption
+
+Media
+-----
+Paths are relative to the chart folder and may use subfolders. Media events are not drawn on the waveform.
+<AUDIO*(True,media/voice.ogg)>       Play one OGG, WAV, or MP3 file
+<AUDIO*(False)>                     Stop the current extra audio early
+<PVOVERLAY*(True,media/cutin.mp4)>   Temporarily cover the chart PV with PNG, JPG, or MP4
+<PVOVERLAY*(False)>                 End the overlay early and restore the chart PV
+MP4 restores the PV when playback ends. A still image remains until False or chart stop.
+
+Screen effects
+--------------
+General rule: True enables and holds an effect; False disables it. The final [transition duration] is optional.
+A missing transition switches immediately. Durations accept seconds or beat lengths such as 8:1 and 16:1.
+Effects with different names can be layered. Repeating True transitions from the current state to the new target.
+Gaussian  <Gaussian*(True,strength[,duration])>  Gaussian blur
+Neon      <Neon*(True,strength[,duration])>      RGB split and edge glow
+Trail     <Trail*(True,strength[,duration])>     Previous-frame trail
+Fade      <Fade*(True,strength[,duration])>      Fade toward black
+Flash     <Flash*(True,strength[,duration])>     Flash toward white
+Brightness <Brightness*(True,strength[,duration])> Increase brightness
+Saturation <Saturation*(True,strength[,duration])> Desaturate
+Contrast  <Contrast*(True,strength[,duration])>  Increase contrast
+Rainbow   <Rainbow*(True,strength[,duration])>   Animated rainbow blend
+Vignette  <Vignette*(True,strength[,duration])>  Shrink the circular visible area
+Zoom      <Zoom*(True,scale[,duration])>         Zoom around the center
+Glitch    <Glitch*(True,strength[,duration])>    Horizontal segment displacement
+TVNoise   <TVNoise*(True,strength[,duration])>   Scan lines and noise
+Hue       <Hue*(True,degrees[,duration])>        Rotate hue
+Tint      <Tint*(True,RRGGBB,strength[,duration])> Blend toward a color
+Move      <Move*(True,dx,dy[,duration])>         Move the frame
+Rotate    <Rotate*(True,degrees[,duration])>     Rotate around the center
+Shake     <Shake*(True,strength,frequency[,degrees,duration])> Shake the frame (Hz)
+Every effect is disabled with <Effect*(False[,duration])>.
+
+Note modifiers
+--------------
+1f                    Tap fireworks
+1hf[8:1]              Hold fireworks
+1f-5[8:1]             Slide-head fireworks
+1m                    Mine note
+1d                    D-area Tap
+2dh[8:1]              D-area Hold
+3d-6d[8:1]            D-area Slide
+
+Visual editing
+--------------
+Available only while stopped. Click near or outside the judge line to create a Tap; click inside it to create a Touch.
+Drag around the outer ring to match a Slide path through the crossed judgment areas. Repeated clicks cycle regular, Break, and Touch combinations.
+The gesture creates only the Slide path; its duration comes from the editor's duration completion.
+]]></value></data>
+  <data name="AskExitPet" xml:space="preserve"><value>Exit the desktop pet too?</value></data>
+  <data name="NoChartForDensity" xml:space="preserve"><value>There is no chart data to analyze.</value></data>
+  <data name="NoNotesForDensity" xml:space="preserve"><value>The current difficulty has no notes to analyze.</value></data>
+  <data name="OrganizeNeedsDivision" xml:space="preserve"><value>The chart body must contain at least one division marker such as {16} before it can be organized.</value></data>
+  <data name="MuriChartEmpty" xml:space="preserve"><value>The chart body is empty.</value></data>
+  <data name="MuriToolMissing" xml:space="preserve"><value>MaiMuriDX was not found (it should be distributed in tools\MaiMuriDX). Searched:{0}</value></data>
+  <data name="MuriNoOutput" xml:space="preserve"><value>(no output)</value></data>
+  <data name="MuriToolError" xml:space="preserve"><value>MaiMuriDX error:{0}</value></data>
+  <data name="MuriCheckFailed" xml:space="preserve"><value>Impossibility check failed</value></data>
+  <data name="MuriResultTitle" xml:space="preserve"><value>Impossibility check results (MaiMuriDX)</value></data>
+  <data name="AudioConvertDone" xml:space="preserve"><value>Conversion complete. The original file was saved in backup.</value></data>
+  <data name="MediaCutDone" xml:space="preserve"><value>Trim complete. The original file was saved in backup.</value></data>
+  <data name="MediaRangeTitle" xml:space="preserve"><value>Remove time range</value></data>
+  <data name="StartSeconds" xml:space="preserve"><value>Start (seconds)</value></data>
+  <data name="EndSeconds" xml:space="preserve"><value>End (seconds)</value></data>
+  <data name="InvalidMediaRange" xml:space="preserve"><value>Enter valid start and end times.</value></data>
+  <data name="FfmpegFailed" xml:space="preserve"><value>ffmpeg failed.</value></data>
+  <data name="EmptyChart" xml:space="preserve"><value>The current chart is empty.</value></data>
+  <data name="ViewExecutableMissing" xml:space="preserve"><value>MajdataView.exe was not found. Use the complete release package (App\MajdataView), or place MajdataView.exe beside MajdataEdit.exe.</value></data>
+  <data name="FoundSyntaxErrors" xml:space="preserve"><value>Found {0} syntax errors</value></data>
+  <data name="SoftwareRenderMode" xml:space="preserve"><value>Running in software rendering mode.</value></data>
+  <data name="AudioDecodeFailed" xml:space="preserve"><value>Could not decode the MP3/OGG audio. {0}</value></data>
+  <data name="MeasureComment" xml:space="preserve"><value>Measures {0}</value></data>
+  <data name="RecordingLoadLabel" xml:space="preserve"><value>Recording load</value></data>
+  <data name="TransitionLabel" xml:space="preserve"><value>Transition</value></data>
+  <data name="ValidationIssueAtLine" xml:space="preserve"><value>Issue on line {0}: {1}</value></data>
+  <data name="ChartStatementInvalid" xml:space="preserve"><value>The chart statement could not be parsed</value></data>
+  <data name="ChartKeyRange" xml:space="preserve"><value>Keys must be between 1 and 8</value></data>
+  <data name="SlideDurationInvalid" xml:space="preserve"><value>Slide duration must be greater than 0; [1:0] is not allowed</value></data>
+  <data name="SlideTargetMissing" xml:space="preserve"><value>The Slide target key is missing</value></data>
+  <data name="SlideChainInvalid" xml:space="preserve"><value>The chained Slide is invalid</value></data>
+  <data name="SlideShapeUnknown" xml:space="preserve"><value>Unknown Slide shape: {0}</value></data>
+  <data name="WifiConnectionSlideUnsupported" xml:space="preserve"><value>A Wifi Slide cannot be part of a Connection Slide</value></data>
+  <data name="LineSlideGap" xml:space="preserve"><value>A straight Slide must span at least one key</value></data>
+  <data name="SlideShapeInvalid" xml:space="preserve"><value>The {0} Slide shape is invalid</value></data>
+  <data name="VSlideTurnInvalid" xml:space="preserve"><value>A V Slide turn must be one key away from its start</value></data>
+  <data name="InvalidBrightnessDelay" xml:space="preserve"><value>Brightness and refresh delay must be valid numbers.</value></data>
+  <data name="InvalidEditorSettings" xml:space="preserve"><value>Brightness, speed, and refresh delay must be valid numbers.</value></data>
+  <data name="NoteSpeed" xml:space="preserve"><value>Note Speed</value></data>
+  <data name="StarSpeed" xml:space="preserve"><value>Star Speed</value></data>
+  <data name="StarColor" xml:space="preserve"><value>Star color</value></data>
+  <data name="Pink" xml:space="preserve"><value>Pink</value></data>
+  <data name="Original" xml:space="preserve"><value>Original</value></data>
+  <data name="SoundBgmTip" xml:space="preserve"><value>Affects BGM, the recording start sound, metronome, and AP sound.</value></data>
+  <data name="SoundAnswerTip" xml:space="preserve"><value>Affects the answer sound.</value></data>
+  <data name="SoundJudgeTip" xml:space="preserve"><value>Affects Tap and Hold judgment sounds.</value></data>
+  <data name="SoundSlideTip" xml:space="preserve"><value>Affects Slide and Break-Slide launch sounds.</value></data>
+  <data name="SoundBreakTip" xml:space="preserve"><value>Affects Break judgment and Critical Perfect cheering sounds.</value></data>
+  <data name="SoundBreakSlideTip" xml:space="preserve"><value>Affects Break-Slide completion and Critical Perfect cheering sounds.</value></data>
+  <data name="SoundExTip" xml:space="preserve"><value>Affects EX Note judgment sounds.</value></data>
+  <data name="SoundTouchTip" xml:space="preserve"><value>Affects Touch judgment sounds.</value></data>
+  <data name="SoundHanabiTip" xml:space="preserve"><value>Affects fireworks and Touch-Hold loop sounds.</value></data>
+  <data name="FfmpegNotFound" xml:space="preserve"><value>ffmpeg.exe was not found. Place it in the program directory or PATH.</value></data>
+  <data name="MuriDxUnsupported" xml:space="preserve"><value>The impossibility check does not currently support DX charts.</value></data>
+  <data name="UnhandledError" xml:space="preserve"><value>Error</value></data>
+  <data name="ChartReadErrorBody" xml:space="preserve"><value>Could not read maidata.txt at line {0}: {1}</value></data>
+  <data name="ChartReadErrorTitle" xml:space="preserve"><value>Chart read error</value></data>
+  <data name="EditorLine" xml:space="preserve"><value>Line</value></data>
+  <data name="NewChartHint" xml:space="preserve"><value>Right-click to add measures, then click View to add notes</value></data>
+  <data name="AlphaMissingClose" xml:space="preserve"><value>Alpha syntax is missing the closing &gt;</value></data>
+  <data name="AlphaFormatError" xml:space="preserve"><value>Invalid Alpha syntax</value></data>
+  <data name="AlphaMissingAsterisk" xml:space="preserve"><value>Alpha syntax is missing *</value></data>
+  <data name="AlphaUnknownCommand" xml:space="preserve"><value>Unknown Alpha command: {0}</value></data>
+  <data name="MediaFileMissing" xml:space="preserve"><value>Media file not found: {0}&#10;The path must be relative to the chart folder.</value></data>
+  <data name="SoundSettings" xml:space="preserve"><value>Sound settings</value></data>
+  <data name="AutoOnset" xml:space="preserve"><value>Auto Timing</value></data>
+  <data name="AutoOnsetDescription" xml:space="preserve"><value>Generate an onset skeleton from the current song. Leave BPM blank to detect it automatically. The generated 1–8 lanes are rotating placeholders.</value></data>
+  <data name="AutoOnsetBpmTip" xml:space="preserve"><value>Leave blank to estimate BPM. An accurate BPM is recommended for final use.</value></data>
+  <data name="AutoOnsetFirstTip" xml:space="preserve"><value>The maidata &amp;first value in seconds. Leave blank to estimate it with BPM.</value></data>
+  <data name="AutoOnsetDifficultyTip" xml:space="preserve"><value>Target model difficulty. Values such as 13 and 13+ are supported, from 1 to 15.</value></data>
+  <data name="AutoOnsetThreshold" xml:space="preserve"><value>Threshold preset</value></data>
+  <data name="AutoOnsetThresholdRecommended" xml:space="preserve"><value>Recommended (0.55)</value></data>
+  <data name="AutoOnsetThresholdDense" xml:space="preserve"><value>Denser (0.50)</value></data>
+  <data name="AutoOnsetThresholdSparse" xml:space="preserve"><value>Sparser (0.60)</value></data>
+  <data name="AutoOnsetThresholdClean" xml:space="preserve"><value>Cleaner (0.65)</value></data>
+  <data name="AutoOnsetThresholdTip" xml:space="preserve"><value>This normally does not need changing. Lower values produce more notes; higher values produce fewer.</value></data>
+  <data name="AutoOnsetReplaceWarning" xml:space="preserve"><value>Warning: generation replaces the entire chart for the current difficulty.</value></data>
+  <data name="AutoOnsetGenerate" xml:space="preserve"><value>Generate and replace</value></data>
+  <data name="AutoOnsetEngineMissing" xml:space="preserve"><value>The Auto Timing engine is incomplete. Copy tools\Maicaiyin again.</value></data>
+  <data name="AutoOnsetRunning" xml:space="preserve"><value>Analyzing audio and generating onsets…</value></data>
+  <data name="AutoOnsetNoOutput" xml:space="preserve"><value>Auto Timing did not produce a valid chart.</value></data>
+  <data name="AutoOnsetEnvironmentInvalid" xml:space="preserve"><value>The dedicated Auto Timing environment failed validation. The CPU NumPy evaluator and NumPy 2.3.x are required.</value></data>
+  <data name="AutoOnsetPythonMissing" xml:space="preserve"><value>The bundled 64-bit Python 3.12 runtime is missing or damaged. Copy the complete tools folder again.</value></data>
+  <data name="AutoOnsetProcessFailed" xml:space="preserve"><value>Auto Timing exited with code {0}:&#10;{1}</value></data>
+  <data name="AutoOnsetBpmInvalid" xml:space="preserve"><value>BPM must be blank or a number greater than zero.</value></data>
+  <data name="AutoOnsetFirstInvalid" xml:space="preserve"><value>First must be blank or a valid number of seconds.</value></data>
+  <data name="AutoOnsetDifficultyInvalid" xml:space="preserve"><value>Difficulty must be from 1 to 15; values such as 13+ are supported.</value></data>
+  <data name="AutoOnsetThresholdInvalid" xml:space="preserve"><value>The threshold preset is invalid.</value></data>
+  <data name="AutoOnsetReplaceConfirm" xml:space="preserve"><value>Auto Timing will permanently replace the entire chart for the current difficulty. A changed First value applies to every difficulty. Continue?</value></data>
+  <data name="AutoOnsetComplete" xml:space="preserve"><value>Generation complete: BPM {0:0.###}, First {1:0.######}, {2} onsets.</value></data>
+  <data name="AutoOnsetCancelled" xml:space="preserve"><value>Auto Timing was cancelled.</value></data>
+  <data name="AutoOnsetCancelling" xml:space="preserve"><value>Cancelling…</value></data>
+  <data name="AutoOnsetFailed" xml:space="preserve"><value>Auto Timing failed</value></data>
+  <data name="AutoOnsetOpenChartFirst" xml:space="preserve"><value>Open a song and select the difficulty to replace first.</value></data>
+  <data name="AutoOnsetStopPlayback" xml:space="preserve"><value>Stop playback or recording before running Auto Timing.</value></data>
+  <data name="AutoOnsetApplied" xml:space="preserve"><value>The entire chart was replaced, formatted to 16th notes, and organized without measure comments.&#10;BPM {0:0.###}, First {1:0.######}, {2} onsets.</value></data>
+  <data name="AlphaHelpSyntaxLabel" xml:space="preserve"><value>SYNTAX</value></data>
+  <data name="AlphaHelpExampleLabel" xml:space="preserve"><value>EXAMPLE</value></data>
+  <data name="AlphaHelpStructuredText" xml:space="preserve"><value><![CDATA[
+# Alpha and Extended Syntax
+> This page follows the current parser and editor completion. The angle-command order matches completion: Note → Display → Filter → Media. Editor-only markers and extended note syntax appear first.
+## 1  Basic rules
+- Alpha commands use <COMMAND*arguments>. Names are case-insensitive; the uppercase completion form is recommended.
+- Commands sit on the chart timeline without consuming a comma slot and affect content from that time onward.
+- True / False controls state. NULL clears note properties that support reset.
+- Durations accept seconds (0.5, 2) or beat lengths (8:1, 16:3), using the nearest preceding BPM.
+- Per-type keys: tap, each, hold, slide, star, break, touch, touchhold. A typed value overrides the global value.
+- Type “<” for categorized completion. Tab fills an empty argument with its default or advances to the next argument.
+! Square brackets in this document mark optional arguments only. Do not type them. For example, [,duration] means that the final comma and duration may be omitted.
+E (120){4}<SV*1.5>1,2,<TEXT*(Chorus,2)>3,4,
+## 2  Editor markers and comments
+### Line and block comments
+S || comment text
+E (120){4}1,2,|| everything after this point on the line is ignored
+S |* multiline comment *|
+E |* Commas, notes, and Alpha commands may appear here across multiple lines. *|
+- “||” ignores the rest of its line. Everything between “|*” and “*|” is ignored while line positions are preserved.
+- Block comments cannot nest. Without a closing “*|”, everything from “|*” to the end of the file is ignored.
+### Waveform meter
+S @numerator/denominator
+E @4/4
+E @7/8
+- Both values must be positive integers. The marker changes the strong/weak beat grid from the current time; it does not change View speed or audio.
+- A marker must appear at the start of a timing cell before note characters; placing it on its own line is recommended.
+- Use “@” for meter. A legacy “&” meter may be interpreted as a maidata field after reload and should no longer be used.
+### Overlapping note stream
+S @{division}note stream,
+E @{4}1h,2h,3h,
+E {8}1,2,3,4,5,6,
+- An “@” immediately followed by “{” starts an independent note stream at the current time. It advances by its own division without advancing the main chart clock.
+- Notes at equal times are merged as Each. The example is equivalent to {8}1h/1,2,2h/3,4,3h/5,6,.
+- Put the stream on its own line before the main line it overlays. Other @ markers such as @4/4 and @RRGGBB are unaffected.
+### Editor background color
+S @RRGGBB
+E @3A587A
+S @NULL
+- Put the marker on its own line. It colors the following editor region only; @NULL restores the theme. Legacy “&RRGGBB / &NULL” is accepted.
+## 3  Extended note syntax
+### Non-C-area TouchHold
+S A/B/D/E area position + h[duration]
+E B1h[4:1] / E3hf[8:1]
+- A, B, D, and E areas support TouchHold. The area letter must be followed by a position from 1 to 8.
+### Break Touch / TouchHold
+S area position + b
+S area position + h + b[duration]
+E B1b / E3b / Chb[4:1] / B1hb[8:1]
+- b makes a Touch or TouchHold a Break. h and b may appear in either order.
+### Touch Slide
+S start[-|<|>|^]target[duration]
+E A1-A3[8:1] / A1<A3<A5[8:1] / 1d-E5[8:1]
+E A1b-A2b[8:1] / A1!-A2[8:1] / A1?-A2[8:1]
+- A path with an A/B/C/D/E Touch endpoint is a Touch Slide; a normal key or D key may be used at the other end.
+- b on the head creates a Break head, b after the destination creates a Break path, and ! or ? removes the head. Duration is required.
+### Mine, D-zone, and modifier placement
+S m = gray Mine; d = D-zone position
+E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
+- On Slides, placement matters: 1m-5 colors only the head, 1-5m colors only the path/moving star, and 1m-5m colors both.
+- A d after the start key selects the D-zone start; a d after the Slide target selects the D-zone end.
+### rp / rq reverse-arc Slides
+S startrptarget[duration] / startrqtarget[duration]
+E 1rp3[8:1] / 1rq7[8:1]
+- rp and rq travel opposite to the pp and qq arc directions.
+## 4  Note Alpha commands
+### SV — true scroll velocity
+S <SV*multiplier>
+S <SV*type=multiplier,type=multiplier>
+S <SV*type=NULL>
+E <SV*1.5> / <SV*tap=2,hold=0.75> / <SV*tap=NULL>
+- Global SV accepts positive, zero, and negative values. Typed NULL makes that type inherit global SV again.
+### HS — traditional fall speed
+S <HS*multiplier>
+S <HS*type=multiplier,type=multiplier>
+S <HS*type=NULL>
+E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*hold=NULL>
+- HS changes the traditional appearance/fall multiplier. Typed NULL clears that type's extra multiplier.
+### SPAWN — ring-note visual spawn radius
+S <SPAWN*radius>
+S <SPAWN*type=radius,type=radius>
+S <SPAWN*NULL> / <SPAWN*type=NULL>
+E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
+E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
+- Radius ranges from -4.8 to 4.8: 1.225 is the original position, 0 is center, 4.8 is the near judge line, and -4.8 is the opposite judge line.
+- Changing radius automatically changes first-visible and movement-start times. SV × HS still determines actual speed, the final judgment key remains unchanged, and the guide line preserves that target as a reference.
+- Applies to Tap, Hold, Star heads, Each, and Break ring notes. Touch, TouchHold, and Slide paths are unchanged.
+### BOUNCE — judge-line round trip
+S <BOUNCE*duration>
+S <BOUNCE*type=duration,type=duration>
+S <BOUNCE*NULL> / <BOUNCE*type=NULL>
+E <BOUNCE*8:1> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>
+- By default, Tap, Star, Each, and Hold travel from the judge line to the SPAWN radius, stop there, then return for judgment.
+- Duration accepts seconds or beat ratios. Per-type values override the global value. BOUNCE changes only the visual path and never activates judgment early.
+### COLOR — note color
+S <COLOR*RRGGBB>
+S <COLOR*type=color,type=color>
+S <COLOR*NULL> / <COLOR*type=NULL>
+E <COLOR*FF6699> / <COLOR*tap=FF77AA,slide=66DDFF> / <COLOR*tap=NULL> / <COLOR*NULL>
+- The global value affects following notes; typed values win. Colors must use six-digit RGB.
+### SIZE — note scale
+S <SIZE*scale> / <SIZE*(scaleX,scaleY)>
+S <SIZE*type=scale> / <SIZE*type=(scaleX,scaleY)>
+S <SIZE*NULL> / <SIZE*type=NULL>
+E <SIZE*1.2> / <SIZE*(1.2,0.8)> / <SIZE*tap=(1,1.5),star=0.9>
+E <SIZE*slide=1.25> / <SIZE*slide=NULL> / <SIZE*NULL>
+- Global SIZE scales regular notes and star heads, not Slide paths. Use slide= to scale paths.
+### ALPHA — note opacity
+S <ALPHA*0..1>
+S <ALPHA*type=0..1,type=0..1>
+S <ALPHA*NULL> / <ALPHA*type=NULL>
+E <ALPHA*0.5> / <ALPHA*tap=0.4,slide=0.8> / <ALPHA*tap=NULL>
+## 5  Display Alpha commands
+### JLINE — judge-line color
+S <JLINE*RRGGBB> / <JLINE*(RRGGBB[,transition])> / <JLINE*NULL>
+E <JLINE*00FF00> / <JLINE*(FF6699,0.3)> / <JLINE*(FFFFFF,8:1)> / <JLINE*NULL>
+- NULL restores the skin color. This changes the judge line during playback.
+### TEXT — top-left caption
+S <TEXT*content> / <TEXT*(content[,duration])>
+E <TEXT*Chorus> / <TEXT*(Watch the double,2)> / <TEXT*(Final section,16:3)>
+- Without duration it remains until the next TEXT. With duration it disappears automatically. A final recognizable time after the last comma is used as duration.
+### Visibility switches
+S <ShowJudgeLine*(True|False[,transition])>
+S <ShowJudgeArea*(True|False[,transition])>
+S <ShowJudgeText*(True|False[,transition])>
+S <ShowJudgeInfo*(True|False[,transition])>
+S <ShowComboInfo*(True|False[,transition])>
+E <ShowJudgeLine*(False,8:1)> / <ShowJudgeArea*(True,0.5)>
+E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
+- Omitting transition switches immediately. The commands control the line, area, judgment text, left statistics, and right combo panel respectively.
+- ShowJudgeArea opacity is capped by ShowJudgeLine; when the judge line is hidden, the judge area is also invisible.
+### ComboDisplay — center indicator
+S <ComboDisplay*(mode[,transition])>
+E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
+- Common modes: None/Off, Combo, Score, Achievement/Acc, AccDown, DxAcc, DxAccDown, DxScore, CScore, CScoreDedxDown.
+### Brightness
+S <OuterBrightness*(0..1[,transition])>
+S <InnerBrightness*(0..1[,transition])>
+E <OuterBrightness*(0.8,8:1)> / <InnerBrightness*(0.45,1)>
+- Values are clamped to 0–1: 0 is dark and 1 is full brightness.
+## 6  Filter Alpha commands
+> Common rule: True enables and holds; False disables. The final transition is optional. Different filters can layer, and another True transitions from the current value.
+S <Effect*(False[,transition])>
+E <Gaussian*(False,8:1)> / <Move*(False,0.5)> / <Tint*(False)>
+### Gaussian / Neon / Trail
+S <Gaussian*(True,strength[,transition])>
+S <Neon*(True,strength[,transition])>
+S <Trail*(True,strength[,transition])>
+E <Gaussian*(True,1.2,8:1)> / <Neon*(True,0.7)> / <Trail*(True,0.55,0.4)>
+- Gaussian blurs, Neon adds RGB split and edge glow, and Trail blends previous frames.
+### Fade / Flash / Brightness
+S <Fade*(True,strength[,transition])>
+S <Flash*(True,strength[,transition])>
+S <Brightness*(True,strength[,transition])>
+E <Fade*(True,1,1)> / <Flash*(True,0.8,0.1)> / <Brightness*(True,0.4,8:1)>
+- Fade darkens, Flash whitens, and Brightness adds light. Fade/Flash commonly use 0–1.
+- Fade and Flash share one light/dark channel. The later command replaces the earlier one; they do not layer as two independent filters.
+### Saturation / Contrast / Rainbow
+S <Saturation*(True,strength[,transition])>
+S <Contrast*(True,strength[,transition])>
+S <Rainbow*(True,strength[,transition])>
+E <Saturation*(True,1,1)> / <Contrast*(True,0.6)> / <Rainbow*(True,0.5,8:1)>
+- Saturation 0 keeps color and 1 approaches monochrome. Contrast strengthens contrast; Rainbow adds animated color.
+### Vignette / Zoom / Glitch / TVNoise
+S <Vignette*(True,strength[,transition])>
+S <Zoom*(True,scale[,transition])>
+S <Glitch*(True,strength[,transition])>
+S <TVNoise*(True,strength[,transition])>
+E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
+E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
+- Vignette shrinks the circular view; Zoom is capped at 8; Glitch displaces horizontal bands; TVNoise adds scan lines and noise.
+### Hue / Tint
+S <Hue*(True,degrees[,transition])>
+S <Tint*(True,RRGGBB,strength[,transition])>
+E <Hue*(True,180,1)> / <Tint*(True,000000,1,0.5)> / <Tint*(False,8:1)>
+- Hue rotates color in degrees. Tint strength 0 preserves the frame and 1 fully blends to the target.
+### Move / Rotate / Shake
+S <Move*(True,dx,dy[,transition])>
+S <Rotate*(True,degrees[,transition])>
+S <Shake*(True,strength,frequency[,degrees,transition])>
+E <Move*(True,0.08,-0.04,8:1)> / <Rotate*(True,-15,0.5)>
+E <Shake*(True,0.5,12)> / <Shake*(True,0.5,12,30)> / <Shake*(True,0.5,12,,0.2)> / <Shake*(True,0.5,12,30,0.2)>
+E <Shake*(False)> / <Shake*(False,8:1)>
+- Move uses positive X for right and positive Y for up. Rotate uses the frame center. Shake frequency is in Hz and strength 1 moves roughly 5% of the frame. Angle and transition are independently optional; leave the angle position empty to set only transition. Omitting angle uses default two-dimensional shake. 0 degrees is horizontal and 90 degrees is vertical.
+## 7  Media Alpha commands
+### AUDIO
+S <AUDIO*(True,relative/path.ogg|wav|mp3)> / <AUDIO*(False)>
+E <AUDIO*(True,media/voice.ogg)> / <AUDIO*(True,se/alert.wav)> / <AUDIO*(False)>
+- True plays once from the beginning; natural completion stops it, and False stops early. A new True switches to the new extra clip.
+### PVOVERLAY
+S <PVOVERLAY*(True,relative/path.png|jpg|jpeg|mp4[,transition])> / <PVOVERLAY*(False[,transition])>
+E <PVOVERLAY*(True,media/cutin.png,8:1)> / <PVOVERLAY*(True,media/movie.mp4,0.5)> / <PVOVERLAY*(False,8:1)>
+- PNG/JPG remains until False or chart stop. MP4 restores the PV when it ends. Consecutive True commands crossfade from the old media to the new media using the requested transition.
+! Paths are relative to the chart folder. Absolute paths and “..” are rejected; avoid commas in file names. Media events are drawn on the waveform.
+## 8  Editor processing notes
+- Duration completion offers [8:1], [4:1], [2:1], and [16:3] for Hold, TouchHold, and Slide. [1:0] is only for durationless Hold and is not offered for Slide.
+- Touch Slide supports A/B/C/D/E zones, connected paths `A1<A3<A5[8:1]`, Break `A1b-A2b[8:1]`, and headless `A1!-A2[8:1]` / `A1?-A2[8:1]`.
+- “Export chart without effects” removes <> commands, || suffixes, and complete @ lines; the exported copy therefore loses editor meter and background markers too.
+## 9  Combined example
+E (160){16}<COLOR*star=FF66CC><SIZE*star=1.15>1-5[8:1],2,3,4,
+E <TEXT*(Interlude,2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
+E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
+- Multiple Alpha commands may share one timestamp and consume no extra commas. Keeping Note → Display → Filter → Media order makes charts easier to read and matches completion.
+]]></value></data>
+  <data name="BackgroundFitMode" xml:space="preserve"><value>Background / PV scaling</value></data>
+  <data name="BackgroundFitHeight" xml:space="preserve"><value>Fit height, preserve aspect</value></data>
+  <data name="BackgroundFitWidth" xml:space="preserve"><value>Fit width, preserve aspect</value></data>
 </root>

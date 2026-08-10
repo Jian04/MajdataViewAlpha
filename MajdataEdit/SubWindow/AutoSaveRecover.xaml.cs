@@ -7,7 +7,7 @@ using MajdataEdit.AutoSaveModule;
 namespace MajdataEdit;
 
 /// <summary>
-///     AutoSaveRecover.xaml 的交互逻辑
+///     Interaction logic for AutoSaveRecover.xaml
 /// </summary>
 public partial class AutoSaveRecover : Window
 {
@@ -44,7 +44,7 @@ public partial class AutoSaveRecover : Window
     }
 
     /// <summary>
-    ///     添加一个条目
+    ///     Adds an entry.
     /// </summary>
     /// <param name="fileInfo"></param>
     /// <param name="i"></param>
@@ -104,7 +104,7 @@ public partial class AutoSaveRecover : Window
             }
         }
 
-        // 先检查之前选中的难度有没有谱面
+        // First check whether the previously selected difficulty has a chart.
         if (currentSelectedLevel != -1 && fumenButton[currentSelectedLevel].IsEnabled)
         {
             var content = RecoverList[currentSelectedIndex].Item2.Fumens[currentSelectedLevel];
@@ -112,7 +112,7 @@ public partial class AutoSaveRecover : Window
         }
         else
         {
-            // 否则 按照Mas, ReMas, Exp, Adv, Bas, Eas, Ori的顺序尝试选中一个谱面
+            // Otherwise try to select a chart in Mas, ReMas, Exp, Adv, Bas, Eas, Ori order.
             int[] authSeq = { 4, 5, 3, 2, 1, 0, 6 };
             foreach (var i in authSeq)
                 if (fumenButton[i].IsEnabled)

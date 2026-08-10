@@ -1,0 +1,12 @@
+Source: https://github.com/Jian04/Maicaiyin
+Revision: f6bfd1f5104cc05b9966690eff7a1655007a6b93
+
+This snapshot provides the automatic onset-generation engine used by MajdataEdit.
+The model predicts timing only; generated lane numbers are rotating placeholders.
+
+Runtime packaging:
+- PyTorch weights were converted once to a 2.1 MB NumPy archive.
+- A small NumPy evaluator runs the network on CPU; PyTorch and CUDA are not distributed.
+- The dedicated environment requires NumPy 2.3.x and rejects NumPy 2.4+.
+- The complete Windows audio stack is prebuilt in packages. Runtime code never
+  invokes pip or accesses a package index.

@@ -14,6 +14,9 @@ internal static class NotePreviewModule
             return null;
         caret = Math.Clamp(caret, 0, text.Length);
 
+        if (IsInsideAlphaCommand(text, caret))
+            return null;
+
         var left = caret;
         while (left > 0 && !IsGroupDelimiter(text, left - 1))
             left--;
@@ -22,7 +25,10 @@ internal static class NotePreviewModule
         while (right < text.Length && !IsGroupDelimiter(text, right))
             right++;
 
-        return right <= left ? null : CleanNoteGroup(text.Substring(left, right - left));
+        var raw = right <= left ? null : text.Substring(left, right - left);
+        if (ContainsAlphaCommandFragment(raw))
+            return null;
+        return raw == null ? null : CleanNoteGroup(raw);
     }
 
     public static string? CleanNoteGroup(string raw)
@@ -31,6 +37,7 @@ internal static class NotePreviewModule
             return null;
 
         var s = Regex.Replace(raw, @"\s+", "");
+        s = AlphaCommandBoundary.RemoveCommands(s);
         s = Regex.Replace(s, @"\([^)]*\)", "");
         s = Regex.Replace(s, @"\{[^}]*\}", "");
         s = s.Trim();
@@ -40,13 +47,29 @@ internal static class NotePreviewModule
     }
 
     public static List<string> ExpandPreview(string? group)
+        => ExpandPreviewTimings(group).SelectMany(timing => timing).ToList();
+
+    public static List<List<string>> ExpandPreviewTimings(string? group)
     {
         var cleaned = CleanNoteGroup(group ?? "");
         if (cleaned == null)
-            return new List<string>();
+            return new List<List<string>>();
         if (ContainsIncompleteAlphaToken(cleaned))
-            return new List<string>();
+            return new List<List<string>>();
 
+        var result = new List<List<string>>();
+        foreach (var pseudoEachPart in cleaned.Split('`', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var expanded = ExpandSingleTiming(pseudoEachPart);
+            if (expanded.Count == 0)
+                return new List<List<string>>();
+            result.Add(expanded);
+        }
+        return result;
+    }
+
+    private static List<string> ExpandSingleTiming(string cleaned)
+    {
         var branches = cleaned.Split('/');
         var expandedGroups = new List<string> { "" };
         foreach (var branch in branches)
@@ -113,6 +136,9 @@ internal static class NotePreviewModule
                 }
                 return false;
             }
+
+            if (IsCompleteTouchEndpoint(rest))
+                return false;
 
             if (rest.Length > 0 && rest[0] >= '1' && rest[0] <= '8')
                 return false;
@@ -197,7 +223,7 @@ internal static class NotePreviewModule
     private static bool IsGroupDelimiter(string text, int index)
     {
         var c = text[index];
-        if (c is ',' or '=' or '&' or '\r' or '\n' or ';' or '\uFF0C' or '\uFF1B')
+        if (c is ',' or '=' or '&' or '@' or '\r' or '\n' or ';' or '\uFF0C' or '\uFF1B')
             return true;
         if (c == '<' && IsAlphaTokenStart(text, index))
             return true;
@@ -208,7 +234,7 @@ internal static class NotePreviewModule
             {
                 var lastHardDelimiter = Math.Max(
                     Math.Max(text.LastIndexOf(',', index), text.LastIndexOf('\n', index)),
-                    text.LastIndexOf('&', index));
+                    Math.Max(text.LastIndexOf('&', index), text.LastIndexOf('@', index)));
                 var star = text.IndexOf('*', open, index - open);
                 if (open > lastHardDelimiter && star > open && IsAlphaTokenStart(text, open))
                     return true;
@@ -219,11 +245,64 @@ internal static class NotePreviewModule
 
     private static bool IsAlphaTokenStart(string text, int index)
     {
-        if (index + 2 >= text.Length || !char.IsLetter(text[index + 1]))
+        return AlphaCommandBoundary.TryGetCommand(text, index, out _);
+    }
+
+    private static bool IsInsideAlphaCommand(string text, int caret)
+    {
+        if (string.IsNullOrEmpty(text))
             return false;
-        var close = text.IndexOf('>', index + 1);
-        var star = text.IndexOf('*', index + 1);
-        return close > index && star > index && star < close;
+
+        var probe = Math.Clamp(caret, 0, text.Length);
+        var searchStart = Math.Min(text.Length - 1, Math.Max(0, probe - 1));
+        var open = text.LastIndexOf('<', searchStart);
+        if (open < 0)
+            return false;
+
+        var hardDelimiter = LastHardDelimiterBefore(text, probe);
+        if (open < hardDelimiter)
+            return false;
+
+        if (AlphaCommandBoundary.IsPotentialStart(text, open))
+        {
+            var close = text.IndexOf('>', open + 1);
+            return close < 0 || probe <= close + 1;
+        }
+
+        return false;
+    }
+
+    private static bool IsCompleteTouchEndpoint(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return false;
+        if (value[0] == 'C')
+            return true;
+        return value[0] is 'A' or 'B' or 'D' or 'E' &&
+               value.Length >= 2 && value[1] is >= '1' and <= '8';
+    }
+
+    private static int LastHardDelimiterBefore(string text, int index)
+    {
+        var limit = Math.Min(index, text.Length);
+        var last = -1;
+        for (var i = 0; i < limit; i++)
+            if (text[i] is ',' or '=' or '&' or '@' or '\r' or '\n' or ';' or '\uFF0C' or '\uFF1B')
+                last = i;
+        return last;
+    }
+
+    private static bool ContainsAlphaCommandFragment(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '<' && AlphaCommandBoundary.IsPotentialStart(text, i))
+                return true;
+        }
+        return false;
     }
 
     private static bool ContainsIncompleteAlphaToken(string text)
@@ -234,7 +313,7 @@ internal static class NotePreviewModule
                 continue;
             if (IsAlphaTokenStart(text, i))
                 continue;
-            if (i + 1 < text.Length && char.IsLetter(text[i + 1]))
+            if (AlphaCommandBoundary.IsPotentialStart(text, i))
                 return true;
         }
         return false;

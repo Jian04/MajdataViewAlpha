@@ -6,6 +6,8 @@
 UserSettings/
 .vs/
 .vscode/
+.DS_Store
+._*
 
 # Unity generated project files
 *.csproj
@@ -31,15 +33,26 @@ release/
 dist/
 
 # Local test / cache folders
+.codex-temp/
+.codex-tmp/
+.autosave/
+.upstream/
 __pycache__/
 __sv_test/
 __color_test/
 Assets/_Recovery/
+*.log
 unity-batch.log
 debug.ps1
 reset-unity-cache.ps1
 test_color.py
 test_sv.py
+
+# Local release notes and generated root copies
+BUILD_WINDOWS.txt
+COPY_INSTRUCTIONS.txt
+Default_Background.png
+EditorSetting.json
 
 # Python cache
 *.pyc

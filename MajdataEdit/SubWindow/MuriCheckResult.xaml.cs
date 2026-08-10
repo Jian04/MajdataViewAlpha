@@ -5,7 +5,7 @@ using System.Windows.Input;
 namespace MajdataEdit;
 
 /// <summary>
-///     Window1.xaml 的交互逻辑
+///     Interaction logic for Window1.xaml
 /// </summary>
 public class ErrorInfo
 {

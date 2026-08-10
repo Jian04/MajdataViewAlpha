@@ -6,7 +6,7 @@
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     全局自动保存上下文
+///     Global autosave context.
 /// </summary>
 public class GlobalAutoSaveContext : IAutoSaveContext
 {

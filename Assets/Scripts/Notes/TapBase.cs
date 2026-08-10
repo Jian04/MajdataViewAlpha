@@ -8,6 +8,7 @@ namespace Assets.Scripts.Notes
     {
         public bool isBreak;
         public bool isEX;
+        public bool isFirework;
         bool isTriggered = false;
 
         public Sprite tapSpr;
@@ -27,20 +28,18 @@ namespace Assets.Scripts.Notes
         public Color exEffectBreak;
 
         public Material breakMaterial;
-        // ALPHA: set by JsonDataLoader to override the note's fill color
         public Material colorOverrideMaterial;
-        // ALPHA: RGB of the color override, used when passing tint to hit effects
         public Color noteTintColor = Color.white;
-        // ALPHA: uniform scale multiplier (set by JsonDataLoader from <NS x>)
         public float noteScale = 1f;
+        public float noteScaleX = 1f;
+        public float noteScaleY = 1f;
 
         protected SpriteRenderer exSpriteRender;
         protected SpriteRenderer lineSpriteRender;
 
         protected SpriteRenderer spriteRenderer;
         private MaterialPropertyBlock brightnessProperties;
-        private bool tapLineFlipped;
-        private bool tapLineRotationInitialized;
+        private bool? tapLineOnOppositeSide;
 
         protected void ApplyExAlpha()
         {
@@ -108,8 +107,11 @@ namespace Assets.Scripts.Notes
                             return;
                         if (isTriggered)
                             return;
-                        inputManager.ClickSensor(sensorPos);
-                        isTriggered = true;
+                        inputManager.ClickSensor(sensorPos, true);
+                        // A queue predecessor can survive until end-of-frame. Retry
+                        // until this note actually judges instead of consuming its
+                        // only DJAuto attempt.
+                        isTriggered = isJudged;
                         break;
                 }
             }
@@ -118,19 +120,48 @@ namespace Assets.Scripts.Notes
         // Update is called once per frame
         protected virtual void Update()
         {
-            if (!timeProvider.isStart)
+            if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < 0f)
             {
                 tapLine.SetActive(false);
+                spriteRenderer.forceRenderingOff = true;
+                if (isEX) exSpriteRender.forceRenderingOff = true;
                 return;
             }
 
-            var distance = GetSvDistance();
-            var destScale = distance * 0.4f + 0.51f;
-            UpdateTapLineRotation(distance);
+            var judgeOffset = timeProvider.AudioTime - time;
+            if (IsBeforeBounceWindow(judgeOffset))
+            {
+                tapLine.SetActive(false);
+                spriteRenderer.forceRenderingOff = true;
+                if (isEX) exSpriteRender.forceRenderingOff = true;
+                return;
+            }
 
-            switch(State)
+            var isBouncing = IsBounceActive(judgeOffset);
+            var distance = isBouncing ? GetBounceDistance(judgeOffset) : GetSvDistance();
+            var destScale = GetSpawnScale(distance);
+            var hasLeftSpawn = HasLeftSpawnAtCurrentTime(noteScrollPos);
+
+            if (isBouncing)
+            {
+                State = NoteStatus.Running;
+                transform.position = getPositionFromDistance(distance);
+                transform.localScale = new Vector3(
+                    noteScale * noteScaleX,
+                    noteScale * noteScaleY,
+                    1f);
+                var bounceLineScale = Mathf.Clamp01(distance / 4.8f);
+                tapLine.SetActive(distance > 0.001f && distance <= 4.8f);
+                tapLine.transform.localScale = new Vector3(bounceLineScale, bounceLineScale, 1f);
+            }
+            else switch(State)
             {
                 case NoteStatus.Initialized:
+                    if (hasLeftSpawn)
+                    {
+                        State = NoteStatus.Running;
+                        goto case NoteStatus.Running;
+                    }
                     if (destScale >= 0f)
                     {
                         State = NoteStatus.Pending;
@@ -141,31 +172,37 @@ namespace Assets.Scripts.Notes
                     return;
                 case NoteStatus.Pending:
                     {
-                        if (destScale > 0.3f)
-                            tapLine.SetActive(true);
-                        if (distance < 1.225f)
-                        {
-                            transform.localScale = new Vector3(destScale * noteScale, destScale * noteScale);
-                            transform.position = getPositionFromDistance(1.225f);
-                            var lineScale = Mathf.Abs(1.225f / 4.8f);
-                            tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
-                        }
-                        else
+                        if (hasLeftSpawn)
                         {
                             State = NoteStatus.Running;
                             goto case NoteStatus.Running;
                         }
+                        var pendingScale = Mathf.Clamp01(destScale);
+                        tapLine.SetActive(pendingScale > 0.3f);
+                        transform.localScale = new Vector3(
+                            pendingScale * noteScale * noteScaleX,
+                            pendingScale * noteScale * noteScaleY,
+                            1f);
+                        transform.position = getPositionFromDistance(spawnRadius);
+                        var lineScale = Mathf.Abs(spawnRadius / 4.8f);
+                        tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
                     }
                     break;
                 case NoteStatus.Running:
                     {
                         transform.position = getPositionFromDistance(distance);
-                        transform.localScale = new Vector3(noteScale, noteScale);
+                        transform.localScale = new Vector3(
+                            noteScale * noteScaleX,
+                            noteScale * noteScaleY,
+                            1f);
+                        var absoluteDistance = Mathf.Abs(distance);
+                        tapLine.SetActive(absoluteDistance > 0.001f && absoluteDistance <= 4.8f);
                         var lineScale = Mathf.Abs(distance / 4.8f);
                         tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
                     }
                     break;
             }
+            UpdateTapLineRotation(State == NoteStatus.Pending ? spawnRadius : distance);
 
             spriteRenderer.forceRenderingOff = false;
             if (isEX) exSpriteRender.forceRenderingOff = false;
@@ -177,16 +214,18 @@ namespace Assets.Scripts.Notes
                 spriteRenderer.SetPropertyBlock(brightnessProperties);
             }
         }
-        protected void UpdateTapLineRotation(float distance)
+
+        protected void UpdateTapLineRotation(float visualDistance)
         {
-            var shouldFlip = State == NoteStatus.Running && distance < 0f;
-            if (tapLineRotationInitialized && tapLineFlipped == shouldFlip)
+            var opposite = visualDistance < 0f;
+            if (tapLineOnOppositeSide == opposite)
                 return;
 
-            tapLineRotationInitialized = true;
-            tapLineFlipped = shouldFlip;
-            var position = shouldFlip ? (startPosition + 3) % 8 + 1 : startPosition;
-            tapLine.transform.rotation = Quaternion.Euler(0, 0, -22.5f + -45f * (position - 1));
+            tapLineOnOppositeSide = opposite;
+            var dZoneOffset = isDZone ? 22.5f : 0f;
+            tapLine.transform.rotation = Quaternion.Euler(
+                0, 0, -22.5f + -45f * (startPosition - 1) + dZoneOffset +
+                      (opposite ? 180f : 0f));
         }
         protected void Check(object sender, InputEventArgs arg)
         {
@@ -196,17 +235,19 @@ namespace Assets.Scripts.Notes
                 return;
             if (arg.Type != sensor.Type)
                 return;
-            else if (isJudged || !noteManager.CanJudge(gameObject, startPosition))
+            else if (isJudged || !noteManager.CanJudge(gameObject, JudgeQueueKey))
                 return;
             else if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
                 return;
 
             if (arg.IsClick)
             {
-                if (!inputManager.IsIdle(arg))
-                    return;
-                else
+                if (InputManager.Mode != AutoPlayMode.DJAuto)
+                {
+                    if (!inputManager.IsIdle(arg))
+                        return;
                     inputManager.SetBusy(arg);
+                }
 
                 Judge();
                 if (isJudged)
@@ -264,15 +305,27 @@ namespace Assets.Scripts.Notes
         }
         protected virtual void OnDestroy()
         {
+            if (tapLine != null)
+                Destroy(tapLine);
             if (inputManager != null)
                 inputManager.UnbindArea(Check, sensorPos);
             if (previewOnly || HttpHandler.IsReloding)
                 return;
             var effectManager = GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
             if (effectManager == null) return;
-            effectManager.PlayEffect(startPosition, isBreak, judgeResult, noteTintColor);
-            effectManager.PlayFastLate(startPosition, judgeResult);
-            objectCounter.NextNote(startPosition);
+            effectManager.PlayEffect(JudgeQueueKey, isBreak, judgeResult, noteTintColor);
+            effectManager.PlayFastLate(JudgeQueueKey, judgeResult);
+            if (isFirework && judgeResult != JudgeType.Miss)
+            {
+                var firework = GameObject.Find("FireworkEffect");
+                var animator = firework?.GetComponent<Animator>();
+                if (animator != null)
+                {
+                    firework.transform.position = transform.position;
+                    animator.SetTrigger("Fire");
+                }
+            }
+            objectCounter.NextNote(JudgeQueueKey);
             objectCounter.ReportResult(this, judgeResult,isBreak);
         }
     }

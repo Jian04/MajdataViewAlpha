@@ -1,13 +1,17 @@
 {
   "name": "dark",
   "displayName": "Dark",
-  "windowBackground": "#FF1F1F1F",
+  "windowBackground": "#FF1E2025",
   "buttonForeground": "#FFFFFFFF",
   "helperForeground": "#FF569CD6",
-  "buttonsBackground": "#99303030",
-  "editorBackground": "#FF424852",
-  "editorForeground": "#FFEEEEEE",
-  "editorSelection": "#664C7D9D",
-  "waveBackground": "#CC303030",
-  "waveAccent": "#FFFF4F5E"
+  "buttonsBackground": "#FF2E313A",
+  "editorBackground": "#FF25282F",
+  "editorForeground": "#FFE2E6EC",
+  "editorSelection": "#664E9AF1",
+  "waveBackground": "#64151A22",
+  "waveAccent": "#FFE5484D",
+  "scrollTrack": "#FF1B1D22",
+  "scrollThumb": "#FF50545E",
+  "scrollThumbHover": "#FF676C78",
+  "menuSeparator": "#FF454A55"
 }

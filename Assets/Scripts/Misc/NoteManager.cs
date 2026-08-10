@@ -13,7 +13,8 @@ public class NoteManager : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        Application.targetFrameRate = 120;
+        // Match AudioTimeProvider.PlaybackFrameRate: 60 in editor to reduce stutter, 120 in builds
+        Application.targetFrameRate = Application.isEditor ? 60 : 120;
     }
     public void Clear()
     {
@@ -40,12 +41,15 @@ public class NoteManager : MonoBehaviour
             var touch = child.GetComponent<TouchDrop>();
             var touchHold = child.GetComponent<TouchHoldDrop>();
 
+            // D-zone notes use slots 9-16, separate from A-zone slots 1-8
+            int keyOf(NoteDrop n) => n.isDZone ? n.startPosition + 8 : n.startPosition;
+
             if (tap != null)
-                noteOrder[tap.gameObject] = noteIndex[tap.startPosition]++;
+                noteOrder[tap.gameObject] = noteIndex[keyOf(tap)]++;
             else if (hold != null)
-                noteOrder[hold.gameObject] = noteIndex[hold.startPosition]++;
+                noteOrder[hold.gameObject] = noteIndex[keyOf(hold)]++;
             else if (star != null && !star.isNoHead)
-                noteOrder[star.gameObject] = noteIndex[star.startPosition]++;
+                noteOrder[star.gameObject] = noteIndex[keyOf(star)]++;
             else if (touch != null)
                 touchOrder[touch.gameObject] = touchIndex[touch.GetSensor()]++;
             else if(touchHold != null)
@@ -59,7 +63,7 @@ public class NoteManager : MonoBehaviour
     {
         noteIndex.Clear();
         touchIndex.Clear();
-        for (int i = 1; i < 9; i++)
+        for (int i = 1; i < 17; i++) // 1-8=A zone, 9-16=D zone
             noteIndex.Add(i, 0);
         var sensorParent = GameObject.Find("Sensors");
         var count = sensorParent.transform.childCount;

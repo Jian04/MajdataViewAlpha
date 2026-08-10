@@ -9,7 +9,6 @@ public sealed class SongDetailTemplateView : MonoBehaviour
     private const int ReMasterDifficultyIndex = 5;
     private const float CanvasWidth = 43.5f;
     private const float CanvasHeight = 75f;
-
     private static readonly string[] DxLayerPaths =
     {
         "SongDetailTemplates/dx/DxBase",
@@ -21,6 +20,19 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         "SongDetailTemplates/dx/DxReMasterBase",
         "SongDetailTemplates/dx/DxReMasterOverlay"
     };
+
+    private sealed class SharedTextureEntry
+    {
+        internal string Path = "";
+        internal long LastWriteTicks;
+        internal long Length;
+        internal Texture2D Texture;
+    }
+
+    // Stop reloads the gameplay scene. Keep the two small baked card textures alive
+    // across that reload so replaying the same chart does not decode PNGs again.
+    private static readonly SharedTextureEntry SharedBaseTexture = new();
+    private static readonly SharedTextureEntry SharedOverlayTexture = new();
 
     private readonly List<RawImage> templateLayers = new();
     private readonly List<GameObject> runtimeObjects = new();
@@ -42,6 +54,8 @@ public sealed class SongDetailTemplateView : MonoBehaviour
     private Font levelFont;
     private Font regularFont;
     private Texture2D cachedTexture;
+    private Texture2D cachedOverlayTexture;
+    private RawImage cacheOverlayImage;
     private bool originalCaptured;
     private UiState cardState;
     private UiState jacketState;
@@ -51,15 +65,33 @@ public sealed class SongDetailTemplateView : MonoBehaviour
     private UiState artistState;
     private UiState designerState;
     private string activeTemplateKey = "";
+    private RectTransform titleMarqueeViewport;
+    private float titleMarqueeStartX;
+    private float titleMarqueeOverflow;
+    private float titleMarqueeClock;
 
     internal bool IsMasterTemplate(Majson data)
     {
+        // The new card cache baked by Edit from extracted assets covers every difficulty
         return data != null &&
                data.songDetailStyle == 1 &&
-               (data.diffNum == MasterDifficultyIndex || data.diffNum == ReMasterDifficultyIndex);
+               GetCacheStem(data.diffNum) != null;
     }
 
-    internal void ApplyMaster(
+    // Same name and mapping as GetSongDetailCacheStem in Edit
+    private static string GetCacheStem(int difficulty) => difficulty switch
+    {
+        0 => "songdetail_easy",
+        1 => "songdetail_basic",
+        2 => "songdetail_advanced",
+        3 => "songdetail_expert",
+        4 => "songdetail_master",
+        5 => "songdetail_remaster",
+        6 => "songdetail_original",
+        _ => null
+    };
+
+    internal bool ApplyMaster(
         Majson data,
         RawImage card,
         RawImage jacket,
@@ -77,54 +109,20 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         artistText = artist;
         designerText = designer;
         CaptureOriginal();
-        LoadFonts();
-        var isReMaster = data.diffNum == ReMasterDifficultyIndex;
 
         if (TryApplyCachedCard(data))
-            return;
+            return true;
 
-        EnsureTemplateLayers(data);
-
-        if (cardImage != null)
-        {
-            cardImage.texture = null;
-            cardImage.color = Color.clear;
-            SetRect(cardImage.rectTransform, Vector2.zero, new Vector2(CanvasWidth, CanvasHeight));
-        }
-
-        foreach (var layer in templateLayers)
-            layer.gameObject.SetActive(true);
-
-        ApplyJacket();
-        if (diffText != null)
-            diffText.gameObject.SetActive(false);
-        HideLegacyCardTexts();
-
-        var levelParts = SplitLevel(CleanLevel(data.level));
-        ConfigureLevelText(levelText, levelParts.number,
-            FromPixelCenter(306f, 376f), FromPixelSize(86f, 56f), 50, isReMaster);
-        ConfigureLevelPlus(levelParts.hasPlus, isReMaster);
-        ConfigureText(titleText, data.title, bodyFont,
-            FromPixelCenter(170.5f, 429.5f), FromPixelSize(320f, 37f), 5,
-            TextAnchor.MiddleCenter, Color.white);
-        ConfigureText(artistText, data.artist, bodyFont,
-            FromPixelCenter(170.5f, 471f), FromPixelSize(320f, 31f), 4,
-            TextAnchor.MiddleCenter, new Color32(235, 241, 255, 255));
-        ConfigureText(designerText, data.designer, regularFont,
-            FromPixelCenter(118f, 570.5f), FromPixelSize(210f, 19f), 4,
-            TextAnchor.MiddleLeft, new Color32(28, 34, 62, 255));
-
-        bpmText ??= CreateText("BPMValue");
-        ConfigureText(bpmText, GetBpmText(data), regularFont,
-            FromPixelCenter(284f, 570.5f), FromPixelSize(88f, 22f), 4,
-            TextAnchor.MiddleRight, new Color32(28, 34, 62, 255));
-
-        ConfigureDxScore(data);
+        // Do not use the old runtime-composited fallback: it does not match the
+        // baked card visually. Missing cache should fall back to the original
+        // song-detail scene, while Edit fixes/recreates the cache for next play.
+        ResetOriginal();
+        return false;
     }
 
-    // DXSCORE 标签右侧、星级正上方显示 dx 满分(物量*3)。这是 View 端的降级渲染路径:
-    // 正常播放/录制时 Edit 端会用 GDI+ 把同样的数字烤进 songdetail_master.png 并走缓存,
-    // 只有缺少缓存 PNG 时才落到这里,所以采用与 GDI+ 一致的版式(左大右小、底部对齐、白色)。
+    // Show maximum dx score (note count * 3) right of DXSCORE and above the stars.
+    // This is View's fallback path. Normally Edit bakes the value into songdetail_master.png
+    // with GDI+ and uses the cache. Match that layout: larger left part, white, bottom-aligned.
     private void ConfigureDxScore(Majson data)
     {
         dxScoreLeftText ??= CreateText("DxScoreLeft");
@@ -139,8 +137,8 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         }
 
         var value = dxMax.ToString();
-        // 左 "物量*3/" 靠 DXSCORE 右缘起、较大;右 "物量*3" 紧随其后留一空格、仅小一点;两段底部对齐。
-        // 坐标与 Edit 端 GDI+ 版式对齐(左缘≈120、底≈540、右数字左缘≈172、末位落在第五颗星上方)。
+        // Place the larger "count*3/" at DXSCORE's right edge and the slightly smaller value after one space.
+        // Match Edit's GDI+ coordinates: left≈120, bottom≈540, right value≈172, ending above the fifth star.
         ConfigureDxScoreText(dxScoreLeftText, value + "/",
             FromPixelCenter(143f, 531f), FromPixelSize(48f, 18f), 5, TextAnchor.LowerLeft);
         ConfigureDxScoreText(dxScoreRightText, value,
@@ -156,7 +154,7 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         text.transform.SetParent(cardImage.rectTransform, false);
         text.gameObject.SetActive(true);
         text.text = value ?? "";
-        text.font = regularFont; // 与谱师同字体
+        text.font = regularFont; // Same font as the chart designer
         text.fontStyle = FontStyle.Normal;
         text.color = Color.white;
         text.alignment = alignment;
@@ -170,7 +168,7 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         text.transform.SetAsLastSibling();
     }
 
-    // 与 Edit 端 CountTotalNotes / View 端 JsonDataLoader.CountNoteSum 同口径。
+    // Uses the same counting rules as Edit.CountTotalNotes and View.JsonDataLoader.CountNoteSum
     private static int CountTotalNotesForCard(Majson data)
     {
         if (data == null || data.timingList == null)
@@ -185,8 +183,8 @@ public sealed class SongDetailTemplateView : MonoBehaviour
                 if (note.noteType == SimaiNoteType.Slide)
                 {
                     if (!note.isSlideNoHead)
-                        total++; // star 头
-                    total++;     // slide 体
+                        total++; // Star head
+                    total++;     // Slide body
                 }
                 else
                 {
@@ -206,18 +204,16 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         if (string.IsNullOrWhiteSpace(chartDir))
             return false;
 
-        var cachePath = Path.Combine(chartDir,
-            data.diffNum == ReMasterDifficultyIndex ? "songdetail_remaster.png" : "songdetail_master.png");
+        var stem = GetCacheStem(data.diffNum);
+        if (stem == null)
+            return false;
+        var cachePath = Path.Combine(chartDir, stem + ".png");
         if (!File.Exists(cachePath))
             return false;
 
-        var bytes = File.ReadAllBytes(cachePath);
-        cachedTexture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-        if (!cachedTexture.LoadImage(bytes))
+        cachedTexture = LoadSharedTexture(cachePath, SharedBaseTexture);
+        if (cachedTexture == null)
             return false;
-
-        cachedTexture.wrapMode = TextureWrapMode.Clamp;
-        cachedTexture.filterMode = FilterMode.Bilinear;
         foreach (var layer in templateLayers)
             layer.gameObject.SetActive(false);
         foreach (var obj in runtimeObjects)
@@ -227,8 +223,23 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         cardImage.texture = cachedTexture;
         cardImage.color = Color.white;
         SetRect(cardImage.rectTransform, Vector2.zero, new Vector2(CanvasWidth, CanvasHeight));
-        if (jacketImage != null)
-            jacketImage.gameObject.SetActive(false);
+
+        // The new cache does not bake the jacket, placing the live jacket between the card base
+        // and LV overlay for layered intro animation. Legacy single-image caches still hide it.
+        var overlayPath = Path.Combine(chartDir, stem + "_overlay.png");
+        if (File.Exists(overlayPath) && TryLoadCacheOverlay(overlayPath))
+        {
+            ApplyJacketForCache();
+            if (cacheOverlayImage != null)
+                cacheOverlayImage.transform.SetAsLastSibling();
+        }
+        else
+        {
+            if (jacketImage != null)
+                jacketImage.gameObject.SetActive(false);
+            if (cacheOverlayImage != null)
+                cacheOverlayImage.gameObject.SetActive(false);
+        }
         if (diffText != null)
             diffText.gameObject.SetActive(false);
         if (levelText != null)
@@ -244,7 +255,181 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         if (levelPlusText != null)
             levelPlusText.gameObject.SetActive(false);
         HideLegacyCardTexts();
+        // The cached base image contains the title. Do not recreate it with a live
+        // Unity Text: its metrics differ from the GDI+ preview and it adds layout work
+        // on the first intro frame.
+        titleMarqueeViewport = null;
+        titleMarqueeOverflow = 0f;
         return true;
+    }
+
+    private void Update()
+    {
+        UpdateCacheOverlayIntro();
+
+        if (titleMarqueeViewport == null || titleText == null || titleMarqueeOverflow <= 0f)
+            return;
+
+        const float delay = 0.8f;
+        const float endHold = 1.2f;
+        const float speed = 4f;
+        titleMarqueeClock += Time.unscaledDeltaTime;
+        var travelTime = titleMarqueeOverflow / speed;
+        var cycle = delay + travelTime + endHold;
+        var phase = titleMarqueeClock % cycle;
+        var offset = phase <= delay ? 0f
+            : phase < delay + travelTime ? (phase - delay) * speed
+            : titleMarqueeOverflow;
+        var position = titleText.rectTransform.anchoredPosition;
+        position.x = titleMarqueeStartX - offset;
+        titleText.rectTransform.anchoredPosition = position;
+    }
+
+    private void ConfigureCachedTitle(string value)
+    {
+        if (titleText == null || cardImage == null)
+            return;
+
+        if (titleMarqueeViewport == null)
+        {
+            var viewportObject = new GameObject("TitleMarqueeViewport",
+                typeof(RectTransform), typeof(RectMask2D));
+            viewportObject.transform.SetParent(cardImage.rectTransform, false);
+            titleMarqueeViewport = viewportObject.GetComponent<RectTransform>();
+            runtimeObjects.Add(viewportObject);
+        }
+
+        titleMarqueeViewport.gameObject.SetActive(true);
+        SetRect(titleMarqueeViewport, FromPixelCenter(170.5f, 424f), FromPixelSize(325f, 42f));
+        titleText.transform.SetParent(titleMarqueeViewport, false);
+        titleText.gameObject.SetActive(true);
+        titleText.text = value ?? "";
+        titleText.font = bodyFont;
+        titleText.fontStyle = FontStyle.Bold;
+        titleText.fontSize = 7;
+        titleText.color = Color.white;
+        titleText.alignment = TextAnchor.MiddleLeft;
+        titleText.horizontalOverflow = HorizontalWrapMode.Overflow;
+        titleText.verticalOverflow = VerticalWrapMode.Truncate;
+        titleText.resizeTextForBestFit = false;
+        titleText.raycastTarget = false;
+        Canvas.ForceUpdateCanvases();
+
+        var viewportWidth = titleMarqueeViewport.rect.width;
+        var textWidth = Mathf.Max(viewportWidth, titleText.preferredWidth);
+        titleMarqueeOverflow = Mathf.Max(0f, textWidth - viewportWidth);
+        titleMarqueeStartX = titleMarqueeOverflow * 0.5f;
+        titleMarqueeClock = 0f;
+        SetRect(titleText.rectTransform, new Vector2(titleMarqueeStartX, 0f),
+            new Vector2(textWidth, titleMarqueeViewport.rect.height));
+        titleText.transform.SetAsLastSibling();
+    }
+
+    private bool TryLoadCacheOverlay(string overlayPath)
+    {
+        var texture = LoadSharedTexture(overlayPath, SharedOverlayTexture);
+        if (texture == null)
+            return false;
+
+        if (cacheOverlayImage == null)
+        {
+            var obj = new GameObject("CacheOverlay",
+                typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
+            obj.transform.SetParent(cardImage.rectTransform, false);
+            cacheOverlayImage = obj.GetComponent<RawImage>();
+            cacheOverlayImage.raycastTarget = false;
+            SetRect(cacheOverlayImage.rectTransform, Vector2.zero, new Vector2(CanvasWidth, CanvasHeight));
+        }
+
+        cachedOverlayTexture = texture;
+        cacheOverlayImage.texture = texture;
+        cacheOverlayImage.gameObject.SetActive(true);
+        ApplyCacheOverlayReveal(0f);
+        return true;
+    }
+
+    private void UpdateCacheOverlayIntro()
+    {
+        if (cacheOverlayImage == null || !cacheOverlayImage.gameObject.activeSelf)
+            return;
+        SyncCacheOverlayOpacity();
+    }
+
+    public void SampleCacheOverlayIntro(float timelineTime)
+    {
+        // Entry.anim already owns the card's original movement and fade. The cache
+        // overlay is a child of that card, so it must only copy the animated base
+        // opacity; scaling it here introduced an unintended horizontal fly-in.
+        SyncCacheOverlayOpacity();
+    }
+
+    private void SyncCacheOverlayOpacity()
+    {
+        ApplyCacheOverlayReveal(cardImage != null ? cardImage.color.a : 0f);
+    }
+
+    private void ApplyCacheOverlayReveal(float progress)
+    {
+        if (cacheOverlayImage == null)
+            return;
+        progress = Mathf.Clamp01(progress);
+        cacheOverlayImage.color = new Color(1f, 1f, 1f, progress);
+        cacheOverlayImage.rectTransform.localScale = Vector3.one;
+    }
+
+    private static Texture2D LoadSharedTexture(string path, SharedTextureEntry entry)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (entry.Texture != null &&
+                string.Equals(entry.Path, path, System.StringComparison.OrdinalIgnoreCase) &&
+                entry.LastWriteTicks == info.LastWriteTimeUtc.Ticks &&
+                entry.Length == info.Length)
+                return entry.Texture;
+
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            if (!texture.LoadImage(File.ReadAllBytes(path)))
+            {
+                Destroy(texture);
+                return null;
+            }
+
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.filterMode = FilterMode.Bilinear;
+            texture.hideFlags = HideFlags.DontUnloadUnusedAsset;
+            if (entry.Texture != null)
+                Destroy(entry.Texture);
+            entry.Path = path;
+            entry.LastWriteTicks = info.LastWriteTimeUtc.Ticks;
+            entry.Length = info.Length;
+            entry.Texture = texture;
+            return texture;
+        }
+        catch (System.Exception exception)
+        {
+            Debug.LogWarning("Unable to load baked song detail texture: " + exception.Message);
+            return null;
+        }
+    }
+
+    // Position the live jacket using the extracted card window, approximately (42,102)-(300,362)
+    // on the 341x588 canvas. Layer order: card base < jacket < CacheOverlay with LV and level.
+    private void ApplyJacketForCache()
+    {
+        if (jacketImage == null || cardImage == null)
+            return;
+        jacketImage.gameObject.SetActive(true);
+        jacketImage.transform.SetParent(cardImage.rectTransform, false);
+        // Fill the black window of the uncropped body image exactly.
+        SetRect(jacketImage.rectTransform, FromPixelCenter(171f, 227f), FromPixelSize(260f, 262f));
+        jacketImage.color = Color.white;
+        if (jacketImage.texture != null)
+        {
+            jacketImage.texture.wrapMode = TextureWrapMode.Clamp;
+            jacketImage.texture.filterMode = FilterMode.Bilinear;
+        }
+        jacketImage.transform.SetAsLastSibling();
     }
 
     // The cached PNG already bakes every label (title / level / designer / the
@@ -300,6 +485,11 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         foreach (var obj in runtimeObjects)
             if (obj != null)
                 obj.SetActive(false);
+        if (cacheOverlayImage != null)
+        {
+            ApplyCacheOverlayReveal(0f);
+            cacheOverlayImage.gameObject.SetActive(false);
+        }
 
         // Re-show any scene captions the cached-card path hid, so the original
         // (non-master / no-cache) card looks complete again.

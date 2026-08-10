@@ -6,8 +6,8 @@
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     本地自动保存
-///     它将自动保存的文件存储在当前谱面的目录中
+///     Local autosave.
+///     Stores autosave files in the current chart directory.
 /// </summary>
 public class LocalAutoSave : IAutoSave
 {
@@ -22,7 +22,7 @@ public class LocalAutoSave : IAutoSave
 
     public bool DoAutoSave()
     {
-        // 本地自动保存前 总是尝试将当前目录更新到目前打开的文件夹上
+        // Before local autosave, always try to update the current directory to the open folder.
         indexManager.ChangePath(saveContext.GetSavePath());
 
         var newSaveFilePath = indexManager.GetNewAutoSaveFileName();

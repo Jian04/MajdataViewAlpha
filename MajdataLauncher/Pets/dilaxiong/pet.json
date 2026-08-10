@@ -1,0 +1,22 @@
+{
+  "id": "dilaxiong",
+  "displayName": "滴蜡熊",
+  "description": "Majdata 桌宠：待机陪伴、写谱奔跑、语法错误时生气提醒。",
+  "spriteVersionNumber": 2,
+  "spritesheetPath": "spritesheet.png",
+  "sourceRun": "hatch-run",
+  "qa": {
+    "validation": "validation-extended-clean.json",
+    "transparentRgbResiduePixels": 0
+  },
+  "events": {
+    "view-starting": "jump",
+    "view-ready": "wave",
+    "edit-starting": "running",
+    "chart-agent": "running",
+    "star-combo": "review",
+    "recommendation": "review",
+    "needs-input": "waiting",
+    "error": "failed"
+  }
+}

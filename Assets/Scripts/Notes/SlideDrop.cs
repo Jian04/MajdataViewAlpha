@@ -18,6 +18,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     public GameObject parent;
 
     public bool isMirror;
+    public bool isDZoneEnd;
     public bool isReverse;
     public int rotationPosition = -1;
     public bool isJustR;
@@ -31,6 +32,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     public float fadeInTime;
 
     public float fullFadeInTime;
+    public float starSpeed;
 
     public float slideConst;
     float arriveTime = -1;
@@ -42,16 +44,30 @@ public class SlideDrop : NoteLongDrop, IFlasher
     // ALPHA: set by JsonDataLoader to override fill color
     public Material colorOverrideMaterial;
     public string slideType;
+    public float noteScaleX = 1f;
+    public float noteScaleY = 1f;
 
     List<SensorType> boundSensors = new();
     List<Sensor> judgeSensors = new();
-    List<Sensor> triggerSensors = new(); // AutoPlay; 标记已触发的Sensor 
-    List<JudgeArea> judgeQueue = new(); // 判定队列
-    List<JudgeArea> _judgeQueue = new(); // 判定队列
+    List<Sensor> triggerSensors = new(); // AutoPlay; sensors already triggered
+    List<JudgeArea> judgeQueue = new(); // Judgement queue
+    List<JudgeArea> _judgeQueue = new(); // Judgement queue
 
     public ConnSlideInfo ConnectInfo { get; set; } = new();
     public bool isFinished { get => judgeQueue.Count == 0; }
     public bool isPendingFinish { get => judgeQueue.Count == 1; }
+
+    public bool UsesSensor(SensorType target)
+    {
+        var route = _judgeQueue.Count > 0 ? _judgeQueue : judgeQueue;
+        return route.Any(area => area.GetSensorTypes().Contains(target));
+    }
+
+    public float GetAppearanceStartOffset()
+    {
+        var fadeLeadScale = 1f - Mathf.Clamp(starSpeed, -1f, 1f);
+        return (-3.926913f / speed) * fadeLeadScale;
+    }
     
 
     Animator fadeInAnimator;
@@ -59,6 +75,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
 
     private readonly List<GameObject> slideBars = new();
     private readonly List<SpriteRenderer> slideBarRenderers = new();
+    private readonly List<Vector3> routeBarPositions = new();
+    private int logicalBarCount;
 
     private readonly List<Vector3> slidePositions = new();
     private readonly List<Quaternion> slideRotations = new();
@@ -76,13 +94,14 @@ public class SlideDrop : NoteLongDrop, IFlasher
 
     bool canShine = false;
     bool canCheck = false;
+    bool isJudgeInputBound = false;
     bool isChecking = false;
-    float judgeTiming; // 正解帧
-    bool isInitialized = false; //防止重复初始化
-    bool isDestroying = false; // 防止重复销毁
+    float judgeTiming; // Correct judgement frame
+    bool isInitialized = false; // Prevent duplicate initialization
+    bool isDestroying = false; // Prevent duplicate destruction
 
     /// <summary>
-    /// Slide初始化
+    /// Initializes the Slide
     /// </summary>
     public void Initialize()
     {
@@ -133,31 +152,16 @@ public class SlideDrop : NoteLongDrop, IFlasher
             controller.parent = this;
         }
 
-        for (var i = 0; i < transform.childCount - 1; i++) slideBars.Add(transform.GetChild(i).gameObject);
+        for (var i = 0; i < transform.childCount - 1; i++)
+            slideBars.Add(transform.GetChild(i).gameObject);
 
         slideOK.SetActive(false);
         slideOK.transform.SetParent(transform.parent);
-        int physStart = isReverse ? endPosition : startPosition;
-        int physEnd = isReverse ? startPosition : endPosition;
-        slidePositions.Add(getPositionFromDistance(4.8f, physStart));
-        foreach (var bars in slideBars)
-        {
-            slidePositions.Add(bars.transform.position);
-            slideRotations.Add(Quaternion.Euler(bars.transform.rotation.eulerAngles + new Vector3(0f, 0f, 18f)));
-        }
-        var endPos = getPositionFromDistance(4.8f, physEnd);
-        var x = slidePositions.LastOrDefault() - Vector3.zero;
-        var y = endPos - Vector3.zero;
-        var angle = Mathf.Acos(Vector3.Dot(x, y) / (x.magnitude * y.magnitude)) * Mathf.Rad2Deg;
-        var offset = slideRotations.TakeLast(1).First().eulerAngles - slideRotations.TakeLast(2).First().eulerAngles;
-        if (offset.z < 0)
-            angle = -angle;
-            
-        var q = slideRotations.LastOrDefault() * Quaternion.Euler(0, 0, angle);
-        slidePositions.Add(endPos);
-        slideRotations.Add(q);
+        BuildSlidePath();
         foreach (var gm in slideBars)
         {
+            gm.transform.localScale = Vector3.Scale(
+                gm.transform.localScale, new Vector3(noteScaleX, noteScaleY, 1f));
             var sr = gm.GetComponent<SpriteRenderer>();
             slideBarRenderers.Add(sr);
             sr.color = new Color(1f, 1f, 1f, 0f);
@@ -192,17 +196,24 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
 
         timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
-        // 计算Slide淡入时机
-        // 在8.0速时应当提前300ms显示Slide
-        fadeInTime = -3.926913f / speed;
-        // Slide完全淡入时机
-        // 正常情况下应为负值；速度过高将忽略淡入
+        // Calculate when the Slide begins fading in
+        // At speed 8.0, show the Slide 300ms early
+        fadeInTime = GetAppearanceStartOffset();
+        // Time when the Slide is fully visible
+        // Normally negative; very high speeds skip the fade
         fullFadeInTime = Math.Min(fadeInTime + 0.2f, 0);
         var interval = fullFadeInTime - fadeInTime;
         fadeInAnimator = this.GetComponent<Animator>();
-        //淡入时机与正解帧间隔小于200ms时，加快淡入动画的播放速度; interval永不为0
-        fadeInAnimator.speed = 0.2f / interval;
-        fadeInAnimator.SetTrigger("slide");
+        if (interval > 0.0001f)
+        {
+            fadeInAnimator.speed = 0.2f / interval;
+            fadeInAnimator.SetTrigger("slide");
+        }
+        else
+        {
+            fadeInAnimator.enabled = false;
+            setSlideBarAlpha(0f);
+        }
 
         var sManagerObj = GameObject.Find("Sensors");
         var count = sManagerObj.transform.childCount;
@@ -223,7 +234,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
             float slideOKRadius = slideOK.transform.position.magnitude;
             slideOK.transform.position = targetPos.normalized * slideOKRadius;
             float extraRot = endPosition <= 4 ? 90f : -90f;
-            slideOK.transform.rotation = Quaternion.Euler(0f, 0f, -(2 * endPosition - 1) * 22.5f + extraRot);
+            slideOK.transform.rotation = Quaternion.Euler(0f, 0f,
+                -(2 * endPosition - 1) * 22.5f + extraRot + (isDZoneEnd ? 22.5f : 0f));
         }
 
         var _slideIndex = areaStep.Skip(1).ToArray();
@@ -234,7 +246,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
             var sensor = judgeSensors[i];
             int index = 0;
             if (_slideIndex is null)
-                index = (slideBars.Count / judgeSensors.Count) * (i + 1);
+                index = (logicalBarCount / judgeSensors.Count) * (i + 1);
             else
                 index = _slideIndex[i];
             judgeQueue.Add(new JudgeArea(
@@ -243,24 +255,30 @@ public class SlideDrop : NoteLongDrop, IFlasher
                     {sensor.Type, i == judgeSensors.Count - 1 }
                 }, index));
         }
+        // A_k uses B_k (enum value +8) as its partner area. D-zone Slides use E-zone
+        // intermediate sensors, which have no equivalent +8 partner, so accept a narrower area.
+        void AddPartnerArea(int queueIndex)
+        {
+            if (judgeSensors[queueIndex].Group != SensorGroup.A)
+                return;
+            judgeQueue[queueIndex].AddArea(judgeSensors[queueIndex].Type + 8);
+            registerSensors.Add(sManager.GetSensor(judgeSensors[queueIndex].Type + 8));
+        }
         if (slideType is "line3" or "line7")// 1-3
         {
             judgeQueue[1].CanSkip = ConnectInfo.IsConnSlide;
-            judgeQueue[1].AddArea(judgeSensors[1].Type + 8);
-            registerSensors.Add(sManager.GetSensor(judgeSensors[1].Type + 8));
+            AddPartnerArea(1);
         }
         else if (slideType == "circle3")// 1^3
             judgeQueue[1].CanSkip = ConnectInfo.IsConnSlide;
         else if (slideType[0] == 'L')// 1V3
         {
             judgeQueue[1].CanSkip = ConnectInfo.IsConnSlide;
-            judgeQueue[1].AddArea(judgeSensors[1].Type + 8);
-            registerSensors.Add(sManager.GetSensor(judgeSensors[1].Type + 8));
+            AddPartnerArea(1);
             if (slideType == "L5")// 1V35
             {
                 judgeQueue[3].CanSkip = ConnectInfo.IsConnSlide;
-                judgeQueue[3].AddArea(judgeSensors[3].Type + 8);
-                registerSensors.Add(sManager.GetSensor(judgeSensors[3].Type + 8));
+                AddPartnerArea(3);
             }
         }
         if (ConnectInfo.IsConnSlide && ConnectInfo.IsGroupPartEnd)
@@ -277,6 +295,597 @@ public class SlideDrop : NoteLongDrop, IFlasher
             judgeTiming = time + LastFor * CalJudgeTiming();
         }
 
+    }
+
+    private void BuildSlidePath()
+    {
+        var physicalStart = isReverse ? endPosition : startPosition;
+        var physicalEnd = isReverse ? startPosition : endPosition;
+        var startIsDZone = isReverse ? isDZoneEnd : isDZone;
+        var endIsDZone = isReverse ? isDZone : isDZoneEnd;
+
+        if (!startIsDZone && !endIsDZone)
+        {
+            slidePositions.Add(getPositionFromDistance(4.8f, physicalStart));
+            routeBarPositions.AddRange(slideBars.Select(bar => bar.transform.position));
+            foreach (var bar in slideBars)
+            {
+                slidePositions.Add(bar.transform.position);
+                slideRotations.Add(Quaternion.Euler(
+                    bar.transform.rotation.eulerAngles + new Vector3(0f, 0f, 18f)));
+            }
+
+            logicalBarCount = routeBarPositions.Count;
+            AppendRouteEnd(getPositionFromDistance(4.8f, physicalEnd));
+            return;
+        }
+
+        BuildDZoneSlidePath(physicalStart, physicalEnd, startIsDZone, endIsDZone);
+    }
+
+    private void BuildDZoneSlidePath(
+        int physicalStart,
+        int physicalEnd,
+        bool startIsDZone,
+        bool endIsDZone)
+    {
+        var originalBars = slideBars.ToArray();
+        var originalRotations = originalBars.Select(bar => bar.transform.rotation).ToArray();
+        var originalScales = originalBars.Select(bar => bar.transform.localScale).ToArray();
+        var startOffset = startIsDZone ? -0.5f : 0f;
+        var endOffset = endIsDZone ? -0.5f : 0f;
+        var start = getPositionFromDistance(4.8f, physicalStart + startOffset);
+        var end = getPositionFromDistance(4.8f, physicalEnd + endOffset);
+
+        var prefabStart = getPositionFromDistance(4.8f, physicalStart);
+        var prefabEnd = getPositionFromDistance(4.8f, physicalEnd);
+        var originalRoute = new Vector3[originalBars.Length + 2];
+        originalRoute[0] = prefabStart;
+        for (var i = 0; i < originalBars.Length; i++)
+            originalRoute[i + 1] = originalBars[i].transform.position;
+        originalRoute[^1] = prefabEnd;
+
+        var originalDistances = BuildCumulativeDistances(originalRoute);
+        var originalLength = originalDistances[^1];
+        var startCorrection = start - prefabStart;
+        var endCorrection = end - prefabEnd;
+        var pathKind = GetDZonePathKind();
+        var deformedRoute = pathKind switch
+        {
+            DZonePathKind.Line => BuildStraightRoute(originalRoute.Length, start, end),
+            DZonePathKind.OuterCircle => BuildOuterCircleRoute(originalRoute, start, end),
+            DZonePathKind.AnchoredMiddle => BuildAnchoredMiddleRoute(originalRoute, start, end),
+            DZonePathKind.InnerCircle => BuildTangentCircleRoute(
+                originalRoute, start, end, slideType.StartsWith("pq", StringComparison.Ordinal)),
+            _ => new Vector3[originalRoute.Length]
+        };
+        if (pathKind == DZonePathKind.DeformedPrefab)
+        {
+            for (var i = 0; i < originalRoute.Length; i++)
+            {
+                var progress = originalLength > 0.0001f
+                    ? originalDistances[i] / originalLength
+                    : 0f;
+                var blend = progress * progress * (3f - 2f * progress);
+                deformedRoute[i] = originalRoute[i] +
+                                   Vector3.Lerp(startCorrection, endCorrection, blend);
+            }
+        }
+        deformedRoute[0] = start;
+        deformedRoute[^1] = end;
+
+        var deformedDistances = BuildCumulativeDistances(deformedRoute);
+        var deformedLength = deformedDistances[^1];
+        AlignDZoneJudgeEffect(
+            originalRoute,
+            originalDistances,
+            originalLength,
+            deformedRoute,
+            deformedDistances,
+            deformedLength,
+            prefabEnd,
+            end);
+        logicalBarCount = originalBars.Length;
+        slidePositions.Add(start);
+        for (var i = 0; i < logicalBarCount; i++)
+        {
+            var progress = (i + 1f) / (logicalBarCount + 1f);
+            var position = SamplePolyline(deformedRoute, deformedDistances, progress * deformedLength);
+            routeBarPositions.Add(position);
+            slidePositions.Add(position);
+
+            var oldTangent = SamplePolylineTangent(
+                originalRoute, originalDistances, progress * originalLength);
+            var newTangent = SamplePolylineTangent(
+                deformedRoute, deformedDistances, progress * deformedLength);
+            var tangentDelta = Vector2.SignedAngle(oldTangent, newTangent);
+            var rotation = Quaternion.AngleAxis(tangentDelta, Vector3.forward) * originalRotations[i];
+            slideRotations.Add(Quaternion.Euler(
+                rotation.eulerAngles + new Vector3(0f, 0f, 18f)));
+        }
+        AppendRouteEnd(end);
+
+        var originalSpacing = originalLength > 0.0001f
+            ? originalLength / (originalBars.Length + 1f)
+            : 0f;
+        var visualCount = originalSpacing > 0.0001f
+            ? Mathf.Clamp(Mathf.RoundToInt(deformedLength / originalSpacing) - 1, 1, 96)
+            : originalBars.Length;
+        var visualBars = new List<GameObject>(visualCount);
+        for (var i = 0; i < visualCount; i++)
+        {
+            var progress = (i + 1f) / (visualCount + 1f);
+            var sourceIndex = Mathf.Clamp(
+                Mathf.RoundToInt(progress * (originalBars.Length + 1f)) - 1,
+                0,
+                originalBars.Length - 1);
+            var bar = i < originalBars.Length
+                ? originalBars[i]
+                : Instantiate(originalBars[sourceIndex], transform);
+            bar.SetActive(true);
+            bar.transform.position = SamplePolyline(
+                deformedRoute, deformedDistances, progress * deformedLength);
+            var oldTangent = SamplePolylineTangent(
+                originalRoute, originalDistances, progress * originalLength);
+            var newTangent = SamplePolylineTangent(
+                deformedRoute, deformedDistances, progress * deformedLength);
+            var tangentDelta = Vector2.SignedAngle(oldTangent, newTangent);
+            bar.transform.rotation = Quaternion.AngleAxis(tangentDelta, Vector3.forward) *
+                                     originalRotations[sourceIndex];
+            bar.transform.localScale = originalScales[sourceIndex];
+            visualBars.Add(bar);
+        }
+
+        for (var i = visualCount; i < originalBars.Length; i++)
+            originalBars[i].SetActive(false);
+        slideBars.Clear();
+        slideBars.AddRange(visualBars);
+    }
+
+    private enum DZonePathKind
+    {
+        DeformedPrefab,
+        Line,
+        OuterCircle,
+        AnchoredMiddle,
+        InnerCircle
+    }
+
+    private DZonePathKind GetDZonePathKind()
+    {
+        if (string.IsNullOrEmpty(slideType))
+            return DZonePathKind.DeformedPrefab;
+        if (slideType.StartsWith("line", StringComparison.Ordinal))
+            return DZonePathKind.Line;
+        if (slideType.StartsWith("circle", StringComparison.Ordinal))
+            return DZonePathKind.OuterCircle;
+        if (slideType == "s")
+            return DZonePathKind.AnchoredMiddle;
+        if (slideType.IndexOf("pq", StringComparison.Ordinal) >= 0)
+            return DZonePathKind.InnerCircle;
+        return DZonePathKind.DeformedPrefab;
+    }
+
+    private static Vector3[] BuildStraightRoute(int pointCount, Vector3 start, Vector3 end)
+    {
+        var route = new Vector3[pointCount];
+        for (var i = 0; i < route.Length; i++)
+            route[i] = Vector3.Lerp(start, end, i / Math.Max(1f, route.Length - 1f));
+        return route;
+    }
+
+    private static Vector3[] BuildAnchoredMiddleRoute(
+        IReadOnlyList<Vector3> originalRoute,
+        Vector3 start,
+        Vector3 end)
+    {
+        var route = originalRoute.ToArray();
+        var firstAnchor = -1;
+        var lastAnchor = -1;
+        for (var i = 1; i < originalRoute.Count - 1; i++)
+        {
+            var incoming = originalRoute[i] - originalRoute[i - 1];
+            var outgoing = originalRoute[i + 1] - originalRoute[i];
+            if (incoming.sqrMagnitude <= 0.0001f || outgoing.sqrMagnitude <= 0.0001f)
+                continue;
+            if (Mathf.Abs(Vector2.SignedAngle(incoming, outgoing)) < 30f)
+                continue;
+            if (firstAnchor < 0)
+                firstAnchor = i;
+            lastAnchor = i;
+        }
+
+        if (firstAnchor < 1 || lastAnchor <= firstAnchor || lastAnchor >= route.Length - 1)
+            return BuildStraightRoute(route.Length, start, end);
+
+        for (var i = 0; i <= firstAnchor; i++)
+            route[i] = Vector3.Lerp(start, originalRoute[firstAnchor], i / (float)firstAnchor);
+        var tailLength = route.Length - 1 - lastAnchor;
+        for (var i = lastAnchor; i < route.Length; i++)
+            route[i] = Vector3.Lerp(
+                originalRoute[lastAnchor], end, (i - lastAnchor) / (float)tailLength);
+        route[0] = start;
+        route[^1] = end;
+        return route;
+    }
+
+    private static Vector3[] BuildOuterCircleRoute(
+        IReadOnlyList<Vector3> originalRoute,
+        Vector3 start,
+        Vector3 end)
+    {
+        var route = new Vector3[originalRoute.Count];
+        var originalSweep = 0f;
+        for (var i = 1; i < originalRoute.Count; i++)
+        {
+            var previousAngle = Mathf.Atan2(originalRoute[i - 1].y, originalRoute[i - 1].x);
+            var currentAngle = Mathf.Atan2(originalRoute[i].y, originalRoute[i].x);
+            originalSweep += Mathf.DeltaAngle(
+                previousAngle * Mathf.Rad2Deg,
+                currentAngle * Mathf.Rad2Deg) * Mathf.Deg2Rad;
+        }
+
+        var startAngle = Mathf.Atan2(start.y, start.x);
+        var endAngle = Mathf.Atan2(end.y, end.x);
+        var sweep = endAngle - startAngle;
+        sweep += Mathf.Round((originalSweep - sweep) / (Mathf.PI * 2f)) * Mathf.PI * 2f;
+        if (originalSweep > 0f && sweep <= 0f)
+            sweep += Mathf.PI * 2f;
+        else if (originalSweep < 0f && sweep >= 0f)
+            sweep -= Mathf.PI * 2f;
+
+        var radius = start.magnitude;
+        for (var i = 0; i < route.Length; i++)
+        {
+            var progress = i / Math.Max(1f, route.Length - 1f);
+            var angle = startAngle + sweep * progress;
+            route[i] = new Vector3(
+                Mathf.Cos(angle) * radius,
+                Mathf.Sin(angle) * radius,
+                Mathf.Lerp(start.z, end.z, progress));
+        }
+        route[0] = start;
+        route[^1] = end;
+        return route;
+    }
+
+    private static Vector3[] BuildTangentCircleRoute(
+        IReadOnlyList<Vector3> originalRoute,
+        Vector3 start,
+        Vector3 end,
+        bool centerAtOrigin)
+    {
+        var route = new Vector3[originalRoute.Count];
+        if (!TryFindCircleSection(
+                originalRoute,
+                out var circleStart,
+                out var circleEnd,
+                out var center,
+                out var radius,
+                out var direction,
+                centerAtOrigin) ||
+            !TryGetTangentPoint(center, radius, start, originalRoute[circleStart], out var entry) ||
+            !TryGetTangentPoint(center, radius, end, originalRoute[circleEnd], out var exit))
+        {
+            for (var i = 0; i < route.Length; i++)
+                route[i] = Vector3.Lerp(start, end, i / (float)Math.Max(1, route.Length - 1));
+            return route;
+        }
+
+        var startAngle = Mathf.Atan2(entry.y - center.y, entry.x - center.x);
+        var endAngle = Mathf.Atan2(exit.y - center.y, exit.x - center.x);
+        var sweep = GetDirectedSweep(startAngle, endAngle, direction);
+        var entryLength = Vector3.Distance(start, entry);
+        var arcLength = Mathf.Abs(sweep) * radius;
+        var exitLength = Vector3.Distance(exit, end);
+        var totalLength = entryLength + arcLength + exitLength;
+        if (totalLength <= 0.0001f)
+            return route;
+
+        for (var i = 0; i < route.Length; i++)
+        {
+            var distance = totalLength * i / Math.Max(1f, route.Length - 1f);
+            if (distance <= entryLength)
+            {
+                route[i] = Vector3.Lerp(
+                    start,
+                    entry,
+                    entryLength > 0.0001f ? distance / entryLength : 1f);
+            }
+            else if (distance < entryLength + arcLength)
+            {
+                var arcProgress = arcLength > 0.0001f
+                    ? (distance - entryLength) / arcLength
+                    : 1f;
+                var angle = startAngle + sweep * arcProgress;
+                route[i] = new Vector3(
+                    center.x + Mathf.Cos(angle) * radius,
+                    center.y + Mathf.Sin(angle) * radius,
+                    Mathf.Lerp(start.z, end.z, distance / totalLength));
+            }
+            else
+            {
+                route[i] = Vector3.Lerp(
+                    exit,
+                    end,
+                    exitLength > 0.0001f
+                        ? (distance - entryLength - arcLength) / exitLength
+                        : 1f);
+            }
+        }
+
+        route[0] = start;
+        route[^1] = end;
+        return route;
+    }
+
+    private static bool TryFindCircleSection(
+        IReadOnlyList<Vector3> route,
+        out int sectionStart,
+        out int sectionEnd,
+        out Vector3 center,
+        out float radius,
+        out float direction,
+        bool centerAtOrigin)
+    {
+        sectionStart = 0;
+        sectionEnd = 0;
+        center = Vector3.zero;
+        radius = 0f;
+        direction = 1f;
+        if (route.Count < 6)
+            return false;
+
+        var bestStart = -1;
+        var bestEnd = -1;
+        var bestDirection = 0f;
+        var currentStart = -1;
+        var currentDirection = 0f;
+        for (var i = 1; i < route.Count - 1; i++)
+        {
+            var incoming = route[i] - route[i - 1];
+            var outgoing = route[i + 1] - route[i];
+            if (incoming.sqrMagnitude <= 0.0001f || outgoing.sqrMagnitude <= 0.0001f)
+                continue;
+
+            var turn = Vector2.SignedAngle(incoming, outgoing);
+            var turnDirection = Mathf.Sign(turn);
+            var isCircleTurn = Mathf.Abs(turn) >= 4f && Mathf.Abs(turn) <= 30f;
+            if (isCircleTurn && (currentStart < 0 || turnDirection == currentDirection))
+            {
+                if (currentStart < 0)
+                {
+                    currentStart = i;
+                    currentDirection = turnDirection;
+                }
+                continue;
+            }
+
+            if (currentStart >= 0 &&
+                (bestStart < 0 || i - 1 - currentStart > bestEnd - bestStart))
+            {
+                bestStart = currentStart;
+                bestEnd = i - 1;
+                bestDirection = currentDirection;
+            }
+            currentStart = isCircleTurn ? i : -1;
+            currentDirection = isCircleTurn ? turnDirection : 0f;
+        }
+
+        if (currentStart >= 0 &&
+            (bestStart < 0 || route.Count - 2 - currentStart > bestEnd - bestStart))
+        {
+            bestStart = currentStart;
+            bestEnd = route.Count - 2;
+            bestDirection = currentDirection;
+        }
+
+        if (bestStart < 0 || bestEnd - bestStart < 2)
+            return false;
+
+        sectionStart = bestStart;
+        sectionEnd = bestEnd;
+        if (centerAtOrigin)
+        {
+            center = new Vector3(0f, 0f, route[sectionStart].z);
+            radius = 0f;
+            for (var i = sectionStart; i <= sectionEnd; i++)
+                radius += Vector2.Distance(Vector2.zero, route[i]);
+            radius /= sectionEnd - sectionStart + 1f;
+        }
+        else if (!TryFitCircle(route, sectionStart, sectionEnd, out center, out radius))
+        {
+            return false;
+        }
+
+        direction = bestDirection;
+        return true;
+    }
+
+    private static bool TryFitCircle(
+        IReadOnlyList<Vector3> points,
+        int start,
+        int end,
+        out Vector3 center,
+        out float radius)
+    {
+        center = Vector3.zero;
+        radius = 0f;
+        double xx = 0d, xy = 0d, x = 0d;
+        double yy = 0d, y = 0d, count = 0d;
+        double xb = 0d, yb = 0d, b = 0d;
+        for (var i = start; i <= end; i++)
+        {
+            var px = (double)points[i].x;
+            var py = (double)points[i].y;
+            var value = px * px + py * py;
+            xx += 4d * px * px;
+            xy += 4d * px * py;
+            x += 2d * px;
+            yy += 4d * py * py;
+            y += 2d * py;
+            count += 1d;
+            xb += 2d * px * value;
+            yb += 2d * py * value;
+            b += value;
+        }
+
+        var determinant = Determinant3(xx, xy, x, xy, yy, y, x, y, count);
+        if (Math.Abs(determinant) <= 0.000001d)
+            return false;
+
+        var cx = Determinant3(xb, xy, x, yb, yy, y, b, y, count) / determinant;
+        var cy = Determinant3(xx, xb, x, xy, yb, y, x, b, count) / determinant;
+        var constant = Determinant3(xx, xy, xb, xy, yy, yb, x, y, b) / determinant;
+        var radiusSquared = cx * cx + cy * cy + constant;
+        if (radiusSquared <= 0.000001d)
+            return false;
+
+        center = new Vector3((float)cx, (float)cy, points[start].z);
+        radius = Mathf.Sqrt((float)radiusSquared);
+        return true;
+    }
+
+    private static double Determinant3(
+        double a, double b, double c,
+        double d, double e, double f,
+        double g, double h, double i)
+        => a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+
+    private static bool TryGetTangentPoint(
+        Vector3 center,
+        float radius,
+        Vector3 point,
+        Vector3 preferred,
+        out Vector3 tangent)
+    {
+        tangent = preferred;
+        var delta = point - center;
+        var distanceSquared = delta.x * delta.x + delta.y * delta.y;
+        var radiusSquared = radius * radius;
+        if (distanceSquared <= radiusSquared + 0.0001f)
+            return false;
+
+        var baseScale = radiusSquared / distanceSquared;
+        var offsetScale = radius * Mathf.Sqrt(distanceSquared - radiusSquared) / distanceSquared;
+        var basePoint = center + delta * baseScale;
+        var perpendicular = new Vector3(-delta.y, delta.x, 0f);
+        var first = basePoint + perpendicular * offsetScale;
+        var second = basePoint - perpendicular * offsetScale;
+        tangent = (first - preferred).sqrMagnitude <= (second - preferred).sqrMagnitude
+            ? first
+            : second;
+        tangent.z = preferred.z;
+        return true;
+    }
+
+    private static float GetDirectedSweep(float start, float end, float direction)
+    {
+        var sweep = end - start;
+        if (direction >= 0f)
+        {
+            while (sweep < 0f)
+                sweep += Mathf.PI * 2f;
+        }
+        else
+        {
+            while (sweep > 0f)
+                sweep -= Mathf.PI * 2f;
+        }
+        return sweep;
+    }
+
+    private void AlignDZoneJudgeEffect(
+        IReadOnlyList<Vector3> originalRoute,
+        IReadOnlyList<float> originalDistances,
+        float originalLength,
+        IReadOnlyList<Vector3> deformedRoute,
+        IReadOnlyList<float> deformedDistances,
+        float deformedLength,
+        Vector3 originalEnd,
+        Vector3 deformedEnd)
+    {
+        if (isReverse)
+            return;
+
+        var originalTangent = SamplePolylineTangent(
+            originalRoute, originalDistances, originalLength);
+        var deformedTangent = SamplePolylineTangent(
+            deformedRoute, deformedDistances, deformedLength);
+        if (originalTangent.sqrMagnitude <= 0.0001f ||
+            deformedTangent.sqrMagnitude <= 0.0001f)
+            return;
+
+        var rotationDelta = Quaternion.AngleAxis(
+            Vector2.SignedAngle(originalTangent, deformedTangent),
+            Vector3.forward);
+        var offsetFromEndpoint = slideOK.transform.position - originalEnd;
+        slideOK.transform.position = deformedEnd + rotationDelta * offsetFromEndpoint;
+        slideOK.transform.rotation = rotationDelta * slideOK.transform.rotation;
+    }
+
+    private void AppendRouteEnd(Vector3 endPosition)
+    {
+        var previous = slidePositions.LastOrDefault();
+        var previousRotation = slideRotations.LastOrDefault();
+        var denominator = previous.magnitude * endPosition.magnitude;
+        var cosine = denominator > 0.0001f
+            ? Mathf.Clamp(Vector3.Dot(previous, endPosition) / denominator, -1f, 1f)
+            : 1f;
+        var angle = Mathf.Acos(cosine) * Mathf.Rad2Deg;
+        if (slideRotations.Count >= 2)
+        {
+            var rotationDelta = Mathf.DeltaAngle(
+                slideRotations[^2].eulerAngles.z,
+                slideRotations[^1].eulerAngles.z);
+            if (rotationDelta < 0f)
+                angle = -angle;
+        }
+
+        slidePositions.Add(endPosition);
+        slideRotations.Add(previousRotation * Quaternion.Euler(0f, 0f, angle));
+    }
+
+    private static float[] BuildCumulativeDistances(IReadOnlyList<Vector3> points)
+    {
+        var distances = new float[points.Count];
+        for (var i = 1; i < points.Count; i++)
+            distances[i] = distances[i - 1] + Vector3.Distance(points[i - 1], points[i]);
+        return distances;
+    }
+
+    private static Vector3 SamplePolyline(
+        IReadOnlyList<Vector3> points,
+        IReadOnlyList<float> distances,
+        float targetDistance)
+    {
+        if (points.Count == 0)
+            return Vector3.zero;
+        if (points.Count == 1 || distances[^1] <= 0.0001f)
+            return points[0];
+
+        targetDistance = Mathf.Clamp(targetDistance, 0f, distances[^1]);
+        var upper = 1;
+        while (upper < distances.Count - 1 && distances[upper] < targetDistance)
+            upper++;
+        var lower = upper - 1;
+        var segmentLength = distances[upper] - distances[lower];
+        var amount = segmentLength > 0.0001f
+            ? (targetDistance - distances[lower]) / segmentLength
+            : 0f;
+        return Vector3.Lerp(points[lower], points[upper], amount);
+    }
+
+    private static Vector3 SamplePolylineTangent(
+        IReadOnlyList<Vector3> points,
+        IReadOnlyList<float> distances,
+        float targetDistance)
+    {
+        if (points.Count < 2)
+            return Vector3.right;
+        var sampleDistance = Mathf.Max(0.01f, distances[^1] * 0.005f);
+        return SamplePolyline(points, distances, targetDistance + sampleDistance) -
+               SamplePolyline(points, distances, targetDistance - sampleDistance);
     }
 
     private void AdjustReverseArcJudgeEffectRadius()
@@ -299,7 +908,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     }
     /// <summary>
     /// Connection Slide
-    /// <para>强制完成该Slide</para>
+    /// <para>Forces this Slide to finish</para>
     /// </summary>
     public void ForceFinish()
     {
@@ -325,21 +934,36 @@ public class SlideDrop : NoteLongDrop, IFlasher
                                    .Select(x => x.Key);
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
         boundSensors.AddRange(allSensors);
-        if (!previewOnly)
-            foreach (var sensor in allSensors)
-                inputManager.BindSensor(Check, sensor);
     }
+    private void BindJudgeInputWhenReady()
+    {
+        if (previewOnly || isJudgeInputBound || !canCheck)
+            return;
+
+        foreach (var sensor in boundSensors)
+            inputManager.BindSensor(Check, sensor);
+        isJudgeInputBound = true;
+    }
+    private bool IgnoreSensorGroup(SensorGroup group)
+    {
+        // Mixed A/D slides cross both sensor rings, so no ring is excluded.
+        if (isDZone != isDZoneEnd)
+            return false;
+
+        return isDZone
+            ? group == SensorGroup.A || group == SensorGroup.B
+            : group == SensorGroup.E || group == SensorGroup.D;
+    }
+
     void GetSensors(RectTransform[] sensors)
     {
         Sensor lastSensor = null;
-        foreach (var bar in slideBars)
+        foreach (var pos in routeBarPositions)
         {
-            var pos = bar.transform.position;
-            
             foreach (var s in sensors)
             {
                 var sensor = s.GetComponent<Sensor>();
-                if (sensor.Group == SensorGroup.E || sensor.Group == SensorGroup.D)
+                if (IgnoreSensorGroup(sensor.Group))
                     continue;
 
                 var rCenter = s.position;
@@ -368,9 +992,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
         if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
             return;
 
-        /// time      是Slide启动的时间点
-        /// timeStart 是Slide完全显示但未启动
-        /// LastFor   是Slide的时值
+        /// time      is when the Slide starts
+        /// timeStart is when the Slide is fully visible but not yet moving
+        /// LastFor   is the Slide duration
         var timing = timeProvider.AudioTime - time;
         var startTiming = timeProvider.AudioTime - timeStart;
         var forceJudgeTiming = time + LastFor + 0.6;
@@ -384,6 +1008,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
         else if (startTiming >= -0.05f)
             canCheck = true;
+
+        BindJudgeInputWhenReady();
 
         if (timing > 0)
             Running();
@@ -417,10 +1043,16 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 DestroySelf();
             return;
         }
-        // Slide淡入期间，不透明度从0到0.55耗时200ms
+        // During Slide fade-in, opacity rises from 0 to 0.55 over 200ms
         var startiming = timeProvider.AudioTime - timeStart;
         if (startiming <= 0f)
         {
+            if (fadeInTime >= -0.0001f)
+            {
+                fadeInAnimator.enabled = false;
+                setSlideBarAlpha(startiming >= 0f ? 1f : 0f);
+                return;
+            }
             if (startiming >= -0.05f)
             {
                 fadeInAnimator.enabled = false;
@@ -444,7 +1076,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 alpha = 0;
             else
             {
-                // 只有当它是一个起点Slide（而非Slide Group中的子部分）的时候，才会有开始的星星渐入动画
+                // Only a starting Slide, not a child segment in a Slide Group, fades in its initial star
                 alpha = 1f - -timing / (time - timeStart);
                 alpha = alpha > 1f ? 1f : alpha;
                 alpha = alpha < 0f ? 0f : alpha;                
@@ -475,7 +1107,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     }
     public void Check(object sender, InputEventArgs arg) => Check();
     /// <summary>
-    /// 判定队列检查
+    /// Checks the judgement queue
     /// </summary>
     public void Check()
     {
@@ -542,15 +1174,17 @@ public class SlideDrop : NoteLongDrop, IFlasher
     }
     void HideBar(int endIndex)
     {
-        endIndex = endIndex - 1;
-        endIndex = Math.Min(endIndex, slideBars.Count - 1);
-        for (int i = 0; i <= endIndex; i++)
+        var logicalHideCount = Mathf.Clamp(endIndex, 0, logicalBarCount);
+        var visualHideCount = logicalBarCount > 0
+            ? Mathf.CeilToInt(logicalHideCount * slideBars.Count / (float)logicalBarCount)
+            : 0;
+        for (var i = 0; i < visualHideCount && i < slideBars.Count; i++)
             slideBars[i].SetActive(false);
     }
     /// <summary>
     /// AutoPlay
     /// <para>
-    /// 用于触发Sensor
+    /// Triggers Sensors
     /// </para>
     /// </summary>
     void Running()
@@ -567,7 +1201,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         foreach (var s in sensors.Select(x => x.GetComponent<RectTransform>()))
         {
             var sensor = s.GetComponent<Sensor>();
-            if (sensor.Group == SensorGroup.E || sensor.Group == SensorGroup.D)
+            if (IgnoreSensorGroup(sensor.Group))
                 continue;
 
             var rCenter = s.position;
@@ -587,29 +1221,29 @@ public class SlideDrop : NoteLongDrop, IFlasher
             sManager.SetSensorOn(s.Type, guid);
     }
     /// <summary>
-    /// Slide判定
+    /// Judges the Slide
     /// </summary>
     void Judge()
     {
         if (!ConnectInfo.IsGroupPartEnd && ConnectInfo.IsConnSlide)
             return;
         var starTiming = timeStart + (time - timeStart) * 0.75;
-        var stayTime = (time + LastFor) - judgeTiming; // 停留时间
+        var stayTime = (time + LastFor) - judgeTiming; // Dwell time
         if (!isJudged)
         {
             arriveTime = timeProvider.AudioTime;
             var triggerTime = timeProvider.AudioTime;           
 
-            const float totalInterval = 1.2f; // 秒
-            const float nPInterval = 0.4666667f; // Perfect基础区间
+            const float totalInterval = 1.2f; // Seconds
+            const float nPInterval = 0.4666667f; // Base Perfect interval
 
-            float extInterval = MathF.Min(stayTime / 4, 0.733333f);           // Perfect额外区间
-            float pInterval = MathF.Min(nPInterval + extInterval, totalInterval);// Perfect总区间
+            float extInterval = MathF.Min(stayTime / 4, 0.733333f);           // Extra Perfect interval
+            float pInterval = MathF.Min(nPInterval + extInterval, totalInterval);// Total Perfect interval
             var ext = MathF.Max(extInterval - 0.4f,0);
-            float grInterval = MathF.Max(0.4f - extInterval, 0);        // Great总区间
-            float gdInterval = MathF.Max(0.3333334f - ext, 0); // Good总区间
+            float grInterval = MathF.Max(0.4f - extInterval, 0);        // Total Great interval
+            float gdInterval = MathF.Max(0.3333334f - ext, 0); // Total Good interval
 
-            var diff = judgeTiming - triggerTime; // 大于0为Fast，小于为Late
+            var diff = judgeTiming - triggerTime; // Positive is Fast; negative is Late
             bool isFast = false;
             JudgeType? judge = null;
 
@@ -670,9 +1304,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
     }
     /// <summary>
-    /// 计算引导Star进入最后一个判定区的时机
+    /// Calculates when the guide Star enters the final judgement area
     /// </summary>
-    /// <returns>正解帧 (单位: s)</returns>
+    /// <returns>Correct judgement frame in seconds</returns>
     float CalJudgeTiming()
     {
         var s = judgeSensors.LastOrDefault().gameObject.transform.GetComponent<RectTransform>();
@@ -694,12 +1328,12 @@ public class SlideDrop : NoteLongDrop, IFlasher
             var newPos = ba * pos + b;
 
             if ((newPos - rCenter).sqrMagnitude <= (radius * radius + starRadius * starRadius))
-                return process;
+                return GetTimeProgressForPathProgress(process);
         }
         return 0.9f;
     }
     /// <summary>
-    /// 强制将Slide判定为TooLate并销毁
+    /// Forces a TooLate judgement and destroys the Slide
     /// </summary>
     void TooLateJudge()
     {
@@ -711,8 +1345,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
         DestroySelf();
     }
     /// <summary>
-    /// 销毁当前Slide
-    /// <para>当 <paramref name="onlyStar"/> 为true时，仅销毁引导Star</para>
+    /// Destroys the current Slide
+    /// <para>When <paramref name="onlyStar"/> is true, destroys only the guide Star</para>
     /// </summary>
     /// <param name="onlyStar"></param>
     void DestroySelf(bool onlyStar = false)
@@ -738,7 +1372,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
     }
     /// <summary>
-    /// 清空所有已触发的Sensor
+    /// Clears all triggered Sensors
     /// </summary>
     void ClearTriggeredSensor()
     {
@@ -746,14 +1380,25 @@ public class SlideDrop : NoteLongDrop, IFlasher
                            .Select(x => x.Type);
         foreach (var t in sensors)
             sManager.SetSensorOff(t, guid);
+        // Also release every sensor the auto-play star physically overlapped. Running() turns
+        // these On by geometry (star radius), which can include sensors OUTSIDE the judge path,
+        // so releasing only the judge areas leaves those stuck On. A stuck-On sensor makes
+        // Sensor.Click() a no-op, so DJAuto's ClickSensor stops registering and every later note
+        // on it misses. This is worst after a pause: Running() keeps re-asserting SetSensorOn
+        // on the frozen star position each FixedUpdate, and those are never cleared on destroy.
+        foreach (var s in triggerSensors)
+            if (s != null)
+                sManager.SetSensorOff(s.Type, guid);
+        triggerSensors.Clear();
     }
     void OnDestroy()
     {
         if (isDestroying)
             return;
         isDestroying = true;
-        foreach (var sensor in boundSensors)
-            inputManager?.UnbindSensor(Check, sensor);
+        if (isJudgeInputBound)
+            foreach (var sensor in boundSensors)
+                inputManager?.UnbindSensor(Check, sensor);
         if (previewOnly || HttpHandler.IsReloding)
             return;
         ClearTriggeredSensor();
@@ -774,7 +1419,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
                     SetJust();
                     break;
             }
-            // 只有组内最后一个Slide完成 才会显示判定条并增加总数
+            // Only completion of the last Slide in a group shows the judgement bar and increments the total
             objectCounter.ReportResult(this, judgeResult, isBreak);
             if (isBreak && judgeResult == JudgeType.Perfect)
                 slideOK.GetComponent<Animator>().runtimeAnimatorController = judgeBreakShine;
@@ -782,20 +1427,20 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
         else
         {
-            // 如果不是组内最后一个 那么也要将判定条删掉
+            // Remove the judgement bar when this is not the last Slide in the group
             Destroy(slideOK);
         }
     }
     /// <summary>
-    /// 更新引导Star状态
-    /// <para>包括位置，角度</para>
+    /// Updates the guide Star state
+    /// <para>Includes position and angle</para>
     /// </summary>
     void UpdateStar()
     {
         spriteRenderer_star.color = Color.white;
         star_slide.transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
 
-        var process = MathF.Min((LastFor - GetRemainingTime()) / LastFor,1);
+        var process = GetSlidePathProgress(timeProvider.AudioTime);
         var indexProcess = (slidePositions.Count - 1) * process;
         var index = (int)indexProcess;
         var pos = indexProcess - index;
@@ -847,6 +1492,32 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 HideBar(barIndex);
                 break;
         }
+    }
+
+    private float GetSlidePathProgress(float audioTime)
+    {
+        return SvController.GetTypedOnlyProgress(time, LastFor, audioTime, "slide");
+    }
+
+    private float GetTimeProgressForPathProgress(float pathProgress)
+    {
+        if (!SvController.HasTypedCurve("slide"))
+            return pathProgress;
+
+        var bestTimeProgress = pathProgress;
+        var bestError = float.MaxValue;
+        const int samples = 128;
+        for (var sample = 0; sample <= samples; sample++)
+        {
+            var timeProgress = sample / (float)samples;
+            var currentPathProgress = GetSlidePathProgress(time + LastFor * timeProgress);
+            var error = Mathf.Abs(currentPathProgress - pathProgress);
+            if (error >= bestError)
+                continue;
+            bestError = error;
+            bestTimeProgress = timeProgress;
+        }
+        return bestTimeProgress;
     }
    
     private void setSlideBarAlpha(float alpha)

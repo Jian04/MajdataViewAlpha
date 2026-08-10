@@ -7,15 +7,18 @@ namespace Assets.Scripts
     {
         public char areaPosition;
         public bool isFirework;
-        // ALPHA: set by JsonDataLoader to override fill color
+        public bool isBreak;
         public Material colorOverrideMaterial;
         public float noteScale = 1f;
+        public float noteScaleX = 1f;
+        public float noteScaleY = 1f;
 
         public GameObject tapEffect;
         public GameObject judgeEffect;
 
 
         protected Sprite[] judgeText;
+        protected Sprite judgeTextBreak;
         public TouchGroup GroupInfo;
 
         protected Quaternion GetRoation()

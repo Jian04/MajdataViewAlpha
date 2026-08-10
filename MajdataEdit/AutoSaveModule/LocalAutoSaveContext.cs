@@ -6,7 +6,7 @@
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     本地自动保存上下文
+///     Local autosave context.
 /// </summary>
 public class LocalAutoSaveContext : IAutoSaveContext
 {

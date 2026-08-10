@@ -150,6 +150,9 @@
   <data name="ShowJudgeLine" xml:space="preserve">
     <value>播放时显示判定线</value>
   </data>
+  <data name="ShowJudgeArea" xml:space="preserve">
+    <value>显示判定区</value>
+  </data>
   <data name="ShowAllPerfect" xml:space="preserve">
     <value>显示并播放 All Perfect</value>
   </data>
@@ -424,10 +427,10 @@
     <value>屏幕中心显示</value>
   </data>
   <data name="ExportVideo" xml:space="preserve">
-    <value>导出视频</value>
+    <value>导出视频（60帧）</value>
   </data>
   <data name="ExportVideo60" xml:space="preserve">
-    <value>导出视频（60帧）</value>
+    <value>导出视频（120帧）</value>
   </data>
   <data name="ComboDisplayAccClassic" xml:space="preserve">
     <value>Achievement (+) (旧框)</value>
@@ -471,7 +474,7 @@
   <data name="RecoveryDoubleCheck" xml:space="preserve">
     <value>确认要将此数据（自动保存于{0}）恢复至{1}吗？
 （恢复之前的maidata.txt会被更名为maidata.before_recovery.txt）</value>
-    <comment>{0}=自动保存时间，{1}=原maidata路径</comment>
+    <comment>{0}=autosave time, {1}=original maidata path</comment>
   </data>
   <data name="EnableSmoothSlideAnime" xml:space="preserve">
     <value>平滑Slide动画</value>
@@ -490,24 +493,6 @@
   </data>
   <data name="SmoothSlideAnimeTooltip" xml:space="preserve">
     <value>启用后，Slide轨迹会随着星星消失，而不是以判定区为单位消失</value>
-  </data>
-  <data name="SyntaxCheckLevel1" xml:space="preserve">
-    <value>禁用</value>
-  </data>
-  <data name="SyntaxCheckLevel2" xml:space="preserve">
-    <value>警告</value>
-  </data>
-  <data name="SyntaxCheckLevel3" xml:space="preserve">
-    <value>开启</value>
-  </data>
-  <data name="SyntaxDisplay" xml:space="preserve">
-    <value>语法检查</value>
-  </data>
-  <data name="InternalErr" xml:space="preserve">
-    <value>内部错误</value>
-  </data>
-  <data name="SyntaxWarning" xml:space="preserve">
-    <value>[警告] 谱面应当以"E"结尾："{0}"({1}L,{2}C)</value>
   </data>
   <data name="PlayMethod" xml:space="preserve">
     <value>模拟方式</value>
@@ -554,4 +539,571 @@
   <data name="FormatBrush32" xml:space="preserve">
     <value>格式刷（32分）</value>
   </data>
+  <data name="ExportNoAlpha" xml:space="preserve"><value>导出无特效谱</value></data>
+  <data name="RecordVideo" xml:space="preserve"><value>录制视频…</value></data>
+  <data name="ChartLibrarySearch" xml:space="preserve"><value>谱面库搜索</value></data>
+  <data name="AlphaSyntaxHelp" xml:space="preserve"><value>Alpha 语法帮助</value></data>
+  <data name="NoteDensity" xml:space="preserve"><value>物量密度图</value></data>
+  <data name="FormatBrush12" xml:space="preserve"><value>格式刷（12分）</value></data>
+  <data name="FormatBrush24" xml:space="preserve"><value>格式刷（24分）</value></data>
+  <data name="AutoOrganize16" xml:space="preserve"><value>自动整理（全谱16分）</value></data>
+  <data name="MuriCheckExternal" xml:space="preserve"><value>无理检测（MaiMuriDX）</value></data>
+  <data name="ConvertAudio44100" xml:space="preserve"><value>音频转换为 44100Hz</value></data>
+  <data name="CutMediaRange" xml:space="preserve"><value>剪掉音/视频片段</value></data>
+  <data name="PrependFourBeats" xml:space="preserve"><value>给音/视频前添加空白拍</value></data>
+  <data name="MediaMarkersRequired" xml:space="preserve"><value>请在谱面时间轴的独立行中分别添加 @start 和 @end。</value></data>
+  <data name="PrependFourBeatsDone" xml:space="preserve"><value>已在媒体前添加 {0:0.###} 拍空白（{1:0.###} 秒），原文件已备份到 backup。</value></data>
+  <data name="BeatCountTitle" xml:space="preserve"><value>添加空白拍</value></data>
+  <data name="BeatCount" xml:space="preserve"><value>拍数</value></data>
+  <data name="InvalidBeatCount" xml:space="preserve"><value>请输入大于 0 的有效拍数。</value></data>
+  <data name="Confirm" xml:space="preserve"><value>确定</value></data>
+  <data name="MediaAccessDenied" xml:space="preserve"><value>无法写回媒体文件：{0}。请关闭占用该文件的程序，并确认文件不是只读。</value></data>
+  <data name="NoValidBpm" xml:space="preserve"><value>谱面中没有可用于计算四拍时长的有效 BPM。</value></data>
+  <data name="MediaToolBusy" xml:space="preserve"><value>另一个媒体工具仍在运行。</value></data>
+  <data name="UnsupportedMediaType" xml:space="preserve"><value>不支持该媒体格式。</value></data>
+  <data name="CreateMeasure44" xml:space="preserve"><value>创建 4/4 小节</value></data>
+  <data name="CreateMeasure34" xml:space="preserve"><value>创建 3/4 小节</value></data>
+  <data name="MeasureCount1" xml:space="preserve"><value>1 个小节</value></data>
+  <data name="MeasureCount2" xml:space="preserve"><value>2 个小节</value></data>
+  <data name="MeasureCount3" xml:space="preserve"><value>3 个小节</value></data>
+  <data name="MeasureCount4" xml:space="preserve"><value>4 个小节</value></data>
+  <data name="MirrorSelection" xml:space="preserve"><value>翻转选中内容</value></data>
+  <data name="FormatSelection" xml:space="preserve"><value>格式刷选中内容</value></data>
+  <data name="HighestDivision" xml:space="preserve"><value>最高分拍</value></data>
+  <data name="Division8" xml:space="preserve"><value>8 分</value></data>
+  <data name="Division12" xml:space="preserve"><value>12 分</value></data>
+  <data name="Division16" xml:space="preserve"><value>16 分</value></data>
+  <data name="Division24" xml:space="preserve"><value>24 分</value></data>
+  <data name="Division32" xml:space="preserve"><value>32 分</value></data>
+  <data name="SearchSelectedInLibrary" xml:space="preserve"><value>在配置库中搜索选中内容</value></data>
+  <data name="SongTitleLabel" xml:space="preserve"><value>曲名</value></data>
+  <data name="ArtistLabel" xml:space="preserve"><value>曲师</value></data>
+  <data name="DesignerLabel" xml:space="preserve"><value>谱师</value></data>
+  <data name="LevelLabel" xml:space="preserve"><value>等级</value></data>
+  <data name="ExportOptions" xml:space="preserve"><value>导出参数</value></data>
+  <data name="FrameRate" xml:space="preserve"><value>帧率</value></data>
+  <data name="Resolution" xml:space="preserve"><value>分辨率</value></data>
+  <data name="KeepCurrentResolution" xml:space="preserve"><value>保持当前</value></data>
+  <data name="CustomOption" xml:space="preserve"><value>自定义…</value></data>
+  <data name="EvenResolutionTip" xml:space="preserve"><value>偶数分辨率，例如 1600×900</value></data>
+  <data name="RecordingSafeLimit" xml:space="preserve"><value>性能建议：60 fps 不高于 2560×1440；120 fps 不高于 1920×1080。</value></data>
+  <data name="SongCard" xml:space="preserve"><value>歌曲卡片</value></data>
+  <data name="OriginalStyle" xml:space="preserve"><value>原版</value></data>
+  <data name="OfficialStyleCover" xml:space="preserve"><value>仿官风格封面</value></data>
+  <data name="ShowSongIntro" xml:space="preserve"><value>播放开头歌曲封面展示</value></data>
+  <data name="ShowAllPerfectEnding" xml:space="preserve"><value>谱面结束后播放 All Perfect 演出</value></data>
+  <data name="ExportLayers" xml:space="preserve"><value>导出图层</value></data>
+  <data name="BackgroundPvLayer" xml:space="preserve"><value>背景 / PV</value></data>
+  <data name="NotesLayer" xml:space="preserve"><value>音符</value></data>
+  <data name="EffectsLayer" xml:space="preserve"><value>特效（判定特效 / 全屏滤镜）</value></data>
+  <data name="UiLayer" xml:space="preserve"><value>界面（判定线 / 信息 / 歌曲卡片）</value></data>
+  <data name="LayeredExport" xml:space="preserve"><value>分层导出：每个选中图层单独输出视频</value></data>
+  <data name="StartRecording" xml:space="preserve"><value>开始录制</value></data>
+  <data name="Close" xml:space="preserve"><value>关闭</value></data>
+  <data name="RecordOpenChartFirst" xml:space="preserve"><value>请先打开一个谱面。</value></data>
+  <data name="RecordInvalidResolution" xml:space="preserve"><value>请输入正偶数分辨率，例如 1920×1080；或选择保持当前。</value></data>
+  <data name="RecordResolutionHighWarning" xml:space="preserve"><value>{0}×{1}、{2} fps 的原始采集数据量很大，可能严重卡顿、耗尽显存或触发显卡驱动黑屏。建议 60 fps 不高于 2560×1440，120 fps 不高于 1920×1080。仍要继续吗？</value></data>
+  <data name="RecordSelectLayer" xml:space="preserve"><value>至少选择一个导出图层。</value></data>
+  <data name="RecordRenderingAudio" xml:space="preserve"><value>{0}：正在渲染音频轨与打击音（界面会短暂停顿）…</value></data>
+  <data name="RecordPreparing" xml:space="preserve"><value>{0}：正在准备（View 重载谱面/启动编码器）…</value></data>
+  <data name="RecordPreparingElapsed" xml:space="preserve"><value>{0}：正在准备（View 重载谱面/启动编码器）… {1:0}秒</value></data>
+  <data name="RecordProgress" xml:space="preserve"><value>{0}：录制中… 已 {1:0}秒，输出 {2:0.0} MB</value></data>
+  <data name="RecordCancelled" xml:space="preserve"><value>已取消，后续图层不再录制（当前一轮由 View 侧自行结束）。</value></data>
+  <data name="RecordTimeout" xml:space="preserve"><value>等待 {0} 生成超时，已停止。请检查 View 侧报错信息。</value></data>
+  <data name="RecordAllLayersDone" xml:space="preserve"><value>全部 {0} 层录制完成，视频在谱面文件夹中（out_图层.mp4）。</value></data>
+  <data name="RecordDone" xml:space="preserve"><value>录制完成，视频为谱面文件夹中的 out.mp4。</value></data>
+  <data name="Cancelling" xml:space="preserve"><value>正在取消…</value></data>
+  <data name="CancellingBeforeClose" xml:space="preserve"><value>正在取消，取消完成后再关闭…</value></data>
+  <data name="AutoOrganize" xml:space="preserve"><value>自动整理</value></data>
+  <data name="AddMeasureCommentsQuestion" xml:space="preserve"><value>是否添加每四小节一条的小节注释？</value></data>
+  <data name="AddComments" xml:space="preserve"><value>添加注释</value></data>
+  <data name="SkipComments" xml:space="preserve"><value>不添加</value></data>
+  <data name="ChartLibraryTitle" xml:space="preserve"><value>谱面节奏检索</value></data>
+  <data name="RhythmPattern" xml:space="preserve"><value>节奏型</value></data>
+  <data name="RhythmPatternExample" xml:space="preserve"><value>例：{16}1,,2,,3, 或 1/5,,2/6</value></data>
+  <data name="ExactPosition" xml:space="preserve"><value>精确位置</value></data>
+  <data name="Fuzzy" xml:space="preserve"><value>模糊</value></data>
+  <data name="Search" xml:space="preserve"><value>搜索</value></data>
+  <data name="Sort" xml:space="preserve"><value>排序</value></data>
+  <data name="Count" xml:space="preserve"><value>次数</value></data>
+  <data name="Level" xml:space="preserve"><value>等级</value></data>
+  <data name="DensityPerCombo" xml:space="preserve"><value>密度/CB</value></data>
+  <data name="StarCount" xml:space="preserve"><value>星星数</value></data>
+  <data name="Descending" xml:space="preserve"><value>降序</value></data>
+  <data name="Song" xml:space="preserve"><value>歌曲</value></data>
+  <data name="Path" xml:space="preserve"><value>路径</value></data>
+  <data name="CopyMatch" xml:space="preserve"><value>复制段落</value></data>
+  <data name="CopyContext" xml:space="preserve"><value>复制上下文</value></data>
+  <data name="CopyPath" xml:space="preserve"><value>复制路径</value></data>
+  <data name="OpenChart" xml:space="preserve"><value>载入谱面</value></data>
+  <data name="NoteDensityTitle" xml:space="preserve"><value>物量密度图</value></data>
+  <data name="SlideHeadLegend" xml:space="preserve"><value>Tap / Hold / Slide 头</value></data>
+  <data name="SlideBodyLegend" xml:space="preserve"><value>Slide 体</value></data>
+  <data name="AudioIntensityLegend" xml:space="preserve"><value>音频强度</value></data>
+  <data name="AssetsSection" xml:space="preserve"><value>素材</value></data>
+  <data name="DefaultFolder" xml:space="preserve"><value>默认文件夹</value></data>
+  <data name="OverallTheme" xml:space="preserve"><value>整体主题</value></data>
+  <data name="WindowBackground" xml:space="preserve"><value>窗口背景</value></data>
+  <data name="DefaultOption" xml:space="preserve"><value>默认</value></data>
+  <data name="IntroBackground" xml:space="preserve"><value>开头封面背景</value></data>
+  <data name="EditorFont" xml:space="preserve"><value>编辑器字体</value></data>
+  <data name="EditorFontSize" xml:space="preserve"><value>编辑器字号</value></data>
+  <data name="ViewDisplayFont" xml:space="preserve"><value>播放器字体</value></data>
+  <data name="EnableVisualChartEditor" xml:space="preserve"><value>点击生成音符</value></data>
+  <data name="SongInfoCard" xml:space="preserve"><value>歌曲信息卡片</value></data>
+  <data name="EditorLightMode" xml:space="preserve"><value>编辑区白天模式</value></data>
+  <data name="ShowGeneratedMark" xml:space="preserve"><value>显示左下角标识与时间</value></data>
+  <data name="ShowSongDetail" xml:space="preserve"><value>显示开头封面</value></data>
+  <data name="ChartLibraryMissing" xml:space="preserve"><value>未找到 charts 谱面库（请确认程序目录下有 charts 文件夹）。</value></data>
+  <data name="ChartLibraryPrompt" xml:space="preserve"><value>输入节奏型后点击搜索。</value></data>
+  <data name="ChartLibraryPath" xml:space="preserve"><value>谱面库：{0}</value></data>
+  <data name="ChartLibraryEnterPattern" xml:space="preserve"><value>请输入节奏型。</value></data>
+  <data name="ChartLibrarySearching" xml:space="preserve"><value>搜索中…</value></data>
+  <data name="ChartLibraryReading" xml:space="preserve"><value>正在读取谱面库并匹配节奏型。</value></data>
+  <data name="ChartLibraryProgress" xml:space="preserve"><value>搜索进度：{0}/{1} 谱面  {2}</value></data>
+  <data name="ChartLibraryComplete" xml:space="preserve"><value>完成：{0} 个结果，{1} 处匹配。</value></data>
+  <data name="ChartLibraryElapsed" xml:space="preserve"><value>耗时 {0:F2}s，难度：{1}</value></data>
+  <data name="ChartLibraryCancelled" xml:space="preserve"><value>已取消。</value></data>
+  <data name="ChartLibraryFailed" xml:space="preserve"><value>搜索失败。</value></data>
+  <data name="ChartLibraryCopiedMatch" xml:space="preserve"><value>已复制匹配段落。</value></data>
+  <data name="ChartLibraryCopiedContext" xml:space="preserve"><value>已复制上下文。</value></data>
+  <data name="ChartLibraryCopiedPath" xml:space="preserve"><value>已复制 maidata 路径。</value></data>
+  <data name="ChartLibraryPosition" xml:space="preserve"><value>BPM={0}   第 {1}cb 起 / 共 {2}cb   ☆{3}   {4:F2}s -&gt; {5:F2}s</value></data>
+  <data name="NoteDensityWindowTitle" xml:space="preserve"><value>物量密度图 - {0}</value></data>
+  <data name="NoteDensitySummary" xml:space="preserve"><value>总物量 {0} · {1}</value></data>
+  <data name="NoteDensityRenderFailed" xml:space="preserve"><value>密度图渲染失败：{0}</value></data>
+  <data name="AlphaHelpText" xml:space="preserve"><value><![CDATA[
+Alpha 语法帮助
+==============
+
+基本规则
+--------
+<> 命令写在谱面时间轴中，不占用逗号时间格。
+音符类型可用：tap、each、hold、slide、star、break、touch、touchhold。
+分类型值优先于全局值；使用 NULL 恢复。
+所有时长参数既可写秒数，也可写 8:1、16:1 等拍长；拍长使用当前位置之前最近的 BPM，换算规则与 Slide 时长一致。
+参数为空时按 Tab 会填入该参数的推荐默认值；参数已有内容时按 Tab 前进到下一个参数。
+
+拍号、背景与注释
+----------------
+@4/4                 设置 4/4 拍
+@3/4                 设置 3/4 拍
+@start               标记媒体剪辑起点（独立一行）
+@end                 标记媒体剪辑终点（独立一行）
+@FF00FF              给后续编辑区叠加淡色背景
+@NULL                清除编辑区背景色
+|| 小节 1-4          单行注释
+|* 多行注释 *|       块注释
+
+音符颜色与透明度
+----------------
+<COLOR*FF00FF>       后续全部音符染色
+<COLOR*tap=FF77AA,slide=66DDFF>
+<COLOR*NULL>         全部恢复默认颜色
+<COLOR*tap=NULL>     只恢复 Tap
+<ALPHA*0.5>          全部音符透明度，范围 0 到 1
+<ALPHA*tap=0.4,slide=0.8>
+<ALPHA*NULL>
+<ALPHA*tap=NULL>
+
+音符尺寸
+--------
+<SIZE*1.25>          普通音符/星星头等比缩放（不缩放 Slide 体）
+<SIZE*(1.2,0.8)>     独立设置音符局部 X、Y 倍率
+<SIZE*tap=(1,2)>     仅修改 Tap 的局部 X、Y 尺寸
+<SIZE*tap=0.9,star=1.2>
+<SIZE*slide=1.25>    仅缩放 Slide 体
+<SIZE*hold=(1.1,0.8),touch=0.9>
+<SIZE*NULL>
+<SIZE*tap=NULL>
+<SIZE*slide=NULL>
+
+速度
+----
+<SV*2>               真实滚动速度倍率
+<SV*tap=1.5,slide=0.8>
+<SV*tap=NULL>        该类型重新跟随全局 SV
+<HS*1.2>             传统下落速度倍率
+<HS*hold=0.8,star=1.4>
+<HS*hold=NULL>
+
+判定线与显示
+------------
+<JLINE*00FF00>       立即改变播放中的判定线颜色
+<JLINE*(00FF00,0.3)> 用 0.3 秒渐变
+<JLINE*(00FF00,8:1)> 用当前位置 BPM 的八分音符时长渐变
+<JLINE*NULL>         恢复皮肤默认颜色
+显示命令省略最后的过渡时间时会立即切换；过渡时间也可写成 8:1、16:1。
+<ShowJudgeLine*(False)>
+<ShowJudgeLine*(False,1)>
+<ShowJudgeLine*(False,8:1)>
+<ShowJudgeArea*(True,1)>
+<ShowJudgeText*(False,1)>
+<ShowJudgeInfo*(False,1)>
+<ShowComboInfo*(False,1)>
+<InnerBrightness*(0.5,1)>
+<OuterBrightness*(0.8,1)>
+<ComboDisplay*(combo,0)>
+
+字幕
+----
+<TEXT*你好>          保持到下一条 TEXT
+<TEXT*(你好,2)>      显示 2 秒
+<TEXT*(你好,16:1)>   按当前位置 BPM 显示一个 16 分时长
+<TEXT*>              清除字幕
+
+媒体
+----
+路径相对于谱面文件夹，可使用子文件夹；媒体事件不会显示在波形图。
+<AUDIO*(True,media/voice.ogg)>       播放一次 OGG、WAV 或 MP3
+<AUDIO*(False)>                     提前停止当前附加音频
+<PVOVERLAY*(True,media/cutin.mp4)>   用 PNG、JPG 或 MP4 临时覆盖原 PV
+<PVOVERLAY*(False)>                 提前关闭覆盖并恢复原 PV
+MP4 播放完会自动恢复；静态图片保持到 False 或谱面停止。
+
+画面特效
+--------
+共同规则：True 开启并保持，False 关闭；最后的 [过渡时间] 可省略。
+过渡时间省略时立即切换，可写秒数或 8:1、16:1 等当前位置 BPM 拍长。
+不同名字的特效可以叠加；再次写同名 True 会从当前实际状态渐变到新目标。
+Gaussian  <Gaussian*(True,强度[,过渡时间])>  高斯模糊
+Neon      <Neon*(True,强度[,过渡时间])>      RGB 分离与边缘发光
+Trail     <Trail*(True,强度[,过渡时间])>     历史画面残影
+Fade      <Fade*(True,强度[,过渡时间])>      压黑画面
+Flash     <Flash*(True,强度[,过渡时间])>     闪白画面
+Brightness <Brightness*(True,强度[,过渡时间])> 增加亮度
+Saturation <Saturation*(True,强度[,过渡时间])> 去饱和
+Contrast  <Contrast*(True,强度[,过渡时间])>  增强对比度
+Rainbow   <Rainbow*(True,强度[,过渡时间])>   动态彩虹混合
+Vignette  <Vignette*(True,强度[,过渡时间])>  圆形可视区收缩
+Zoom      <Zoom*(True,倍率[,过渡时间])>      画面中心缩放
+Glitch    <Glitch*(True,强度[,过渡时间])>    横向分段错位
+TVNoise   <TVNoise*(True,强度[,过渡时间])>   扫描线与噪声
+Hue       <Hue*(True,角度[,过渡时间])>       色相旋转（度）
+Tint      <Tint*(True,RRGGBB,强度[,过渡时间])> 向目标颜色混合
+Move      <Move*(True,dx,dy[,过渡时间])>     移动画面
+Rotate    <Rotate*(True,角度[,过渡时间])>    绕中心旋转
+Shake     <Shake*(True,强度,频率[,角度,过渡时间])> 画面抖动（Hz）
+所有特效关闭格式均为 <效果*(False[,过渡时间])>。
+
+音符修饰
+--------
+1f                    Tap 烟花
+1hf[8:1]              Hold 烟花
+1f-5[8:1]             Slide 头烟花
+1m                    地雷 Note
+1d                    D 区 Tap
+2dh[8:1]              D 区 Hold
+3d-6d[8:1]            D 区 Slide
+
+可视化编辑
+----------
+仅在终止状态可用。判定线附近及外侧点击生成 Tap，内侧点击生成 Touch；
+拖动外圈按经过的判定区匹配 Slide。重复点击音符会切换普通、绝赞或 Touch 组合状态。
+手势只生成 Slide 路径，时长由编辑器的时长补全选择。
+]]></value></data>
+  <data name="AskExitPet" xml:space="preserve"><value>是否同时退出桌宠？</value></data>
+  <data name="NoChartForDensity" xml:space="preserve"><value>当前没有可统计的谱面。</value></data>
+  <data name="NoNotesForDensity" xml:space="preserve"><value>当前难度没有可统计的物量。</value></data>
+  <data name="OrganizeNeedsDivision" xml:space="preserve"><value>谱面正文需要至少包含一个 {分度}（如 {16}）才能整理。</value></data>
+  <data name="MuriChartEmpty" xml:space="preserve"><value>当前谱面正文为空。</value></data>
+  <data name="MuriToolMissing" xml:space="preserve"><value>找不到 MaiMuriDX（应随编辑器分发在 tools\MaiMuriDX）。查找路径：{0}</value></data>
+  <data name="MuriNoOutput" xml:space="preserve"><value>（无输出）</value></data>
+  <data name="MuriToolError" xml:space="preserve"><value>MaiMuriDX 报错：{0}</value></data>
+  <data name="MuriCheckFailed" xml:space="preserve"><value>无理检测失败</value></data>
+  <data name="MuriResultTitle" xml:space="preserve"><value>无理检测结果（MaiMuriDX）</value></data>
+  <data name="AudioConvertDone" xml:space="preserve"><value>转换完成，原文件已备份到 backup。</value></data>
+  <data name="MediaCutDone" xml:space="preserve"><value>剪辑完成，原文件已备份到 backup。</value></data>
+  <data name="MediaRangeTitle" xml:space="preserve"><value>剪掉时间段</value></data>
+  <data name="StartSeconds" xml:space="preserve"><value>开始秒</value></data>
+  <data name="EndSeconds" xml:space="preserve"><value>结束秒</value></data>
+  <data name="InvalidMediaRange" xml:space="preserve"><value>请输入合法的开始秒和结束秒。</value></data>
+  <data name="FfmpegFailed" xml:space="preserve"><value>ffmpeg 执行失败。</value></data>
+  <data name="EmptyChart" xml:space="preserve"><value>当前谱面为空。</value></data>
+  <data name="ViewExecutableMissing" xml:space="preserve"><value>找不到 MajdataView.exe。请使用完整发布包（App\MajdataView 目录），或把 MajdataView.exe 放在 MajdataEdit.exe 同目录。</value></data>
+  <data name="FoundSyntaxErrors" xml:space="preserve"><value>发现 {0} 个语法错误</value></data>
+  <data name="SoftwareRenderMode" xml:space="preserve"><value>正在以软件渲染模式运行。</value></data>
+  <data name="AudioDecodeFailed" xml:space="preserve"><value>MP3/OGG 解码失败。{0}</value></data>
+  <data name="MeasureComment" xml:space="preserve"><value>小节 {0}</value></data>
+  <data name="RecordingLoadLabel" xml:space="preserve"><value>录制加载</value></data>
+  <data name="TransitionLabel" xml:space="preserve"><value>转场</value></data>
+  <data name="ValidationIssueAtLine" xml:space="preserve"><value>在第 {0} 行发现问题：{1}</value></data>
+  <data name="ChartStatementInvalid" xml:space="preserve"><value>谱面语句无法解析</value></data>
+  <data name="ChartKeyRange" xml:space="preserve"><value>键位必须在 1 到 8 之间</value></data>
+  <data name="SlideDurationInvalid" xml:space="preserve"><value>Slide 时长必须大于 0，不能使用 [1:0]</value></data>
+  <data name="SlideTargetMissing" xml:space="preserve"><value>Slide 缺少目标键</value></data>
+  <data name="SlideChainInvalid" xml:space="preserve"><value>组合 Slide 格式有误</value></data>
+  <data name="SlideShapeUnknown" xml:space="preserve"><value>不存在的 Slide 形状：{0}</value></data>
+  <data name="WifiConnectionSlideUnsupported" xml:space="preserve"><value>Wifi Slide 不能作为 Connection Slide 的一部分</value></data>
+  <data name="LineSlideGap" xml:space="preserve"><value>直线 Slide 的起点和终点至少需要间隔一个键</value></data>
+  <data name="SlideShapeInvalid" xml:space="preserve"><value>{0} Slide 形状无效</value></data>
+  <data name="VSlideTurnInvalid" xml:space="preserve"><value>V Slide 的拐点只能与起点间隔一个键</value></data>
+  <data name="InvalidBrightnessDelay" xml:space="preserve"><value>亮度和刷新延迟必须是有效数字。</value></data>
+  <data name="InvalidEditorSettings" xml:space="preserve"><value>亮度、速度和刷新延迟必须是有效数字。</value></data>
+  <data name="NoteSpeed" xml:space="preserve"><value>音符速度</value></data>
+  <data name="StarSpeed" xml:space="preserve"><value>星星速度</value></data>
+  <data name="StarColor" xml:space="preserve"><value>星星颜色</value></data>
+  <data name="Pink" xml:space="preserve"><value>粉色</value></data>
+  <data name="Original" xml:space="preserve"><value>原色</value></data>
+  <data name="SoundBgmTip" xml:space="preserve"><value>影响 BGM、录制启动音、节拍提示音和 AP 音效。</value></data>
+  <data name="SoundAnswerTip" xml:space="preserve"><value>影响正解音。</value></data>
+  <data name="SoundJudgeTip" xml:space="preserve"><value>影响 Tap 与 Hold 的判定音效。</value></data>
+  <data name="SoundSlideTip" xml:space="preserve"><value>影响 Slide 与 Break-Slide 的启动音效。</value></data>
+  <data name="SoundBreakTip" xml:space="preserve"><value>影响 Break 判定音效与 Critical Perfect 欢呼声。</value></data>
+  <data name="SoundBreakSlideTip" xml:space="preserve"><value>影响 Break-Slide 完成音效与 Critical Perfect 欢呼声。</value></data>
+  <data name="SoundExTip" xml:space="preserve"><value>影响 EX Note 的判定音效。</value></data>
+  <data name="SoundTouchTip" xml:space="preserve"><value>影响 Touch 的判定音效。</value></data>
+  <data name="SoundHanabiTip" xml:space="preserve"><value>影响烟花音效与 Touch-Hold 按住音效。</value></data>
+  <data name="FfmpegNotFound" xml:space="preserve"><value>找不到 ffmpeg.exe。请将它放在程序目录或 PATH 中。</value></data>
+  <data name="MuriDxUnsupported" xml:space="preserve"><value>无理检测暂时不支持 DX 谱面。</value></data>
+  <data name="UnhandledError" xml:space="preserve"><value>发生错误</value></data>
+  <data name="ChartReadErrorBody" xml:space="preserve"><value>读取 maidata.txt 第 {0} 行时出错：{1}</value></data>
+  <data name="ChartReadErrorTitle" xml:space="preserve"><value>读取谱面时出现错误</value></data>
+  <data name="EditorLine" xml:space="preserve"><value>行</value></data>
+  <data name="NewChartHint" xml:space="preserve"><value>使用右键添加小节，点击 View 添加音符</value></data>
+  <data name="AlphaMissingClose" xml:space="preserve"><value>Alpha 语法缺少右尖括号 &gt;</value></data>
+  <data name="AlphaFormatError" xml:space="preserve"><value>Alpha 语法格式错误</value></data>
+  <data name="AlphaMissingAsterisk" xml:space="preserve"><value>Alpha 语法缺少 *</value></data>
+  <data name="AlphaUnknownCommand" xml:space="preserve"><value>未知的 Alpha 语法：{0}</value></data>
+  <data name="MediaFileMissing" xml:space="preserve"><value>找不到媒体文件：{0}&#10;路径必须相对于谱面文件夹。</value></data>
+  <data name="SoundSettings" xml:space="preserve"><value>音量设置</value></data>
+  <data name="AutoOnset" xml:space="preserve"><value>自动踩音</value></data>
+  <data name="AutoOnsetDescription" xml:space="preserve"><value>根据当前歌曲生成踩音骨架。BPM 留空时自动检测；生成结果仅包含时机，1–8 键位是轮转占位符。</value></data>
+  <data name="AutoOnsetBpmTip" xml:space="preserve"><value>留空则自动检测 BPM；正式使用建议填写准确 BPM。</value></data>
+  <data name="AutoOnsetFirstTip" xml:space="preserve"><value>maidata 的 &amp;first（秒）。留空时可随 BPM 一起自动估计。</value></data>
+  <data name="AutoOnsetDifficultyTip" xml:space="preserve"><value>模型目标难度，支持 13、13+ 等写法，范围 1–15。</value></data>
+  <data name="AutoOnsetThreshold" xml:space="preserve"><value>阈值预设</value></data>
+  <data name="AutoOnsetThresholdRecommended" xml:space="preserve"><value>推荐（0.55）</value></data>
+  <data name="AutoOnsetThresholdDense" xml:space="preserve"><value>较密（0.50）</value></data>
+  <data name="AutoOnsetThresholdSparse" xml:space="preserve"><value>较疏（0.60）</value></data>
+  <data name="AutoOnsetThresholdClean" xml:space="preserve"><value>更干净（0.65）</value></data>
+  <data name="AutoOnsetThresholdTip" xml:space="preserve"><value>一般不需要修改。阈值越低音符越密，越高越疏。</value></data>
+  <data name="AutoOnsetReplaceWarning" xml:space="preserve"><value>警告：生成会替换当前难度的整张谱面。</value></data>
+  <data name="AutoOnsetGenerate" xml:space="preserve"><value>生成并替换</value></data>
+  <data name="AutoOnsetEngineMissing" xml:space="preserve"><value>自动踩音引擎文件不完整，请重新复制 tools\Maicaiyin。</value></data>
+  <data name="AutoOnsetRunning" xml:space="preserve"><value>正在分析音频并生成踩音……</value></data>
+  <data name="AutoOnsetNoOutput" xml:space="preserve"><value>自动踩音没有生成有效谱面。</value></data>
+  <data name="AutoOnsetEnvironmentInvalid" xml:space="preserve"><value>专用自动踩音环境校验失败。必须使用 CPU NumPy 推理环境和 NumPy 2.3.x。</value></data>
+  <data name="AutoOnsetPythonMissing" xml:space="preserve"><value>随包的 64 位 Python 3.12 运行环境缺失或损坏，请重新复制完整的 tools 文件夹。</value></data>
+  <data name="AutoOnsetProcessFailed" xml:space="preserve"><value>自动踩音进程退出（代码 {0}）：&#10;{1}</value></data>
+  <data name="AutoOnsetBpmInvalid" xml:space="preserve"><value>BPM 必须留空或填写大于 0 的数字。</value></data>
+  <data name="AutoOnsetFirstInvalid" xml:space="preserve"><value>First 必须留空或填写有效秒数。</value></data>
+  <data name="AutoOnsetDifficultyInvalid" xml:space="preserve"><value>难度必须在 1–15 之间，可使用 13+ 等写法。</value></data>
+  <data name="AutoOnsetThresholdInvalid" xml:space="preserve"><value>阈值预设无效。</value></data>
+  <data name="AutoOnsetReplaceConfirm" xml:space="preserve"><value>自动踩音会永久替换当前难度的整张谱面；First 如有变化会作用于所有难度。是否继续？</value></data>
+  <data name="AutoOnsetComplete" xml:space="preserve"><value>生成完成：BPM {0:0.###}，First {1:0.######}，共 {2} 个踩音。</value></data>
+  <data name="AutoOnsetCancelled" xml:space="preserve"><value>已取消自动踩音。</value></data>
+  <data name="AutoOnsetCancelling" xml:space="preserve"><value>正在取消……</value></data>
+  <data name="AutoOnsetFailed" xml:space="preserve"><value>自动踩音失败</value></data>
+  <data name="AutoOnsetOpenChartFirst" xml:space="preserve"><value>请先打开歌曲并选择要替换的难度。</value></data>
+  <data name="AutoOnsetStopPlayback" xml:space="preserve"><value>请先停止播放或录制，再运行自动踩音。</value></data>
+  <data name="AutoOnsetApplied" xml:space="preserve"><value>已替换整张谱面并完成 16 分格式刷及全谱整理（无小节注释）。&#10;BPM {0:0.###}，First {1:0.######}，共 {2} 个踩音。</value></data>
+  <data name="AlphaHelpSyntaxLabel" xml:space="preserve"><value>语法</value></data>
+  <data name="AlphaHelpExampleLabel" xml:space="preserve"><value>示例</value></data>
+  <data name="AlphaHelpStructuredText" xml:space="preserve"><value><![CDATA[
+# Alpha 语法与扩展语法
+> 本页以当前解析器和编辑器补全为准。顺序与“<”自动补全一致：音符 → 显示 → 滤镜 → 媒体；前面先列出不属于“<>”命令的编辑器扩展和补充音符语法。
+## 1  基本规则
+- Alpha 命令写成 <命令*参数>，命令名不区分大小写，建议使用补全显示的大写名称。
+- 命令放在时间格中但不消耗逗号；它从所在时间点开始影响后续内容。
+- True / False 控制开关；NULL 用于清除支持重置的音符属性。
+- 时间参数可写秒数（0.5、2）或拍长（8:1、16:3）。拍长使用命令前最近一次 BPM。
+- 可分类型设置的键：tap、each、hold、slide、star、break、touch、touchhold。分类型值覆盖全局值。
+- 输入“<”可打开分类补全；参数为空时按 Tab 填推荐值，已有值时按 Tab 跳到下一参数。
+! 方括号只用于本页表示“可选参数”，实际输入时不要写外层方括号。例如 [,时间] 表示可以省略最后一个逗号和时间。
+E (120){4}<SV*1.5>1,2,<TEXT*(副歌开始,2)>3,4,
+## 2  编辑器扩展与注释
+### 单行与块注释
+S || 注释文字
+E (120){4}1,2,|| 这一行后面的内容不会参与解析
+S |* 多行注释 *|
+E |* 这里可以跨越多行，逗号、音符和 Alpha 命令都会被忽略 *|
+- “||”从当前位置忽略到本行末尾；“|*”与“*|”之间全部忽略并保留换行位置。
+- 块注释不支持嵌套；如果缺少“*|”，从“|*”到文件末尾都会被忽略。
+### 波形拍号
+S @分子/分母
+E @4/4
+E @7/8
+- 分子和分母必须是正整数。标记从当前时间起改变波形强弱拍网格，不改变 View 的谱面速度或音频。
+- 标记必须位于时间格开头、尚未出现音符字符的位置，推荐独占一行。
+- 拍号请使用“@”；旧版“&”拍号在重新读取 maidata 时可能被当成文件字段，不应继续使用。
+### 可重叠音符流
+S @{分拍}音符流,
+E @{4}1h,2h,3h,
+E {8}1,2,3,4,5,6,
+- “@”后紧跟“{”时建立一条独立音符流；它从当前时间开始按自己的分拍前进，不推进主谱时间。
+- 相同时间的音符会按 Each 合并。以上示例等价于 {8}1h/1,2,2h/3,4,3h/5,6,。
+- 建议独占一行并写在要叠加的主谱行之前。@4/4、@RRGGBB 等其他 @ 标记不受影响。
+### 编辑区背景色
+S @RRGGBB
+E @3A587A
+S @NULL
+- 颜色标记建议独占一行，仅改变后续编辑区底色；@NULL 恢复主题背景。旧版“&RRGGBB / &NULL”仍兼容。
+## 3  补充音符语法
+### 非 C 区 TouchHold
+S A/B/D/E 区键位 + h[时长]
+E B1h[4:1] / E3hf[8:1]
+- A、B、D、E 区均可写 TouchHold；区域字母后必须带 1–8 的位置编号。
+### Break Touch / TouchHold
+S 区域键位 + b
+S 区域键位 + h + b[时长]
+E B1b / E3b / Chb[4:1] / B1hb[8:1]
+- b 将 Touch 或 TouchHold 设为 Break；h 与 b 的先后顺序均可。
+### Touch Slide
+S 起点[-|<|>|^]终点[时长]
+E A1-A3[8:1] / A1<A3<A5[8:1] / 1d-E5[8:1]
+E A1b-A2b[8:1] / A1!-A2[8:1] / A1?-A2[8:1]
+- 起点或终点只要包含 A/B/C/D/E Touch 区，就按 Touch Slide 处理；普通键和 D 键也可以作为另一端。
+- 起点 b 是绝赞头，轨迹终点后的 b 是绝赞轨迹；! 或 ? 表示无头。Touch Slide 的时长不可省略。
+### Mine、D 区与修饰位置
+S m = 灰色 Mine；d = D 区位置
+E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
+- Slide 中 m 的位置有区别：1m-5 只改星星头，1-5m 只改 Slide 体和移动星，1m-5m 两者都改。
+- d 写在起点键后表示 D 区起点，写在 Slide 终点后表示 D 区终点。
+### rp / rq 反向圆弧 Slide
+S 起点rp终点[时长] / 起点rq终点[时长]
+E 1rp3[8:1] / 1rq7[8:1]
+- rp / rq 分别沿 pp / qq 的相反方向绕行。
+## 4  音符类 Alpha 命令
+### SV — 真实滚动速度
+S <SV*倍率>
+S <SV*类型=倍率,类型=倍率>
+S <SV*类型=NULL>
+E <SV*1.5> / <SV*tap=2,hold=0.75> / <SV*tap=NULL>
+- 全局写法接受正数、0 和负数；类型 NULL 让该类型重新跟随全局 SV。
+### HS — 传统下落速度
+S <HS*倍率>
+S <HS*类型=倍率,类型=倍率>
+S <HS*类型=NULL>
+E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*hold=NULL>
+- HS 改变传统出现/下落倍率；类型 NULL 清除该类型的额外倍率。
+### SPAWN — 环形音符视觉出生半径
+S <SPAWN*半径>
+S <SPAWN*类型=半径,类型=半径>
+S <SPAWN*NULL> / <SPAWN*类型=NULL>
+E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
+E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
+- 半径范围为 -4.8～4.8：1.225 是原始位置，0 是中心，4.8 是本侧判定线，-4.8 是对面判定线。
+- 改变半径会自动改变首次显示和移动开始时间，实际速度仍完全由 SV × HS 决定，最终判定键位不会改变；引导线保留最终判定键参考。
+- 作用于 Tap、Hold、Star 头、Each 与 Break 环形音符，不改变 Touch、TouchHold 和 Slide 轨迹本体。
+### BOUNCE — 判定线往返运动
+S <BOUNCE*时长>
+S <BOUNCE*类型=时长,类型=时长>
+S <BOUNCE*NULL> / <BOUNCE*类型=NULL>
+E <BOUNCE*8:1> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>
+- 默认作用于 Tap、Star、Each 和 Hold：音符从判定线出发，到 SPAWN 半径处速度降为零，再回落到判定线完成判定。
+- 时长可写秒或拍长；分类型值覆盖全局值。BOUNCE 只改变显示轨迹，不提前激活判定。
+### COLOR — 音符颜色
+S <COLOR*RRGGBB>
+S <COLOR*类型=颜色,类型=颜色>
+S <COLOR*NULL> / <COLOR*类型=NULL>
+E <COLOR*FF6699> / <COLOR*tap=FF77AA,slide=66DDFF> / <COLOR*tap=NULL> / <COLOR*NULL>
+- 全局颜色影响后续音符；分类型颜色优先。颜色必须为 6 位 RGB。
+### SIZE — 音符尺寸
+S <SIZE*倍率> / <SIZE*(X倍率,Y倍率)>
+S <SIZE*类型=倍率> / <SIZE*类型=(X倍率,Y倍率)>
+S <SIZE*NULL> / <SIZE*类型=NULL>
+E <SIZE*1.2> / <SIZE*(1.2,0.8)> / <SIZE*tap=(1,1.5),star=0.9>
+E <SIZE*slide=1.25> / <SIZE*slide=NULL> / <SIZE*NULL>
+- 全局 SIZE 缩放普通音符和星星头，不缩放 Slide 轨迹；轨迹必须用 slide= 单独设置。
+### ALPHA — 音符透明度
+S <ALPHA*0..1>
+S <ALPHA*类型=0..1,类型=0..1>
+S <ALPHA*NULL> / <ALPHA*类型=NULL>
+E <ALPHA*0.5> / <ALPHA*tap=0.4,slide=0.8> / <ALPHA*tap=NULL>
+## 5  显示类 Alpha 命令
+### JLINE — 判定线颜色
+S <JLINE*RRGGBB> / <JLINE*(RRGGBB[,过渡时间])> / <JLINE*NULL>
+E <JLINE*00FF00> / <JLINE*(FF6699,0.3)> / <JLINE*(FFFFFF,8:1)> / <JLINE*NULL>
+- NULL 恢复皮肤默认判定线色；颜色变化只影响播放中的显示。
+### TEXT — 左上字幕
+S <TEXT*内容> / <TEXT*(内容[,持续时间])>
+E <TEXT*副歌开始> / <TEXT*(注意双押,2)> / <TEXT*(最后一段,16:3)>
+- 不写持续时间时保持到下一条 TEXT；写持续时间后自动消失。内容可包含逗号，解析器把最后一个可识别时间当作时长。
+### 显示开关
+S <ShowJudgeLine*(True|False[,过渡时间])>
+S <ShowJudgeArea*(True|False[,过渡时间])>
+S <ShowJudgeText*(True|False[,过渡时间])>
+S <ShowJudgeInfo*(True|False[,过渡时间])>
+S <ShowComboInfo*(True|False[,过渡时间])>
+E <ShowJudgeLine*(False,8:1)> / <ShowJudgeArea*(True,0.5)>
+E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
+- 省略过渡时间时立即切换。JudgeArea、JudgeText、JudgeInfo、ComboInfo 分别控制判定区、判定文字、左侧统计和右侧信息。
+- ShowJudgeArea 的实际透明度不会高于 ShowJudgeLine；隐藏判定线时，判定区也不可见。
+### ComboDisplay — 中央数据显示
+S <ComboDisplay*(模式[,过渡时间])>
+E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
+- 常用模式：None/Off、Combo、Score、Achievement/Acc、AccDown、DxAcc、DxAccDown、DxScore、CScore、CScoreDedxDown。
+### 亮度
+S <OuterBrightness*(0..1[,过渡时间])>
+S <InnerBrightness*(0..1[,过渡时间])>
+E <OuterBrightness*(0.8,8:1)> / <InnerBrightness*(0.45,1)>
+- 输入值会限制到 0–1：0 为全暗，1 为完整亮度。
+## 6  滤镜类 Alpha 命令
+> 统一规则：True 开启并保持，False 关闭；最后的过渡时间可省略。不同滤镜可叠加，同名 True 会从当前实际值过渡到新目标。
+S <效果*(False[,过渡时间])>
+E <Gaussian*(False,8:1)> / <Move*(False,0.5)> / <Tint*(False)>
+### Gaussian / Neon / Trail
+S <Gaussian*(True,强度[,过渡时间])>
+S <Neon*(True,强度[,过渡时间])>
+S <Trail*(True,强度[,过渡时间])>
+E <Gaussian*(True,1.2,8:1)> / <Neon*(True,0.7)> / <Trail*(True,0.55,0.4)>
+- Gaussian 为高斯模糊；Neon 为 RGB 分离与边缘发光；Trail 混合历史画面形成残影。
+### Fade / Flash / Brightness
+S <Fade*(True,强度[,过渡时间])>
+S <Flash*(True,强度[,过渡时间])>
+S <Brightness*(True,强度[,过渡时间])>
+E <Fade*(True,1,1)> / <Flash*(True,0.8,0.1)> / <Brightness*(True,0.4,8:1)>
+- Fade 压黑，Flash 闪白，Brightness 增加亮度；Fade/Flash 常用范围 0–1。
+- Fade 与 Flash 共用同一明暗通道，后写的一个会接替前一个，不能作为两个独立滤镜叠加。
+### Saturation / Contrast / Rainbow
+S <Saturation*(True,强度[,过渡时间])>
+S <Contrast*(True,强度[,过渡时间])>
+S <Rainbow*(True,强度[,过渡时间])>
+E <Saturation*(True,1,1)> / <Contrast*(True,0.6)> / <Rainbow*(True,0.5,8:1)>
+- Saturation 的 0 为原色、1 接近黑白；Contrast 增强对比；Rainbow 动态混合彩虹色。
+### Vignette / Zoom / Glitch / TVNoise
+S <Vignette*(True,强度[,过渡时间])>
+S <Zoom*(True,倍率[,过渡时间])>
+S <Glitch*(True,强度[,过渡时间])>
+S <TVNoise*(True,强度[,过渡时间])>
+E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
+E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
+- Vignette 收缩圆形可视区；Zoom 最大参数为 8；Glitch 横向分段错位；TVNoise 加入扫描线和噪声。
+### Hue / Tint
+S <Hue*(True,角度[,过渡时间])>
+S <Tint*(True,RRGGBB,强度[,过渡时间])>
+E <Hue*(True,180,1)> / <Tint*(True,000000,1,0.5)> / <Tint*(False,8:1)>
+- Hue 以度旋转色相；Tint 强度 0 保留原画面，1 完全混合到目标色。
+### Move / Rotate / Shake
+S <Move*(True,dx,dy[,过渡时间])>
+S <Rotate*(True,角度[,过渡时间])>
+S <Shake*(True,强度,频率[,角度,过渡时间])>
+E <Move*(True,0.08,-0.04,8:1)> / <Rotate*(True,-15,0.5)>
+E <Shake*(True,0.5,12)> / <Shake*(True,0.5,12,30)> / <Shake*(True,0.5,12,,0.2)> / <Shake*(True,0.5,12,30,0.2)>
+E <Shake*(False)> / <Shake*(False,8:1)>
+- Move 的正 X 向右、正 Y 向上；Rotate 围绕画面中心。Shake 频率单位 Hz，强度 1 约移动画面尺寸的 5%；角度和过渡时间可分别省略，只写过渡时间时保留空的角度位置。省略角度使用默认二维震动；0 度为水平，90 度为垂直。
+## 7  媒体类 Alpha 命令
+### AUDIO
+S <AUDIO*(True,相对路径.ogg|wav|mp3)> / <AUDIO*(False)>
+E <AUDIO*(True,media/voice.ogg)> / <AUDIO*(True,se/alert.wav)> / <AUDIO*(False)>
+- True 从头播放一次；自然结束后停止，遇到 False 时提前停止。新的 True 会切换到新的附加音频。
+### PVOVERLAY
+S <PVOVERLAY*(True,相对路径.png|jpg|jpeg|mp4[,过渡时间])> / <PVOVERLAY*(False[,过渡时间])>
+E <PVOVERLAY*(True,media/cutin.png,8:1)> / <PVOVERLAY*(True,media/movie.mp4,0.5)> / <PVOVERLAY*(False,8:1)>
+- PNG/JPG 保持到 False 或谱面停止；MP4 播完会自动恢复原 PV。连续 True 会用指定时间从旧媒体交叉渐变到新媒体。
+! 路径相对于谱面文件夹，可含子文件夹，但不能是绝对路径、不能包含“..”，文件名不要含逗号。媒体事件会显示在波形图。
+## 8  编辑器处理说明
+- 时长补全会为 Hold、TouchHold 和 Slide 提供 [8:1]、[4:1]、[2:1]、[16:3]；[1:0] 只用于无时长 Hold，不提供给 Slide。
+- Touch Slide 支持 A/B/C/D/E 区、连段 `A1<A3<A5[8:1]`、绝赞 `A1b-A2b[8:1]` 和无头 `A1!-A2[8:1]` / `A1?-A2[8:1]`。
+- “导出无特效谱面”会移除 <> 命令、|| 后缀及整行 @ 标记，因此导出的副本也不会保留编辑器拍号和背景色。
+## 9  组合示例
+E (160){16}<COLOR*star=FF66CC><SIZE*star=1.15>1-5[8:1],2,3,4,
+E <TEXT*(间奏,2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
+E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
+- 同一时间点可连续写多个 Alpha 命令；它们不消耗额外逗号。建议按“音符 → 显示 → 滤镜 → 媒体”的顺序排列，便于阅读和补全。
+]]></value></data>
+  <data name="BackgroundFitMode" xml:space="preserve"><value>背景 / PV 缩放</value></data>
+  <data name="BackgroundFitHeight" xml:space="preserve"><value>按高度等比缩放</value></data>
+  <data name="BackgroundFitWidth" xml:space="preserve"><value>按宽度等比缩放</value></data>
 </root>

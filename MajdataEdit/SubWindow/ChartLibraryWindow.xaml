@@ -1,11 +1,87 @@
 <Window x:Class="MajdataEdit.ChartLibraryWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="谱面节奏检索"
+        xmlns:lex="http://wpflocalizeextension.codeplex.com"
+        lex:LocalizeDictionary.DesignCulture="zh-CN"
+        lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit"
+        lex:ResxLocalizationProvider.DefaultDictionary="Langs"
+        Title="{lex:Loc ChartLibraryTitle}"
         Width="1120"
         Height="740"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource WindowBackground}">
+    <Window.Resources>
+        <Style TargetType="{x:Type ListView}">
+            <Setter Property="Background" Value="{DynamicResource ButtonsBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource MenuSeparator}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style x:Key="FlatListViewItemBase" TargetType="{x:Type ListViewItem}">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
+            <Setter Property="Padding" Value="3,2" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource ScrollThumb}" />
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource ScrollThumbHover}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="FlatGridViewItem"
+               TargetType="{x:Type ListViewItem}"
+               BasedOn="{StaticResource FlatListViewItemBase}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ListViewItem}">
+                        <Border Background="{TemplateBinding Background}"
+                                Padding="0"
+                                SnapsToDevicePixels="True">
+                            <GridViewRowPresenter
+                                Columns="{Binding RelativeSource={RelativeSource AncestorType={x:Type ListView}}, Path=View.Columns}"
+                                Content="{TemplateBinding Content}"
+                                Margin="{TemplateBinding Padding}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="FlatContentListViewItem"
+               TargetType="{x:Type ListViewItem}"
+               BasedOn="{StaticResource FlatListViewItemBase}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ListViewItem}">
+                        <Border Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter
+                                Content="{TemplateBinding Content}"
+                                ContentTemplate="{TemplateBinding ContentTemplate}"
+                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="{x:Type GridViewColumnHeader}">
+            <Setter Property="Background" Value="{DynamicResource ButtonsBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource MenuSeparator}" />
+            <Setter Property="Padding" Value="5,3" />
+        </Style>
+    </Window.Resources>
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -21,7 +97,7 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <TextBlock Text="节奏型"
+            <TextBlock Text="{lex:Loc RhythmPattern}"
                        Foreground="{DynamicResource ButtonForeground}"
                        VerticalAlignment="Center"
                        Margin="0,0,8,0" />
@@ -30,11 +106,11 @@
                      Height="30"
                      VerticalContentAlignment="Center"
                      FontFamily="Cascadia Code, Consolas"
-                     ToolTip="例：{16}1,,2,,3, 或 1/5,,2/6" />
+                     ToolTip="{lex:Loc RhythmPatternExample}" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,0">
-                <CheckBox x:Name="ExactModeBox" Content="精确位置" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                <CheckBox x:Name="FuzzyModeBox" Content="模糊" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,8,0" />
-                <Button Content="搜索" Width="86" Click="SearchButton_Click" />
+                <CheckBox x:Name="ExactModeBox" Content="{lex:Loc ExactPosition}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <CheckBox x:Name="FuzzyModeBox" Content="{lex:Loc Fuzzy}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <Button Content="{lex:Loc Search}" Width="86" Click="SearchButton_Click" />
             </StackPanel>
         </Grid>
 
@@ -47,15 +123,15 @@
                 <CheckBox x:Name="Diff6" Content="Re:Master" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" Margin="0,0,8,0" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <TextBlock Text="排序" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <TextBlock Text="{lex:Loc Sort}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" Margin="0,0,6,0" />
                 <ComboBox x:Name="SortComboBox" Width="110" SelectedIndex="0">
-                    <ComboBoxItem Content="次数" />
-                    <ComboBoxItem Content="等级" />
+                    <ComboBoxItem Content="{lex:Loc Count}" />
+                    <ComboBoxItem Content="{lex:Loc Level}" />
                     <ComboBoxItem Content="BPM" />
-                    <ComboBoxItem Content="密度/CB" />
-                    <ComboBoxItem Content="星星数" />
+                    <ComboBoxItem Content="{lex:Loc DensityPerCombo}" />
+                    <ComboBoxItem Content="{lex:Loc StarCount}" />
                 </ComboBox>
-                <CheckBox x:Name="SortDescendingBox" Content="降序" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" VerticalAlignment="Center" Margin="8,0,0,0" />
+                <CheckBox x:Name="SortDescendingBox" Content="{lex:Loc Descending}" Foreground="{DynamicResource ButtonForeground}" IsChecked="True" VerticalAlignment="Center" Margin="8,0,0,0" />
             </StackPanel>
         </DockPanel>
 
@@ -64,23 +140,33 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="340" />
             </Grid.ColumnDefinitions>
-            <ListView x:Name="ResultList" SelectionChanged="ResultList_SelectionChanged">
+            <ListView x:Name="ResultList"
+                      ItemContainerStyle="{StaticResource FlatGridViewItem}"
+                      SelectionChanged="ResultList_SelectionChanged">
                 <ListView.View>
                     <GridView>
-                        <GridViewColumn Header="歌曲" DisplayMemberBinding="{Binding Title}" Width="250" />
-                        <GridViewColumn Header="曲师" DisplayMemberBinding="{Binding Artist}" Width="170" />
-                        <GridViewColumn Header="难度" DisplayMemberBinding="{Binding Difficulty}" Width="90" />
+                        <GridViewColumn Header="{lex:Loc Song}" DisplayMemberBinding="{Binding Title}" Width="250" />
+                        <GridViewColumn Header="{lex:Loc ArtistLabel}" DisplayMemberBinding="{Binding Artist}" Width="170" />
+                        <GridViewColumn Header="{lex:Loc Difficulty}" DisplayMemberBinding="{Binding Difficulty}" Width="90" />
                         <GridViewColumn Header="Lv" DisplayMemberBinding="{Binding Level}" Width="60" />
-                        <GridViewColumn Header="次数" DisplayMemberBinding="{Binding Count}" Width="60" />
-                        <GridViewColumn Header="路径" DisplayMemberBinding="{Binding File}" Width="480" />
+                        <GridViewColumn Header="{lex:Loc Count}" DisplayMemberBinding="{Binding Count}" Width="60" />
+                        <GridViewColumn Header="{lex:Loc Path}" DisplayMemberBinding="{Binding File}" Width="480" />
                     </GridView>
                 </ListView.View>
             </ListView>
             <ListView x:Name="MatchList"
                       Grid.Column="1"
                       Margin="8,0,0,0"
-                      DisplayMemberPath="Display"
-                      SelectionChanged="MatchList_SelectionChanged" />
+                      ItemContainerStyle="{StaticResource FlatContentListViewItem}"
+                      SelectionChanged="MatchList_SelectionChanged">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding Display}"
+                                   Foreground="{DynamicResource ButtonForeground}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
         </Grid>
 
         <TextBox x:Name="DetailBox"
@@ -107,10 +193,7 @@
                            Margin="0,2,0,0" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="复制段落" Width="90" Margin="0,0,8,0" Click="CopyMatchButton_Click" />
-                <Button Content="复制上下文" Width="90" Margin="0,0,8,0" Click="CopyContextButton_Click" />
-                <Button Content="复制路径" Width="90" Margin="0,0,8,0" Click="CopyPathButton_Click" />
-                <Button Content="载入谱面" Width="90" Click="OpenButton_Click" />
+                <Button Content="{lex:Loc CopyPath}" Width="90" Click="CopyPathButton_Click" />
             </StackPanel>
         </DockPanel>
     </Grid>

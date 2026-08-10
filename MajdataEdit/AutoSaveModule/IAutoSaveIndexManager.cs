@@ -6,53 +6,53 @@
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     自动保存索引文件的管理接口
+///     Autosave index-file management interface.
 /// </summary>
 internal interface IAutoSaveIndexManager
 {
     /// <summary>
-    ///     修改当前工作路径
+    ///     Changes the current working path.
     /// </summary>
     /// <param name="path"></param>
     void ChangePath(string path);
 
     /// <summary>
-    ///     获取最多可以存储多少个自动保存文件
+    ///     Gets the maximum number of autosave files.
     /// </summary>
     /// <returns></returns>
     int GetMaxAutoSaveCount();
 
     /// <summary>
-    ///     设置最多可以存储多少个自动保存文件
+    ///     Sets the maximum number of autosave files.
     /// </summary>
     /// <param name="maxAutoSaveCount"></param>
     void SetMaxAutoSaveCount(int maxAutoSaveCount);
 
     /// <summary>
-    ///     获取索引文件管理器是否已经就绪
+    ///     Gets whether the index-file manager is ready.
     /// </summary>
-    /// <returns>若已经就绪则返回true</returns>
+    /// <returns>true if the manager is ready.</returns>
     bool IsReady();
 
     /// <summary>
-    ///     获取一个新的自动保存文件名
+    ///     Gets a new autosave filename.
     /// </summary>
     /// <returns></returns>
     string GetNewAutoSaveFileName();
 
     /// <summary>
-    ///     刷新并维护索引。如果当前已经存储的文件数量超出了最大限制，则删除过时的自动保存文件
+    ///     Refreshes and maintains the index, deleting stale autosaves when the maximum is exceeded.
     /// </summary>
     void RefreshIndex();
 
     /// <summary>
-    ///     获取当前存在多少个自动保存文件
+    ///     Gets the current number of autosave files.
     /// </summary>
     /// <returns></returns>
     int GetFileCount();
 
     /// <summary>
-    ///     获取当前的自动保存文件信息列表
+    ///     Gets information about current autosave files.
     /// </summary>
     /// <returns></returns>
     List<AutoSaveIndex.FileInfo> GetFileInfos();

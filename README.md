@@ -7,6 +7,33 @@ MajdataViewAlpha 是面向 maimai / 舞萌谱面制作、预览与视频导出�
 
 项目地址：<https://github.com/Jian04/MajdataViewAlpha>
 
+## v0.4.2 更新（相对 v0.4.1）
+
+### Edit 与媒体时间线
+
+- 编辑器设置新增编辑区字号与播放器字体，可分别调整谱面文本和 View 判定信息；播放器仍保留原版字体选项。
+- 修复编辑器宽度变化时波形图视野不同步、光标落在下一时间格以及暂停后媒体丢失等问题。
+- 完善双视频轨、双音频轨媒体时间线：点击仅选中片段，拖动时才应用拍线吸附；支持切割、删除、撤销、续编和与主波形同步预览。
+- 媒体导出支持手动选择分辨率、帧率与码率，也可使用智能策略优先保持 30 FPS，并逐步调整分辨率和码率至 20 MB 以内；音频可选是否转换为 44100 Hz。
+- 新增可重叠音符流 `@{分拍}...`，用于在不推进主谱时间的情况下叠加另一条音符序列。
+- 补全 Alpha 命令提示和语法帮助，新增 `BOUNCE`、Touch Slide、Break Touch / TouchHold 的签名、参数和示例。
+
+### Alpha 语法与音符
+
+- 新增 `BOUNCE`：让 Tap、Star、Each 与 Hold 从判定线运动到指定出生半径后回落；支持秒数、拍长、按音符类型设置和 `NULL` 恢复。
+- `SV`、`HS`、`SPAWN`、`SIZE` 等命令支持按音符类型单独设置；全局 `SIZE` 不再缩放 Slide 轨迹，需使用 `slide=` 显式调整。
+- 新增 Touch Slide，支持普通键与 A/B/C/D/E Touch 区互连、连续路径、无头以及 Break 头 / Break 轨迹，例如 `1d-E5[8:1]`、`A1<A3<A5[8:1]`、`A1b-A2b[8:1]`。
+- 完善 D 区 Tap、Hold 与 Slide。D 区 `s/z` 保留原版中段判定路线，只重新连接 D 区头尾；D 区端点同时接入 Touch Slide 的绘制和传感器判定。
+- 修正 D 区直线、圆弧、`p/q`、`pp/qq` 等路径的间距、切线衔接、星星方向和终点判定特效位置。
+- `PVOVERLAY` 支持图片或视频替换当前 PV，并可在连续覆盖之间进行渐变。
+
+### 播放、录制与发布
+
+- 修复中途播放、暂停续播、时间轴拖动后播放、PV 恢复、All Perfect 语音和录制结束等流程中的状态同步问题。
+- PV / BGA 新增保持宽高比的缩放方式，录制可独立选择常用分辨率、帧率、码率和智能压制策略。
+- 完善 Launcher、桌宠状态和发布目录；Unity Windows 构建完成后会自动组装 View、Edit、Launcher、皮肤、主题及配套工具。
+- 加强无效谱面和异常音符的容错，避免单条解析错误直接卡死 View 或 Edit。
+
 ## v0.4.0 更新
 
 ### Edit
@@ -95,7 +122,7 @@ Alpha 命令写在谱面时间线中：
 
 命令分为四类：
 
-- 音符：`SV`、`HS`、`SPAWN`、`COLOR`、`SIZE`、`ALPHA`
+- 音符：`SV`、`HS`、`SPAWN`、`BOUNCE`、`COLOR`、`SIZE`、`ALPHA`
 - 显示：`JLINE`、`TEXT`、显示开关、`ComboDisplay`、内外圈亮度
 - 滤镜：Gaussian、Neon、Trail、Fade、Flash、Brightness、Saturation、Contrast、Rainbow、Vignette、Zoom、Glitch、TVNoise、Hue、Tint、Move、Rotate、Shake
 - 媒体：`AUDIO`、`PVOVERLAY`
@@ -105,6 +132,7 @@ Alpha 命令写在谱面时间线中：
 ```text
 <SV*tap=1.5,slide=0.8>
 <SPAWN*tap=-4.8,hold=0>
+<BOUNCE*tap=8:1,hold=4:1>
 <COLOR*star=FF66CC,break=FF4500>
 <ShowJudgeLine*(False,8:1)>
 <Tint*(True,000000,0.6,8:1)>
@@ -128,6 +156,7 @@ Alpha 命令写在谱面时间线中：
 - `@RRGGBB` / `@NULL`：编辑区分段背景色。
 - `m`：Mine。
 - `d`：D 区。
+- Touch Slide：普通键与 A/B/C/D/E Touch 区之间的直线或圆弧 Slide，必须填写时长。
 - `rp` / `rq`：反向圆弧 Slide。
 
 ### 桌宠启动器

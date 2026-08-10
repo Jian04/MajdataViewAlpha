@@ -12,50 +12,67 @@ internal class Majson
     public List<SimaiTimingPoint> timingList = new();
     public string title = "default";
     public string wholeBpm = "";
-    // ALPHA: true SV — global scroll velocity table
+    // Mid-chart visual overrides.
     public List<SvPoint> svTable = new();
-    // ALPHA: mid-chart note color change events (from <COLOR*...> tokens)
+    public List<SpeedChange> hsTable = new();
+    public List<SpawnChange> spawnTable = new();
+    public List<BounceChange> bounceTable = new();
     public List<ColorChange> colorTable = new();
-    // ALPHA: mid-chart note size change events (from <SIZE*x> tokens)
     public List<SizeChange> sizeTable = new();
-    // ALPHA: mid-chart note alpha change events (from <ALPHA*x> tokens)
     public List<AlphaChange> alphaTable = new();
     public List<DisplayChange> displayTable = new();
     public List<SubtitleChange> subtitleTable = new();
     public List<EffectChange> effectTable = new();
+    public List<MediaChange> mediaTable = new();
 }
 
-/// <summary>
-/// ALPHA: A single note-color-change event from &lt;COLOR*RRGGBB&gt; or &lt;COLOR*key=RRGGBB,...&gt; syntax.
-/// noteType is one of: tap | each | hold | slide | star | break | touch | touchhold
-/// color is a 6-digit hex string "FF8800" or 8-digit "FF880080" (last 2 bytes = opacity).
-/// </summary>
+/// <summary>A timed note color override.</summary>
 internal class ColorChange
 {
     public double time;
-    public string noteType;
-    public string color;    // "RRGGBB" or "RRGGBBAA"
+    public string noteType = string.Empty;
+    public string color = string.Empty;
+    public float duration;
 }
 
-/// <summary>
-/// ALPHA: A note-size-change event from &lt;SIZE*x&gt; syntax.
-/// scale: multiplier applied to all note types from this time onward (default 1.0).
-/// </summary>
+/// <summary>A timed note scale override.</summary>
 internal class SizeChange
 {
     public double time;
+    public string noteType;
     public float scale;
+    public float scaleX;
+    public float scaleY;
 }
 
-/// <summary>
-/// ALPHA: A note-alpha-change event from &lt;ALPHA*x&gt; or &lt;ALPHA*key=x,...&gt; syntax.
-/// noteType: null = global (all types); or one of tap|each|hold|slide|star|break|touch|touchhold.
-/// alpha: opacity multiplier (0.0=transparent, 1.0=opaque).
-/// </summary>
+internal class SpeedChange
+{
+    public double time;
+    public string noteType;
+    public float multiplier = 1f;
+}
+
+internal class SpawnChange
+{
+    public double time;
+    public string noteType;
+    public float radius = 1.225f;
+    public bool reset;
+}
+
+internal class BounceChange
+{
+    public double time;
+    public string noteType;
+    public float duration;
+    public bool reset;
+}
+
+/// <summary>A timed note opacity override.</summary>
 internal class AlphaChange
 {
     public double time;
-    public string noteType; // null = global
+    public string noteType;
     public float alpha;
 }
 
@@ -80,6 +97,30 @@ public class EffectChange
     public string effect;
     public float duration;
     public float intensity;
+    // Negative attack selects the legacy envelope.
+    public float attack = -1f;
+    public float holdTime;
+    public float release;
+    public float paramA;
+    public float paramB;
+    public bool hasDirection;
+    public string color;
+    public bool stateful;
+    public bool enabled;
+    public float transition;
+}
+
+public class MediaChange
+{
+    public double time;
+    public string kind;
+    public bool enabled;
+    public string path;
+    public float transition;
+    public int track;
+    public double sourceOffset;
+    public double duration;
+    public bool timelineClip;
 }
 
 internal class SimaiTimingPoint
@@ -115,6 +156,9 @@ internal class SimaiNote
     public bool isSlideMono = false;
     public bool isSlideBreak = false;
     public bool isSlideNoHead = false;
+    public bool isTouchSlide = false;
+    public bool isDZone = false;
+    public bool isDZoneEnd = false;
 
     public string noteContent; //used for star explain
     public SimaiNoteType noteType;
@@ -122,36 +166,59 @@ internal class SimaiNote
     public double slideStartTime = 0d;
     public double slideTime = 0d;
 
-    public int startPosition = 1; //键位（1-8）
+    public int startPosition = 1; // Key position (1-8)
     public char touchArea = ' ';
+    public int touchEndPosition = 1;
+    public char touchEndArea = ' ';
+    public char touchSlideShape = '-';
 }
 
 internal class EditRequestjson
 {
+    public string language = "en-US";
     public float audioSpeed;
+    public float mediaAudioVolume = 1f;
     public float backgroundCover;
     public float innerBackgroundCover;
     public float outerBackgroundCover;
+    public int backgroundFitMode;
     public bool showJudgeInfo;
     public bool showComboInfo;
     public bool showJudgeLine = true;
     public bool showJudgeText = true;
+    public bool showJudgeArea = false;
     public EditorComboIndicator comboStatusType;
     public EditorPlayMethod editorPlayMethod;
     public EditorControlMethod control;
     public string jsonPath;
     public float noteSpeed;
+    public float starSpeed;
     public long startAt;
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
     public string skin = "dx";
+    public string tapSkin = "dx";
+    public string holdSkin = "dx";
+    public string starSkin = "dx";
+    public bool pinkStar;
+    public string standbyTheme = "dark";
+    public string introBgTheme = "default";
     public bool previewFlow;
     public float previewTimelineTime;
+    public bool showSongDetail = true;
     public bool showAllPerfect = true;
+    public bool showGeneratedMark;
+    public int viewDisplayFontPreset;
+    public bool enableVisualChartEditor = true;
     public int songDetailStyle = 0;
     public float chartLength;
     public int recordFrameRate = 30;
+    public string recordLayers = "";
+    public string recordFileName = "out.mp4";
+    public int recordWidth;
+    public int recordHeight;
+    public bool revealOutput = true;
     public string previewJson;
 }
 

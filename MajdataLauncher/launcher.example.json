@@ -1,0 +1,9 @@
+{
+  "pet": "dilaxiong",
+  "viewPath": "",
+  "editPath": "",
+  "followEditWindow": true,
+  "viewReadyPort": 8013,
+  "viewReadyTimeoutSeconds": 15,
+  "petControlPort": 8015
+}

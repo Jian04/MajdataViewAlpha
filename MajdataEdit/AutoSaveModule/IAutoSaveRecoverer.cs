@@ -8,32 +8,32 @@ namespace MajdataEdit.AutoSaveModule;
 internal interface IAutoSaveRecoverer
 {
     /// <summary>
-    ///     获取本地的自动保存文件列表
+    ///     Gets the local autosave file list.
     /// </summary>
     /// <returns></returns>
     List<AutoSaveIndex.FileInfo> GetLocalAutoSaves();
 
     /// <summary>
-    ///     获取全局的自动保存文件列表
+    ///     Gets the global autosave file list.
     /// </summary>
     /// <returns></returns>
     List<AutoSaveIndex.FileInfo> GetGlobalAutoSaves();
 
     /// <summary>
-    ///     获取所有的自动保存文件列表 包括本地的和全局的
+    ///     Gets all local and global autosave files.
     /// </summary>
     /// <returns></returns>
     List<AutoSaveIndex.FileInfo> GetAllAutoSaves();
 
     /// <summary>
-    ///     获取指定路径的谱面的信息
+    ///     Gets chart information for the specified path.
     /// </summary>
     /// <param name="path"></param>
     /// <returns></returns>
     FumenInfos GetFumenInfos(string path);
 
     /// <summary>
-    ///     根据recoveredFileInfo恢复文件
+    ///     Restores a file from recoveredFileInfo.
     /// </summary>
     /// <param name="recoveredFileInfo"></param>
     /// <returns></returns>

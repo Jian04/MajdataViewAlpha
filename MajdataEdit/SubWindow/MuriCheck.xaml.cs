@@ -9,13 +9,11 @@ using Newtonsoft.Json.Linq;
 namespace MajdataEdit;
 
 /// <summary>
-///     BPMtap.xaml 的交互逻辑
+///     Interaction logic for BPMtap.xaml
 /// </summary>
 /*
- * 请原谅我把检测逻辑和界面逻辑写到一个文件里去了
- * 因为我懒
- * 如果有空我会把他分出去的
- * 感谢！
+ * The detection and UI logic currently share this file.
+ * They should be separated when time permits.
  */
 internal class MaimaiOperationMultNote
 {
@@ -28,7 +26,7 @@ internal class MaimaiOperationMultNote
 
     public int startArea;
 
-    // 用于多押检测的类 表示一次操作
+    // Represents one operation for simultaneous-note detection.
     public double startTime;
 
     public MaimaiOperationMultNote(double _startTime, double _endTime, int _startArea,
@@ -55,7 +53,7 @@ internal class MaimaiOperationSlide
 
     public int positionY;
 
-    // 用于撞尾检测的类 表示一次操作
+    // Represents one operation for Slide-tail collision detection.
     public double time;
 
     public MaimaiOperationSlide(double _time, int _area, int _ntype,
@@ -73,7 +71,7 @@ internal class MaimaiOperationSlide
 public partial class MuriCheck : Window
 {
     private MuriCheckResult? mcr;
-    public JObject? SLIDE_TIME; // 无理检测用的SLIDE_TIME数据
+    public JObject? SLIDE_TIME; // SLIDE_TIME data used for muri detection
 
     public MuriCheck()
     {
@@ -136,7 +134,7 @@ public partial class MuriCheck : Window
     {
         var TIME_EPS = 5;
 
-        // 注释可见 https://github.com/Moying-moe/maimaiMuriDetector MaiMuriDetector.multNoteDetect(self, eps=5)
+        // See comments in MaiMuriDetector.multNoteDetect(self, eps=5): https://github.com/Moying-moe/maimaiMuriDetector
 
         var prog = @"(\d)(.+?)(\d{1,2})\[.+?\]";
         var errorCnt = 0;
@@ -165,6 +163,8 @@ public partial class MuriCheck : Window
                 }
                 else if (note.noteType == SimaiNoteType.Slide)
                 {
+                    if (note.isTouchSlide)
+                        continue;
                     opSequence.Add(new MaimaiOperationMultNote(
                         Math.Round(baseTime, TIME_EPS),
                         Math.Round(baseTime, TIME_EPS),
@@ -220,8 +220,10 @@ public partial class MuriCheck : Window
                 }
                 else
                 {
-                    // TODO: dx谱面兼容
-                    MessageBox.Show("无理检测暂时不支持dx谱面！ / dx map not support now", "警告");
+                    // TODO: Support DX charts.
+                    MessageBox.Show(
+                        MainWindow.GetLocalizedString("MuriDxUnsupported"),
+                        MainWindow.GetLocalizedString("Warning"));
                     return -1;
                 }
         }
@@ -287,7 +289,7 @@ public partial class MuriCheck : Window
 
     private int slideDetect(double judgementLength)
     {
-        // 注释可见 https://github.com/Moying-moe/maimaiMuriDetector MaiMuriDetector.slideDetect(self, judgementLength = 0.15)
+        // See comments in MaiMuriDetector.slideDetect(self, judgementLength = 0.15): https://github.com/Moying-moe/maimaiMuriDetector
 
         var prog = @"(\d)(.+?)(\d{1,2})\[.+?\]";
 
@@ -314,7 +316,9 @@ public partial class MuriCheck : Window
                 }
                 else if (note.noteType == SimaiNoteType.Slide)
                 {
-                    // 星星头加入队列
+                    if (note.isTouchSlide)
+                        continue;
+                    // Add the star head to the queue.
                     opSequence.Add(new MaimaiOperationSlide(
                         baseTime,
                         note.startPosition,
@@ -347,7 +351,7 @@ public partial class MuriCheck : Window
 
                     if (sType == "V")
                     {
-                        // 转折型
+                        // Turning type
                         var sEnd0 = notePos(
                             int.Parse(sEnd.Substring(0, 1)) - int.Parse(sStart),
                             true
@@ -367,18 +371,18 @@ public partial class MuriCheck : Window
                         int.Parse(sStart) >= 3 && int.Parse(sStart) <= 6)
                         /*
                          * WARNING:
-                         * 这其实是一个测定数据时的遗留问题
-                         * 在测定数据的时候，对于每一种slide，都以1开头来测定，并存储相对的位置
-                         * 在实际判定的时候，会根据实际的起点和相对位置计算绝对位置，也就是说，是在测定数据的基础上进行了旋转
-                         * 但是>和<型的slide，其方向会受到起点位置的影响
-                         * 以>为例，当起点是7812时，是顺时针，起点是3456时，则为逆时针
-                         * 但是在测定时，因为起点总是1，所以>总是顺时针的，<总是逆时针的
-                         * --- 换言之，在SLIDE_TIME里，>不表示向右开始回旋的slide，而表示“总是顺时针的回旋slide” ---
-                         * 所以此处选择对>和<slide进行特判，如果和测定时的方向相反，则人为反转操作符
+                         * This is a legacy issue in the measurement data.
+                         * Each Slide type was measured from position 1 and stored using relative positions.
+                         * Runtime judgment computes absolute positions from the actual start and relative positions, effectively rotating the measurements.
+                         * However, the direction of > and < Slides depends on their starting position.
+                         * For example, > is clockwise from starts 7, 8, 1, or 2, but counterclockwise from starts 3, 4, 5, or 6.
+                         * Because measurements always start at 1, > is always clockwise there and < is always counterclockwise.
+                         * Therefore, in SLIDE_TIME, > means an always-clockwise curved Slide, not one that initially curves right.
+                         * Handle > and < specially by reversing the operator when runtime direction differs from measurement direction.
                          *
-                         * 请注意：这是目前的权宜之计，也许后续会更正这个问题
+                         * This is a temporary workaround and may be corrected later.
                          * **/
-                        // 当起点为3456 slide类型为>时 和测定方向相反
+                        // A > Slide starting at 3, 4, 5, or 6 runs opposite to the measured direction.
                         sType = "<";
                     else if (sType == "<" &&
                              int.Parse(sStart) >= 3 && int.Parse(sStart) <= 6)
@@ -414,8 +418,10 @@ public partial class MuriCheck : Window
                 }
                 else
                 {
-                    // TODO: dx谱面兼容
-                    MessageBox.Show("无理检测暂时不支持dx谱面！ / dx map not support now", "警告");
+                    // TODO: Support DX charts.
+                    MessageBox.Show(
+                        MainWindow.GetLocalizedString("MuriDxUnsupported"),
+                        MainWindow.GetLocalizedString("Warning"));
                     return -1;
                 }
         }
@@ -476,7 +482,7 @@ public partial class MuriCheck : Window
         {
             multNoteError = multNoteDetect();
             if (multNoteError == -1)
-                // 不支持dx谱面 退出
+                // Exit because DX charts are unsupported.
                 return;
         }
         else
@@ -487,7 +493,7 @@ public partial class MuriCheck : Window
 
         var slideError = slideDetect(slideCheckAccuracy);
         if (slideError == -1)
-            // 不支持dx谱面 退出
+            // Exit because DX charts are unsupported.
             return;
         mcr.Show();
         if (multNoteEnable)

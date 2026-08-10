@@ -85,7 +85,8 @@ public class TouchDrop : TouchBase
         }
 
         transform.position = GetAreaPos(startPosition, areaPosition);
-        transform.localScale *= noteScale;
+        transform.localScale = Vector3.Scale(transform.localScale,
+            new Vector3(noteScale * noteScaleX, noteScale * noteScaleY, 1f));
         justEffect.SetActive(false);
         SetfanColor(new Color(1f, 1f, 1f, 0f));
         sensor = GameObject.Find("Sensors")
@@ -97,6 +98,7 @@ public class TouchDrop : TouchBase
                                  .GetComponent<InputManager>();
         var customSkin = GameObject.Find("Outline").GetComponent<CustomSkin>();
         judgeText = customSkin.JudgeText;
+        judgeTextBreak = customSkin.JudgeText_Break;
         if (!previewOnly)
             inputManager.BindSensor(Check, GetSensor());
     }
@@ -173,8 +175,8 @@ public class TouchDrop : TouchBase
                 case AutoPlayMode.DJAuto:
                     if (isTriggered)
                         return;
-                    inputManager.ClickSensor(GetSensor());
-                    isTriggered = true;
+                    inputManager.ClickSensor(GetSensor(), true);
+                    isTriggered = isJudged;
                     break;
             }
             
@@ -241,7 +243,8 @@ public class TouchDrop : TouchBase
             if (!isStarted)
             {
                 isStarted = true;
-                multTouchHandler.registerTouch(this);
+                if (!previewOnly)
+                    multTouchHandler.registerTouch(this);
             }
 
             SetfanColor(new Color(1f, 1f, 1f, Mathf.Clamp((wholeDuration + timing) / displayDuration, 0f, 1f)));
@@ -251,7 +254,8 @@ public class TouchDrop : TouchBase
             if (!isStarted)
             {
                 isStarted = true;
-                multTouchHandler.registerTouch(this);
+                if (!previewOnly)
+                    multTouchHandler.registerTouch(this);
             }
 
             SetfanColor(Color.white);
@@ -294,7 +298,7 @@ public class TouchDrop : TouchBase
         judgeFinalized = true;
         if (GroupInfo is not null && judgeResult != JudgeType.Miss)
             GroupInfo.JudgeResult = judgeResult;
-        objectCounter.ReportResult(this, judgeResult);
+        objectCounter.ReportResult(this, judgeResult, isBreak);
         objectCounter.NextTouch(sensor.Type);
     }
     void PlayJudgeEffect()
@@ -317,6 +321,8 @@ public class TouchDrop : TouchBase
             flObj.transform.position = new Vector3(0, -1.08f, 0);
         }
         judgeObj.GetChild(0).transform.rotation = GetRoation();
+        if (judgeObj.childCount > 1)
+            judgeObj.GetChild(1).transform.rotation = GetRoation();
         flObj.GetChild(0).transform.rotation = GetRoation();
         var anim = obj.GetComponent<Animator>();
         var flAnim = _obj.GetComponent<Animator>();
@@ -349,6 +355,15 @@ public class TouchDrop : TouchBase
             default:
                 break;
         }
+        // ALPHA: Break Touch uses the same two-layer judgement text as Break Tap.
+        // child0 remains normal text; child1 uses the skin's glowing Break layer,
+        // lit and flashed by JudgeBreak. Non-Break or non-CriticalPerfect uses the original Touch animation.
+        if (judgeObj.childCount > 1)
+        {
+            var breakRenderer = judgeObj.GetChild(1).GetComponent<SpriteRenderer>();
+            breakRenderer.sprite = judgeTextBreak;
+            NoteEffectManager.ApplyJudgeTextAlpha(breakRenderer);
+        }
         NoteEffectManager.ApplyJudgeTextAlpha(judgeObj.GetChild(0).GetComponent<SpriteRenderer>());
         if(judgeResult != JudgeType.Miss)
         {
@@ -357,11 +372,21 @@ public class TouchDrop : TouchBase
 
         noteEffectManager.PlayFastLate(_obj,flAnim,judgeResult);
 
-        anim.SetTrigger("touch");
+        if (isBreak && judgeResult == JudgeType.Perfect)
+        {
+            anim.SetTrigger("break");
+            // JudgeBreak lacks TouchJudge's ifDestroy curve, so explicitly destroy the
+            // instantiated judgement object after 0.27s to prevent it from remaining forever.
+            Destroy(obj, 1f);
+        }
+        else
+        {
+            anim.SetTrigger("touch");
+        }
     }
     /// <summary>
-    /// 获取当前坐标指定距离的坐标
-    /// <para>方向：原点</para>
+    /// Gets a coordinate at the specified distance from the current coordinate
+    /// <para>Direction: origin</para>
     /// </summary>
     /// <param name="magnitude"></param>
     /// <param name="distance"></param>

@@ -41,6 +41,25 @@ public class Sensor : MonoBehaviour
         OnStatusChanged = null;
     }
 
+    // One stale note must not abort other handlers or leave the sensor permanently on.
+    private void Dispatch(InputEventArgs args)
+    {
+        var handlers = OnStatusChanged;
+        if (handlers == null)
+            return;
+        foreach (EventHandler<InputEventArgs> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, args);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"Sensor {Type} status handler threw: {e}");
+            }
+        }
+    }
+
     public void SetOn(Guid id)
     {
         if (tasks.Contains(id))
@@ -49,25 +68,31 @@ public class Sensor : MonoBehaviour
         var nStatus = SensorStatus.On;
 
         Status = nStatus;
-        
+
         if(!tasks.Contains(id))
             tasks.Add(id);
         if (oStatus != nStatus)
         {
             if (OnStatusChanged != null)
             {
-                OnStatusChanged(this,new InputEventArgs()
+                try
                 {
-                    IsButton = false,
-                    Type = Type,
-                    OldStatus = oStatus,
-                    Status = nStatus
-                });
-                IsJudging = false;
+                    Dispatch(new InputEventArgs()
+                    {
+                        IsButton = false,
+                        Type = Type,
+                        OldStatus = oStatus,
+                        Status = nStatus
+                    });
+                }
+                finally
+                {
+                    IsJudging = false;
+                }
             }
         }
     }
-    public void SetOff(Guid id) 
+    public void SetOff(Guid id)
     {
         if (!tasks.Contains(id))
             return;
@@ -77,17 +102,23 @@ public class Sensor : MonoBehaviour
         if(tasks.Count == 0)
         {
             var oStatus = Status;
-            if (OnStatusChanged != null)
+            try
             {
-                OnStatusChanged(this,new InputEventArgs()
+                if (OnStatusChanged != null)
                 {
-                    IsButton = false,
-                    Type = Type,
-                    OldStatus = oStatus,
-                    Status = nStatus
-                });
+                    Dispatch(new InputEventArgs()
+                    {
+                        IsButton = false,
+                        Type = Type,
+                        OldStatus = oStatus,
+                        Status = nStatus
+                    });
+                }
             }
-            Status = nStatus;
+            finally
+            {
+                Status = nStatus;
+            }
         }
     }
     public void Click()
@@ -97,15 +128,49 @@ public class Sensor : MonoBehaviour
         else if (OnStatusChanged != null)
         {
             Status = SensorStatus.On;
-            OnStatusChanged(this, new InputEventArgs()
+            try
+            {
+                Dispatch(new InputEventArgs()
+                {
+                    IsButton = false,
+                    Type = Type,
+                    OldStatus = SensorStatus.Off,
+                    Status = SensorStatus.On
+                });
+            }
+            finally
+            {
+                IsJudging = false;
+                Status = SensorStatus.Off;
+            }
+        }
+    }
+
+    // DJAuto is a synthetic arcade pulse. It must not be swallowed by a
+    // physical input that is still On or by a stale IsJudging flag.
+    public bool PulseForAutoPlay()
+    {
+        if (OnStatusChanged == null)
+            return false;
+
+        var previousStatus = Status;
+        Status = SensorStatus.On;
+        IsJudging = false;
+        try
+        {
+            Dispatch(new InputEventArgs()
             {
                 IsButton = false,
                 Type = Type,
                 OldStatus = SensorStatus.Off,
                 Status = SensorStatus.On
             });
+            return true;
+        }
+        finally
+        {
             IsJudging = false;
-            Status = SensorStatus.Off;
+            Status = previousStatus;
         }
     }
     // Start is called before the first frame update

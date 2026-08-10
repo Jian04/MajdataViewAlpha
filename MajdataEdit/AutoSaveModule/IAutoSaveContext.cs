@@ -6,13 +6,13 @@
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     自动保存上下文接口
-///     接口可以获取自动保存需要的上下文内容，如路径
+///     Autosave context interface.
+///     Provides context required for autosave, such as paths.
 /// </summary>
 internal interface IAutoSaveContext
 {
     /// <summary>
-    ///     获取保存路径，不包含文件名，结尾没有斜杠
+    ///     Gets the save path without a filename or trailing slash.
     /// </summary>
     /// <returns></returns>
     string GetSavePath();

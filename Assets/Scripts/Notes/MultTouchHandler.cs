@@ -51,8 +51,10 @@ public class MultTouchHandler : MonoBehaviour
         var areaIndex = getAreaIndex(obj.areaPosition, obj.startPosition);
         var touchSlot = touchSlots[areaIndex];
 
-        if (touchSlot.Count != 0)
-            touchSlot.RemoveAt(0);
+        // Notes are destroyed out of order when seeking or previewing. Removing the
+        // first element corrupts the stack for every remaining touch in this area.
+        if (!touchSlot.Remove(obj))
+            return;
 
         foreach (var each in touchSlot) each.layerDown();
     }

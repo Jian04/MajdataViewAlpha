@@ -1,0 +1,142 @@
+<Window x:Class="MajdataEdit.RecordVideoWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:lex="http://wpflocalizeextension.codeplex.com"
+        lex:LocalizeDictionary.DesignCulture="zh-CN"
+        lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit"
+        lex:ResxLocalizationProvider.DefaultDictionary="Langs"
+        Title="{lex:Loc RecordVideo}" Height="560" Width="700" Background="{DynamicResource WindowBackground}"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        ShowInTaskbar="False" Loaded="RecordVideoWindow_Loaded">
+    <Grid Margin="14" Background="{DynamicResource WindowBackground}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="190" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="180" />
+                <ColumnDefinition Width="14" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Width="180" Height="180" VerticalAlignment="Top"
+                    Background="{DynamicResource EditorBackground}" BorderBrush="{DynamicResource MenuSeparator}"
+                    BorderThickness="1" CornerRadius="7" Padding="6">
+                <Image x:Name="CoverPreview" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" />
+            </Border>
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="62" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Row="0" Grid.ColumnSpan="2" x:Name="DifficultyText" Foreground="{DynamicResource HelperForeground}" FontWeight="Bold" FontSize="16" Margin="0,0,0,8" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="{lex:Loc SongTitleLabel}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                <TextBox x:Name="TitleBox" Grid.Row="1" Grid.Column="1" Margin="0,3" />
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="{lex:Loc ArtistLabel}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                <TextBox x:Name="ArtistBox" Grid.Row="2" Grid.Column="1" Margin="0,3" />
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="{lex:Loc DesignerLabel}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                <TextBox x:Name="DesignerBox" Grid.Row="3" Grid.Column="1" Margin="0,3" />
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="{lex:Loc LevelLabel}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                <TextBox x:Name="LevelBox" Grid.Row="4" Grid.Column="1" Margin="0,3" FontFamily="Cascadia Mono" />
+                <Grid Grid.Row="5" Grid.ColumnSpan="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="62" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="58" />
+                        <ColumnDefinition Width="90" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="BPM" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                    <TextBox x:Name="BpmBox" Grid.Column="1" Margin="0,3" FontFamily="Cascadia Mono" />
+                    <TextBlock Grid.Column="2" Text="Clock" Margin="10,0,0,0" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                    <TextBox x:Name="ClockBox" Grid.Column="3" Margin="0,3" FontFamily="Cascadia Mono" />
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <Border Grid.Row="1" Height="1" Background="{DynamicResource MenuSeparator}" Margin="0,10" />
+
+        <Grid Grid.Row="2" Margin="0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="{lex:Loc ExportOptions}" Foreground="{DynamicResource HelperForeground}" FontWeight="Bold" Margin="0,0,0,4" />
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="116" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{lex:Loc FrameRate}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="FrameRateBox" Grid.Column="1" Width="120" HorizontalAlignment="Left"><ComboBoxItem Content="60 fps" IsSelected="True" /><ComboBoxItem Content="120 fps" /></ComboBox>
+                </Grid>
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="116" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{lex:Loc Resolution}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                    <!-- Standard dropdown matching the frame-rate field; custom resolutions use the adjacent input fields. -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <ComboBox x:Name="ResolutionBox" Width="120">
+                        <ComboBoxItem Content="{lex:Loc KeepCurrentResolution}" IsSelected="True" />
+                        <ComboBoxItem Content="3840 × 2160" />
+                        <ComboBoxItem Content="2560 × 1440" />
+                        <ComboBoxItem Content="1920 × 1080" />
+                        <ComboBoxItem Content="1280 × 720" />
+                        <ComboBoxItem Content="1440 × 1440" />
+                        <ComboBoxItem Content="1080 × 1080" />
+                        <ComboBoxItem Content="720 × 720" />
+                        <ComboBoxItem Content="512 × 512" />
+                        <ComboBoxItem Content="{lex:Loc CustomOption}" />
+                    </ComboBox>
+                    <TextBox x:Name="CustomResolutionBox" Width="94" Margin="8,0,0,0"
+                             VerticalContentAlignment="Center" FontFamily="Cascadia Mono"
+                             Visibility="Collapsed" ToolTip="{lex:Loc EvenResolutionTip}" />
+                    </StackPanel>
+                </Grid>
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="116" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{lex:Loc SongCard}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="SongDetailStyleBox" Grid.Column="1" Width="180" HorizontalAlignment="Left"><ComboBoxItem Content="{lex:Loc OriginalStyle}" /><ComboBoxItem Content="{lex:Loc OfficialStyleCover}" /></ComboBox>
+                </Grid>
+                <Grid Margin="0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="116" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{lex:Loc IntroBackground}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                    <ComboBox x:Name="ViewIntroStyleBox" Grid.Column="1" Width="180" HorizontalAlignment="Left">
+                        <ComboBoxItem Content="{lex:Loc DefaultOption}" />
+                        <ComboBoxItem Content="CiRCLE PLUS" />
+                        <ComboBoxItem Content="CiRCLE" />
+                    </ComboBox>
+                </Grid>
+                <CheckBox x:Name="SongDetailBox" Content="{lex:Loc ShowSongIntro}" Margin="116,4,0,0" />
+                <CheckBox x:Name="AllPerfectBox" Content="{lex:Loc ShowAllPerfectEnding}" Margin="116,4,0,0" />
+                <TextBlock Text="{lex:Loc RecordingSafeLimit}" Margin="116,4,0,0"
+                           Foreground="{DynamicResource HelperForeground}" FontSize="11" />
+            </StackPanel>
+        </Grid>
+
+        <TextBlock x:Name="StatusText" Grid.Row="3" Margin="0,12,0,8" TextWrapping="Wrap" Foreground="{DynamicResource HelperForeground}" />
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="StartButton" Content="{lex:Loc StartRecording}" Width="112" Height="30" Click="StartButton_Click" />
+            <Button x:Name="CancelButton" Content="{lex:Loc Close}" Width="74" Height="30" Margin="10,0,0,0" Click="CancelButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

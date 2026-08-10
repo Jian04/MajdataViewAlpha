@@ -5,15 +5,15 @@ namespace Assets.Scripts.Types
     public class ConnSlideInfo
     {
         /// <summary>
-        /// 表示Slide Group的总时值
+        /// Total duration of the Slide Group
         /// </summary>
         public float TotalLength { get; set; }
         /// <summary>
-        /// 表示Slide Group的总长度
+        /// Total length of the Slide Group
         /// </summary>
         public float TotalSlideLen { get; set; }
         /// <summary>
-        /// 指示该Slide是否位于Group的头部
+        /// Whether this Slide is at the start of the Group
         /// </summary>
         public bool IsGroupPartHead 
         {
@@ -21,11 +21,11 @@ namespace Assets.Scripts.Types
             set => _isGroupPartHead = value;
         }
         /// <summary>
-        /// 指示该Slide是否位于Group内
+        /// Whether this Slide belongs to a Group
         /// </summary>
         public bool IsGroupPart { get; set; }
         /// <summary>
-        /// 指示该Slide是否位于Group的尾部
+        /// Whether this Slide is at the end of the Group
         /// </summary>
         public bool IsGroupPartEnd 
         {
@@ -33,7 +33,7 @@ namespace Assets.Scripts.Types
             set => _isGroupPartEnd = value;
         }
         /// <summary>
-        /// 获取位于该Slide前方的Slide的GameObject对象
+        /// Gets the GameObject for the preceding Slide
         /// </summary>
         public GameObject? Parent { get; set; } = null;
         /// <summary>
@@ -44,11 +44,11 @@ namespace Assets.Scripts.Types
             get => IsGroupPartEnd;
         }
         /// <summary>
-        /// 指示当前Slide是否为Connect Slide
+        /// Whether the current Slide is a Connection Slide
         /// </summary>
         public bool IsConnSlide { get => IsGroupPart; }
         /// <summary>
-        /// 获取前方Slide是否完成
+        /// Whether the preceding Slide has finished
         /// </summary>
         public bool ParentFinished
         {
@@ -61,7 +61,7 @@ namespace Assets.Scripts.Types
             }
         }
         /// <summary>
-        /// 获取前方Slide是否准备完成
+        /// Whether the preceding Slide is pending completion
         /// </summary>
         public bool ParentPendingFinish
         {

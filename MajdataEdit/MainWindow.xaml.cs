@@ -1,7 +1,9 @@
 ﻿using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Media;
+using System.Text.RegularExpressions;
 using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
@@ -19,43 +21,153 @@ using Timer = System.Timers.Timer;
 namespace MajdataEdit;
 
 /// <summary>
-///     MainWindow.xaml 的交互逻辑
+///     Interaction logic for MainWindow.xaml
 /// </summary>
 public partial class MainWindow : Window
 {
+    private readonly System.Windows.Threading.DispatcherTimer petTypingTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(850)
+    };
+
     public MainWindow()
     {
         InitializeComponent();
+        MediaTimelinePanel.ProjectChanged += MediaTimelinePanel_ProjectChanged;
+        MediaTimelinePanel.MarkerRequested += MediaTimelinePanel_MarkerRequested;
+        MediaTimelinePanel.PlayheadChanged += MediaTimelinePanel_PlayheadChanged;
         fumenEditor = new FumenEditorAdapter(FumenContent);
         FumenContent.TextArea.TextView.BackgroundRenderers.Add(
             new ColorSectionBackgroundRenderer(FumenContent));
+        basicParseErrorRenderer = new BasicParseErrorRenderer(FumenContent);
+        FumenContent.TextArea.TextView.BackgroundRenderers.Add(basicParseErrorRenderer);
         FumenContent.TextArea.TextView.LineTransformers.Add(new SimaiColorizer());
+        FumenContent.TextArea.TextView.MouseHover += FumenContentTextView_MouseHover;
+        FumenContent.TextArea.TextView.MouseHoverStopped += FumenContentTextView_MouseHoverStopped;
         FumenContent.TextArea.Caret.PositionChanged += FumenContent_SelectionChanged;
+        FumenContent.LostKeyboardFocus += (_, _) => SyntaxCheck();
         FumenContent.Options.AllowToggleOverstrikeMode = false;
+        AlphaCommandHints.Attach(FumenContent);
+        petTypingTimer.Tick += (_, _) =>
+        {
+            petTypingTimer.Stop();
+            if (basicParseErrorRenderer.HasErrors)
+                PetStatusClient.Notify("error", "Chart has syntax errors");
+            else
+                PetStatusClient.Notify("idle", "Ready");
+        };
         if (Environment.GetCommandLineArgs().Contains("--ForceSoftwareRender"))
         {
-            MessageBox.Show("正在以软件渲染模式运行\nソフトウェア・レンダリング・モードで動作\nBooting as software rendering mode.");
+            MessageBox.Show(GetLocalizedString("SoftwareRenderMode"));
             RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+        }
+    }
+
+    private ToolTip? basicParseErrorToolTip;
+    private RecordVideoWindow? recordVideoWindow;
+
+    private void FumenContentTextView_MouseHover(object sender, MouseEventArgs e)
+    {
+        var position = FumenContent.GetPositionFromPoint(e.GetPosition(FumenContent));
+        if (position == null)
+            return;
+
+        var message = basicParseErrorRenderer.GetMessageForLine(position.Value.Line - 1);
+        if (string.IsNullOrWhiteSpace(message))
+            return;
+
+        basicParseErrorToolTip = new ToolTip
+        {
+            Content = message,
+            PlacementTarget = FumenContent,
+            Padding = new Thickness(8, 5, 8, 5),
+            BorderThickness = new Thickness(1)
+        };
+        basicParseErrorToolTip.SetResourceReference(Control.BackgroundProperty, "EditorBackground");
+        basicParseErrorToolTip.SetResourceReference(Control.ForegroundProperty, "ButtonForeground");
+        basicParseErrorToolTip.SetResourceReference(Control.BorderBrushProperty, "MenuSeparator");
+        basicParseErrorToolTip.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void FumenContentTextView_MouseHoverStopped(object sender, MouseEventArgs e)
+    {
+        if (basicParseErrorToolTip == null)
+            return;
+
+        basicParseErrorToolTip.IsOpen = false;
+        basicParseErrorToolTip = null;
+    }
+
+    private static readonly System.Diagnostics.Stopwatch StartupStopwatch =
+        System.Diagnostics.Stopwatch.StartNew();
+
+    private static readonly bool StartupTraceEnabled =
+        Environment.GetEnvironmentVariable("MAJDATA_STARTUP_TRACE") == "1";
+
+    // Set MAJDATA_STARTUP_TRACE=1 to log phase timings to startup-trace.log when diagnosing slow release startup.
+    private static void TraceStartup(string phase)
+    {
+        if (!StartupTraceEnabled)
+            return;
+        try
+        {
+            File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "startup-trace.log"),
+                $"+{StartupStopwatch.ElapsedMilliseconds}ms {phase}\r\n");
+        }
+        catch
+        {
+            // Trace logging must never affect startup.
         }
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        TraceStartup("Loaded begin");
+        var viewWasAlreadyRunning =
+            Process.GetProcessesByName("MajdataView").Length > 0 ||
+            Process.GetProcessesByName("MajdataViewAlpha").Length > 0;
         CheckAndStartView();
+        TraceStartup("CheckAndStartView done");
+        StartVisualEditBridge();
+        TraceStartup("StartVisualEditBridge done");
 
         TheWindow.Title = GetWindowsTitleString();
 
         SetWindowGoldenPosition();
+        TraceStartup("SetWindowGoldenPosition done");
+        // The launcher starts View before Edit. In that path CheckAndStartView
+        // does not create its delayed alignment timer, so explicitly reuse the
+        // same alignment path after the editor reaches its startup position.
+        if (viewWasAlreadyRunning)
+            ScheduleViewWindowAlignment(250);
 
         DCRPCclient.Logger = new ConsoleLogger { Level = LogLevel.Warning };
-        DCRPCclient.Initialize();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                DCRPCclient.Initialize();
+                TraceStartup("DiscordRPC done");
+            }
+            catch
+            {
+                // Discord presence is optional and must never block editor startup.
+            }
+        });
+        TraceStartup("DiscordRPC queued");
 
         var handle = new WindowInteropHelper(this).Handle;
         Bass.BASS_Init(-1, 44100, BASSInit.BASS_DEVICE_CPSPEAKERS, handle);
+        TraceStartup("Bass init done");
         InitWave();
+        TraceStartup("InitWave done");
 
         ReadSoundEffect();
+        TraceStartup("ReadSoundEffect done");
         ReadEditorSetting();
+        VisualChartEditorCheck.IsChecked = editorSetting?.EnableVisualChartEditor ?? true;
+        TraceStartup("ReadEditorSetting done");
 
         chartChangeTimer.Elapsed += ChartChangeTimer_Elapsed;
         chartChangeTimer.AutoReset = false;
@@ -67,23 +179,30 @@ public partial class MainWindow : Window
         waveStopMonitorTimer.Elapsed += WaveStopMonitorTimer_Elapsed;
         playbackSpeedHideTimer.Elapsed += PlbHideTimer_Elapsed;
 
-        if (editorSetting!.AutoCheckUpdate) CheckUpdate(true);
+        #region Abnormal termination handling
 
-        #region 异常退出处理
-
-        if (!SafeTerminationDetector.Of().IsLastTerminationSafe())
+        TraceStartup("timers wired");
+        var previousTerminationWasSafe = SafeTerminationDetector.Of().IsLastTerminationSafe();
+        var previousEditPath = !previousTerminationWasSafe &&
+                               File.Exists(SafeTerminationDetector.Of().RecordPath)
+            ? File.ReadAllText(SafeTerminationDetector.Of().RecordPath).Trim()
+            : string.Empty;
+        // Clear the previous run marker before opening a chart. initFromFile then
+        // creates the marker for this run, preserving crash recovery.
+        SafeTerminationDetector.Of().RecordProgramClose();
+        if (!previousTerminationWasSafe)
         {
-            // 若上次异常退出，则询问打开恢复窗口
+            TraceStartup("recovery MessageBox shown");
+            // Offer to open the recovery window after an abnormal exit.
             var result = MessageBox.Show(GetLocalizedString("AbnormalTerminationInformation"),
                 GetLocalizedString("Attention"), MessageBoxButton.YesNo);
             if (result == MessageBoxResult.Yes)
             {
-                var lastEditPath = File.ReadAllText(SafeTerminationDetector.Of().RecordPath).Trim();
-                if (lastEditPath.Length != 0)
-                    // 尝试打开上次未正常关闭的谱面 然后再打开恢复页面
+                if (previousEditPath.Length != 0)
+                    // Try to open the chart from the abnormal exit before showing the recovery page.
                     try
                     {
-                        initFromFile(lastEditPath);
+                        initFromFile(previousEditPath);
                     }
                     catch (Exception error)
                     {
@@ -93,10 +212,15 @@ public partial class MainWindow : Window
                 Menu_AutosaveRecover_Click(new object(), new RoutedEventArgs());
             }
         }
-
-        SafeTerminationDetector.Of().RecordProgramClose();
+        else
+        {
+            TryOpenLastChart();
+        }
 
         #endregion
+
+        TraceStartup("Loaded end");
+        ContentRendered += (_, _) => TraceStartup("ContentRendered");
     }
 
 
@@ -107,6 +231,16 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() => { InternalSwitchWindow(); });
         setWindowPosTimer.Stop();
         setWindowPosTimer.Dispose();
+    }
+
+    private void ScheduleViewWindowAlignment(double delayMilliseconds)
+    {
+        var setWindowPosTimer = new Timer(delayMilliseconds)
+        {
+            AutoReset = false
+        };
+        setWindowPosTimer.Elapsed += SetWindowPosTimer_Elapsed;
+        setWindowPosTimer.Start();
     }
 
     //Window events
@@ -128,7 +262,18 @@ public partial class MainWindow : Window
                 process[0].Kill();
         }
 
+        var petProcess = Process.GetProcessesByName("MajdataLauncher");
+        if (petProcess.Length > 0)
+        {
+            var petResult = MessageBox.Show(GetLocalizedString("AskExitPet"), GetLocalizedString("Attention"),
+                MessageBoxButton.YesNo);
+            if (petResult == MessageBoxResult.Yes)
+                foreach (var pet in petProcess)
+                    pet.Kill();
+        }
+
         currentTimeRefreshTimer.Stop();
+        StopVisualEditBridge();
         notePreviewTimer.Stop();
         visualEffectRefreshTimer.Stop();
 
@@ -150,32 +295,49 @@ public partial class MainWindow : Window
         Bass.BASS_Stop();
         Bass.BASS_Free();
 
-        // 正常退出
+        // Normal exit
         SafeTerminationDetector.Of().RecordProgramClose();
     }
 
     //Window grid events
     private void Grid_DragEnter(object sender, DragEventArgs e)
     {
+        if (e.Handled)
+            return;
+        if (e.Data.GetDataPresent(DataFormats.FileDrop) &&
+            e.Data.GetData(DataFormats.FileDrop) is string[] files &&
+            files.Any(MediaTimelineEditor.CanImportFile))
+        {
+            e.Effects = DragDropEffects.Copy;
+            return;
+        }
         e.Effects = DragDropEffects.Move;
     }
 
-    private void Grid_Drop(object sender, DragEventArgs e)
+    private async void Grid_Drop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetDataPresent(DataFormats.FileDrop))
-            //Console.WriteLine(e.Data.GetData(DataFormats.FileDrop).ToString());
-            if (e.Data.GetData(DataFormats.FileDrop).ToString() == "System.String[]")
-            {
-                var path = ((string[])e.Data.GetData(DataFormats.FileDrop))[0];
-                if (path.ToLower().Contains("maidata.txt"))
-                {
-                    if (!isSaved)
-                        if (!AskSave())
-                            return;
-                    var fileInfo = new FileInfo(path);
-                    initFromFile(fileInfo.DirectoryName!);
-                }
-            }
+        if (e.Handled)
+            return;
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop) ||
+            e.Data.GetData(DataFormats.FileDrop) is not string[] files)
+            return;
+
+        var mediaFiles = files.Where(MediaTimelineEditor.CanImportFile).ToArray();
+        if (mediaFiles.Length > 0)
+        {
+            e.Handled = true;
+            await OpenMediaTimelineAsync(mediaFiles);
+            return;
+        }
+
+        var maidataPath = files.FirstOrDefault(path =>
+            string.Equals(Path.GetFileName(path), "maidata.txt", StringComparison.OrdinalIgnoreCase));
+        if (maidataPath == null)
+            return;
+        if (!isSaved && !AskSave())
+            return;
+        var fileInfo = new FileInfo(maidataPath);
+        initFromFile(fileInfo.DirectoryName!);
     }
 
     private void FindClose_MouseDown(object sender, MouseButtonEventArgs e)
@@ -225,18 +387,32 @@ public partial class MainWindow : Window
         SystemSounds.Beep.Play();
     }
 
+    private void Menu_ExportNoAlpha_Click(object sender, RoutedEventArgs e)
+    {
+        ExportNoAlphaFumen();
+    }
+
     private void Menu_SaveAs_Click(object sender, RoutedEventArgs e)
     {
     }
 
     private void Menu_ExportRender_Click(object sender, RoutedEventArgs e)
     {
-        TogglePlayAndPause(PlayMethod.Record);
-    }
-
-    private void Menu_ExportRender60_Click(object sender, RoutedEventArgs e)
-    {
-        TogglePlayAndPause(PlayMethod.Record60);
+        if (recordVideoWindow is { IsLoaded: true })
+        {
+            recordVideoWindow.Activate();
+            return;
+        }
+        var window = new RecordVideoWindow(this) { Owner = this };
+        recordVideoWindow = window;
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(recordVideoWindow, window))
+                recordVideoWindow = null;
+        };
+        // Do not disable the Edit owner: a modal owner transition makes some
+        // transparent topmost desktop-pet windows flash black under DWM.
+        window.Show();
     }
 
     private void MirrorLeftRight_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -277,6 +453,56 @@ public partial class MainWindow : Window
         window.ShowDialog();
     }
 
+    private void NoteDensity_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        if (selectedDifficulty < 0 || SimaiProcess.notelist == null || SimaiProcess.notelist.Count == 0)
+        {
+            MessageBox.Show(GetLocalizedString("NoChartForDensity"));
+            return;
+        }
+
+        // Match CountTotalNotes categorization: Slide heads count as pink, Slide bodies as blue, and TouchHolds as Touch.
+        var samples = new List<NoteDensitySample>();
+        var maxTime = 0d;
+        foreach (var tp in SimaiProcess.notelist)
+        {
+            maxTime = Math.Max(maxTime, tp.time);
+            foreach (var n in tp.getNotes())
+            {
+                switch (n.noteType)
+                {
+                    case SimaiNoteType.Tap:
+                    case SimaiNoteType.Hold:
+                        samples.Add(new NoteDensitySample(tp.time, DensityCategory.TapFamily));
+                        break;
+                    case SimaiNoteType.Touch:
+                    case SimaiNoteType.TouchHold:
+                        samples.Add(new NoteDensitySample(tp.time, DensityCategory.Touch));
+                        break;
+                    case SimaiNoteType.Slide:
+                        if (!n.isSlideNoHead)
+                            samples.Add(new NoteDensitySample(tp.time, DensityCategory.TapFamily));
+                        samples.Add(new NoteDensitySample(tp.time, DensityCategory.SlideBody));
+                        break;
+                }
+            }
+        }
+
+        if (samples.Count == 0)
+        {
+            MessageBox.Show(GetLocalizedString("NoNotesForDensity"));
+            return;
+        }
+
+        var length = Math.Max(songLength, maxTime);
+        var window = new NoteDensityWindow(samples, GetDensityAudioEnvelope(), length, songLength,
+            SimaiProcess.title ?? "")
+        {
+            Owner = this
+        };
+        window.Show();
+    }
+
     private void FormatBrushAuto_MenuItem_Click(object? sender, RoutedEventArgs e)
         => ApplyBeatFormatBrush(null);
 
@@ -308,6 +534,137 @@ public partial class MainWindow : Window
             fumenEditor.ReplaceSelection(transformed);
     }
 
+    private void AutoOrganize16_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        var text = fumenEditor.Text;
+        if (!ChartOrganizer.CanOrganize(text))
+        {
+            MessageBox.Show(GetLocalizedString("OrganizeNeedsDivision"), GetLocalizedString("AutoOrganize"));
+            return;
+        }
+
+        var options = new OrganizeOptionsWindow { Owner = this };
+        if (options.ShowDialog() != true || !options.AddMeasureComments.HasValue)
+            return;
+
+        var organized = ChartOrganizer.Organize(text, options.AddMeasureComments.Value);
+        if (string.Equals(organized, text, StringComparison.Ordinal))
+            return;
+
+        fumenEditor.Text = organized;
+    }
+
+    private void SearchSelectedChartPattern_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        var query = fumenEditor.SelectedText.Trim();
+        if (string.IsNullOrWhiteSpace(query))
+            return;
+
+        var window = new ChartLibraryWindow(query) { Owner = this };
+        window.Show();
+    }
+
+    private async void MuriCheck_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        var chart = fumenEditor.Text;
+        if (string.IsNullOrWhiteSpace(chart))
+        {
+            MessageBox.Show(GetLocalizedString("MuriChartEmpty"), GetLocalizedString("MuriCheckExternal"));
+            return;
+        }
+
+        // Prefer bundled MaiMuriDX at tools\MaiMuriDX\lib, then fall back to desktop version 1.1.0.
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "tools", "MaiMuriDX", "lib"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "MaiMuriDX-1.1.0", "lib"),
+        };
+        var libDir = candidates.FirstOrDefault(d =>
+            File.Exists(Path.Combine(d, "python.exe")) && File.Exists(Path.Combine(d, "cli.py")));
+        if (libDir == null)
+        {
+            MessageBox.Show(string.Format(GetLocalizedString("MuriToolMissing"),
+                    "\n" + string.Join("\n", candidates)),
+                GetLocalizedString("MuriCheckExternal"));
+            return;
+        }
+
+        var tempChart = Path.Combine(Path.GetTempPath(), "majedit_muri_chart.txt");
+        var tempReport = Path.Combine(Path.GetTempPath(), "majedit_muri_report.txt");
+        try
+        {
+            // cli.py reads UTF-8 and writes UTF-8 without BOM. The first offset shifts only absolute time, not muri relationships, so pass zero.
+            await File.WriteAllTextAsync(tempChart, chart, new System.Text.UTF8Encoding(false));
+            if (File.Exists(tempReport))
+                File.Delete(tempReport);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = Path.Combine(libDir, "python.exe"),
+                WorkingDirectory = libDir,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            psi.ArgumentList.Add(Path.Combine(libDir, "cli.py"));
+            psi.ArgumentList.Add("-f");
+            psi.ArgumentList.Add(tempChart);
+            psi.ArgumentList.Add("-o");
+            psi.ArgumentList.Add(tempReport);
+
+            string stderr;
+            using (var proc = Process.Start(psi)!)
+            {
+                var errTask = proc.StandardError.ReadToEndAsync();
+                await proc.StandardOutput.ReadToEndAsync();
+                stderr = await errTask;
+                await proc.WaitForExitAsync();
+            }
+
+            var report = File.Exists(tempReport)
+                ? await File.ReadAllTextAsync(tempReport, System.Text.Encoding.UTF8)
+                : string.Empty;
+            if (string.IsNullOrWhiteSpace(report))
+                report = string.IsNullOrWhiteSpace(stderr)
+                    ? GetLocalizedString("MuriNoOutput")
+                    : string.Format(GetLocalizedString("MuriToolError"), "\n" + stderr);
+
+            ShowMuriReport(report);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, GetLocalizedString("MuriCheckFailed"));
+        }
+        finally
+        {
+            try { if (File.Exists(tempChart)) File.Delete(tempChart); } catch { }
+        }
+    }
+
+    private void ShowMuriReport(string report)
+    {
+        var box = new TextBox
+        {
+            Text = report,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.NoWrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            FontFamily = new FontFamily("Cascadia Mono, Consolas"),
+            Padding = new Thickness(8),
+        };
+        new Window
+        {
+            Title = GetLocalizedString("MuriResultTitle"),
+            Width = 760,
+            Height = 580,
+            Owner = this,
+            Content = box,
+        }.Show();
+    }
+
     private async void AudioConvert44100_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
@@ -320,14 +677,9 @@ public partial class MainWindow : Window
 
         try
         {
-            await MediaTools.ConvertAudioTo44100Async(dialog.FileName);
-            if (!string.IsNullOrWhiteSpace(maidataDir) &&
-                string.Equals(Path.GetDirectoryName(dialog.FileName), maidataDir, StringComparison.OrdinalIgnoreCase) &&
-                Path.GetFileNameWithoutExtension(dialog.FileName).Equals("track", StringComparison.OrdinalIgnoreCase))
-            {
-                initFromFile(maidataDir);
-            }
-            MessageBox.Show("转换完成，原文件已备份到 backup。", "MajdataEdit");
+            await RunMediaEditAsync(dialog.FileName,
+                () => MediaTools.ConvertAudioTo44100Async(dialog.FileName));
+            MessageBox.Show(GetLocalizedString("AudioConvertDone"), "MajdataEdit");
         }
         catch (Exception ex)
         {
@@ -337,6 +689,12 @@ public partial class MainWindow : Window
 
     private async void MediaCutRange_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
+        if (!TryGetMediaTrimRange(out var range))
+        {
+            MessageBox.Show(GetLocalizedString("MediaMarkersRequired"), "MajdataEdit");
+            return;
+        }
+
         var dialog = new OpenFileDialog
         {
             InitialDirectory = Directory.Exists(maidataDir) ? maidataDir : "",
@@ -345,14 +703,11 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true)
             return;
 
-        var range = MediaRangeDialog.ShowDialog(this);
-        if (range == null)
-            return;
-
         try
         {
-            await MediaTools.RemoveRangeAsync(dialog.FileName, range.Value.Start, range.Value.End);
-            MessageBox.Show("剪辑完成，原文件已备份到 backup。", "MajdataEdit");
+            await RunMediaEditAsync(dialog.FileName,
+                () => MediaTools.RemoveRangeAsync(dialog.FileName, range.Start, range.End));
+            MessageBox.Show(GetLocalizedString("MediaCutDone"), "MajdataEdit");
         }
         catch (Exception ex)
         {
@@ -360,10 +715,111 @@ public partial class MainWindow : Window
         }
     }
 
-    private void AlphaSyntaxHelp_MenuItem_Click(object? sender, RoutedEventArgs e)
+    private async void PrependFourBeats_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        var window = new AlphaSyntaxHelp { Owner = this };
-        window.ShowDialog();
+        var dialog = new OpenFileDialog
+        {
+            InitialDirectory = Directory.Exists(maidataDir) ? maidataDir : "",
+            Filter = "Media|*.mp4;*.mov;*.mkv;*.webm;*.wav;*.mp3;*.ogg;*.flac;*.m4a;*.aac|All files|*.*"
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+
+        try
+        {
+            var beatCount = MediaBeatCountDialog.ShowDialog(this);
+            if (!beatCount.HasValue)
+                return;
+            var duration = GetBeatDuration(beatCount.Value);
+            await RunMediaEditAsync(dialog.FileName,
+                () => MediaTools.PrependBlankAsync(dialog.FileName, duration));
+            MessageBox.Show(string.Format(
+                CultureInfo.CurrentCulture,
+                GetLocalizedString("PrependFourBeatsDone"),
+                beatCount.Value,
+                duration), "MajdataEdit");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "ffmpeg failed");
+        }
+    }
+
+    private async void MediaTimeline_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        if (MediaTimelinePanel.Visibility == Visibility.Visible)
+        {
+            MediaTimelinePanel_CloseRequested(MediaTimelinePanel, EventArgs.Empty);
+            return;
+        }
+        await OpenMediaTimelineAsync();
+    }
+
+    private async Task OpenMediaTimelineAsync(IEnumerable<string>? importFiles = null)
+    {
+        if (string.IsNullOrWhiteSpace(maidataDir) || !Directory.Exists(maidataDir))
+        {
+            MessageBox.Show(GetLocalizedString("NoMaidata_txt"), GetLocalizedString("Attention"));
+            return;
+        }
+
+        if (isPlaying || lastEditorState == EditorControlMethod.Pause)
+            ToggleStop();
+
+        SimaiProcess.Serialize(GetRawFumenText(), GetRawFumenPosition());
+        var projectEnd = MediaTimelineProject.LoadWorking(maidataDir).Clips
+            .Select(clip => clip.TimelineEnd)
+            .DefaultIfEmpty(songLength)
+            .Max();
+        BuildWaveBeatLines(Math.Max(Math.Max(songLength, projectEnd), 30d),
+            out var strongBeats, out var weakBeats);
+        double beatDuration;
+        try
+        {
+            beatDuration = GetBeatDuration(1d);
+        }
+        catch
+        {
+            beatDuration = 0.5d;
+        }
+
+        await MediaTimelinePanel.ConfigureAsync(
+            maidataDir,
+            songLength,
+            strongBeats,
+            weakBeats,
+            beatDuration,
+            SimaiProcess.mediaTrimStart,
+            SimaiProcess.mediaTrimEnd);
+        MediaTimelinePanel.Visibility = Visibility.Visible;
+        TimelineStopButton.Visibility = Visibility.Visible;
+        TimelinePlayAndPauseButton.Visibility = Visibility.Visible;
+        MediaTimelinePanel.Focus();
+        if (importFiles != null)
+            await MediaTimelinePanel.AddFilesAsync(importFiles);
+    }
+
+    private void MediaTimelinePanel_CloseRequested(object? sender, EventArgs e)
+    {
+        MediaTimelinePanel.Visibility = Visibility.Collapsed;
+        TimelineStopButton.Visibility = Visibility.Collapsed;
+        TimelinePlayAndPauseButton.Visibility = Visibility.Collapsed;
+        FumenContent.Focus();
+    }
+
+    private void InsertMeasureTemplate_MenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string tag })
+        {
+            var values = tag.Split('|');
+            if (values.Length == 2 && int.TryParse(values[1], out var measures))
+                InsertMeasureTemplate(values[0], measures);
+        }
+    }
+
+    private void AlphaSyntaxHelp_MenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        new AlphaSyntaxHelp { Owner = this }.ShowDialog();
     }
 
     private void MenuItem_InfomationEdit_Click(object? sender, RoutedEventArgs e)
@@ -375,13 +831,16 @@ public partial class MainWindow : Window
         TheWindow.Title = GetWindowsTitleString(SimaiProcess.title!);
         var after = BuildSongDetailInfoFingerprint();
         if (!string.Equals(before, after, StringComparison.Ordinal))
-            InvalidateSongDetailCache(4, 5);
+        {
+            InvalidateSongDetailCache();
+            SchedulePreBakeSongDetail(); // Re-bake the current difficulty cover after metadata changes.
+        }
     }
 
     private void MenuItem_Majnet_Click(object? sender, RoutedEventArgs e)
     {
         Process.Start(new ProcessStartInfo() { FileName = "https://majdata.net", UseShellExecute = true });
-        //maidata.txtの譜面書式
+        // Chart format in maidata.txt
     }
 
     private void MenuItem_GitHub_Click(object? sender, RoutedEventArgs e)
@@ -396,7 +855,7 @@ public partial class MainWindow : Window
             Owner = this
         };
         soundSetting.ShowDialog();
-        SaveSetting(); // 关闭音量窗口后立即保存当前 BASS 通道音量到 majSetting.json
+        SaveSetting(); // Save current BASS channel volumes to majSetting.json when the volume window closes.
     }
 
     private void MuriCheck_Click_1(object? sender, RoutedEventArgs e)
@@ -481,14 +940,14 @@ public partial class MainWindow : Window
 
     #endregion
 
-    #region 快捷键
+    #region Keyboard shortcuts
 
-    private void PlayAndPause_CanExecute(object? sender, CanExecuteRoutedEventArgs e) //快捷键
+    private void PlayAndPause_CanExecute(object? sender, CanExecuteRoutedEventArgs e) // Keyboard shortcut
     {
         TogglePlayAndStop();
     }
 
-    private void StopPlaying_CanExecute(object? sender, CanExecuteRoutedEventArgs e) //快捷键
+    private void StopPlaying_CanExecute(object? sender, CanExecuteRoutedEventArgs e) // Keyboard shortcut
     {
         TogglePlayAndPause();
     }
@@ -625,7 +1084,8 @@ public partial class MainWindow : Window
         SimaiProcess.Serialize(GetRawFumenText());
         chartParsePending = false;
         DrawWave();
-        SyntaxCheck();
+        SyntaxCheck(false);
+        SchedulePreBakeSongDetail(); // Pre-bake the selected difficulty cover after switching difficulty.
     }
 
     private void LevelTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -669,6 +1129,17 @@ public partial class MainWindow : Window
         FumenContent.Focus();
     }
 
+    private void VisualChartEditorCheck_Click(object sender, RoutedEventArgs e)
+    {
+        if (editorSetting == null)
+            return;
+
+        editorSetting.EnableVisualChartEditor = VisualChartEditorCheck.IsChecked == true;
+        SaveEditorSetting();
+        SendDisplaySettings();
+        FumenContent.Focus();
+    }
+
     private void Op_Button_Click(object sender, RoutedEventArgs e)
     {
         TogglePlayAndStop(PlayMethod.Op);
@@ -676,7 +1147,7 @@ public partial class MainWindow : Window
 
     private void SettingLabel_MouseUp(object sender, MouseButtonEventArgs e)
     {
-        // 单击设置的时候也可以进入设置界面
+        // A single click on Settings also opens the settings page.
         var esp = new EditorSettingPanel();
         esp.Owner = this;
         esp.ShowDialog();
@@ -690,13 +1161,14 @@ public partial class MainWindow : Window
     {
         if (chartParsePending)
             return;
+        RefreshSyntaxValidationSlot();
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING && (bool)FollowPlayCheck.IsChecked!)
             return;
-        var time = GetTimeFromParsedPosition(fumenEditor.CurrentLine - 1, fumenEditor.CurrentColumn);
+        var time = SimaiProcess.Serialize(GetRawFumenText(), GetRawFumenPosition());
         NoteNowText.Content = (Math.Abs(time) - Math.Floor(Math.Abs(time)))
             .ToString(".0000", System.Globalization.CultureInfo.InvariantCulture);
 
-        //按住Ctrl，同时按下鼠标左键/上下左右方向键时，才改变进度，其他包含Ctrl的组合键不影响进度。
+        // Change progress only for Ctrl plus left-click or an arrow key; other Ctrl combinations do not affect it.
         if (Keyboard.Modifiers == ModifierKeys.Control && (
                 Mouse.LeftButton == MouseButtonState.Pressed ||
                 Keyboard.IsKeyDown(Key.Left) ||
@@ -716,14 +1188,27 @@ public partial class MainWindow : Window
         ghostCusorPositionTime = (float)time;
         if (!isPlaying && ghostChanged)
             DrawWave();
-        QueueNotePreview();
+        // Drag-selection is an editor operation, not a View preview request. Sending
+        // the selected slide here renders a stray blue path while the mouse is down.
+        if (FumenContent.SelectionLength == 0)
+            QueueNotePreview();
     }
 
     private void FumenContent_TextChanged(object? sender, EventArgs e)
     {
-        if (GetRawFumenText() == "" || isLoading) return;
+        if (isLoading) return;
+        PetStatusClient.Notify("running", "Charting...");
+        petTypingTimer.Stop();
+        petTypingTimer.Start();
         SetSavedState(false);
+        if (GetRawFumenText() == "")
+        {
+            chartParsePending = false;
+            ClearBasicParseErrors();
+            return;
+        }
         chartParsePending = true;
+        QueueImmediateWaveRefresh();
         chartChangeTimer.Stop();
         chartChangeTimer.Start();
         QueueNotePreview();
@@ -732,7 +1217,7 @@ public partial class MainWindow : Window
 
     private void FumenContent_OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        // 按下Insert键，同时未按下任何组合键，切换覆盖模式
+        // Toggle overwrite mode when Insert is pressed without modifiers.
         if (e.Key == Key.Insert && Keyboard.Modifiers == ModifierKeys.None)
         {
             SwitchFumenOverwriteMode();
@@ -767,7 +1252,21 @@ public partial class MainWindow : Window
 
     private void MusicWave_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        waveScrubActive = true;
+        MusicWave.CaptureMouse();
         lastMousePointX = e.GetPosition(this).X;
+    }
+
+    private void MusicWave_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        waveScrubActive = false;
+        MusicWave.ReleaseMouseCapture();
+        MediaTimelinePanel.SyncPlayhead(GetTimelinePosition());
+    }
+
+    private void MusicWave_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        waveScrubActive = false;
     }
 
     private void MusicWave_MouseMove(object sender, MouseEventArgs e)
@@ -784,8 +1283,10 @@ public partial class MainWindow : Window
 
     private void MusicWave_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        InitWave();
-        DrawWave();
+        // Match 4.4.0: keep the time range and redraw it at the new pixel width.
+        // A wider editor therefore expands the waveform instead of cancelling the
+        // resize by changing the zoom range.
+        QueueWaveResize();
     }
 
 

@@ -150,6 +150,9 @@
   <data name="ShowJudgeLine" xml:space="preserve">
     <value>再生中に判定ラインを表示</value>
   </data>
+  <data name="ShowJudgeArea" xml:space="preserve">
+    <value>判定エリアを表示</value>
+  </data>
   <data name="ShowAllPerfect" xml:space="preserve">
     <value>All Perfect を表示・再生</value>
   </data>
@@ -455,10 +458,10 @@ Open Browser to download latest update of Majdata?</value>
     <value>COMBO表示</value>
   </data>
   <data name="ExportVideo" xml:space="preserve">
-    <value>譜面動画を生成</value>
+    <value>譜面動画を生成（60 FPS）</value>
   </data>
   <data name="ExportVideo60" xml:space="preserve">
-    <value>譜面動画を生成（60 FPS）</value>
+    <value>譜面動画を生成（120 FPS）</value>
   </data>
   <data name="ComboDisplayAccClassic" xml:space="preserve">
     <value>達成率 (+)</value>
@@ -574,4 +577,571 @@ Open Browser to download latest update of Majdata?</value>
   <data name="FormatBrush32" xml:space="preserve">
     <value>拍子ブラシ（32分）</value>
   </data>
+  <data name="ExportNoAlpha" xml:space="preserve"><value>エフェクトなし譜面を書き出す</value></data>
+  <data name="RecordVideo" xml:space="preserve"><value>動画を録画…</value></data>
+  <data name="ChartLibrarySearch" xml:space="preserve"><value>譜面ライブラリ検索</value></data>
+  <data name="AlphaSyntaxHelp" xml:space="preserve"><value>Alpha 構文ヘルプ</value></data>
+  <data name="NoteDensity" xml:space="preserve"><value>ノーツ密度グラフ</value></data>
+  <data name="FormatBrush12" xml:space="preserve"><value>拍子ブラシ（12分）</value></data>
+  <data name="FormatBrush24" xml:space="preserve"><value>拍子ブラシ（24分）</value></data>
+  <data name="AutoOrganize16" xml:space="preserve"><value>自動整理（譜面全体・16分）</value></data>
+  <data name="MuriCheckExternal" xml:space="preserve"><value>無理配置チェック（MaiMuriDX）</value></data>
+  <data name="ConvertAudio44100" xml:space="preserve"><value>音声を 44100 Hz に変換</value></data>
+  <data name="CutMediaRange" xml:space="preserve"><value>音声・動画の区間を削除</value></data>
+  <data name="PrependFourBeats" xml:space="preserve"><value>音声・動画の先頭に空白拍を追加</value></data>
+  <data name="MediaMarkersRequired" xml:space="preserve"><value>譜面時間軸の独立した行に @start と @end を追加してください。</value></data>
+  <data name="PrependFourBeatsDone" xml:space="preserve"><value>先頭に {0:0.###} 拍（{1:0.###} 秒）を追加しました。元ファイルは backup に保存されました。</value></data>
+  <data name="BeatCountTitle" xml:space="preserve"><value>空白拍を追加</value></data>
+  <data name="BeatCount" xml:space="preserve"><value>拍数</value></data>
+  <data name="InvalidBeatCount" xml:space="preserve"><value>0 より大きい有効な拍数を入力してください。</value></data>
+  <data name="Confirm" xml:space="preserve"><value>OK</value></data>
+  <data name="MediaAccessDenied" xml:space="preserve"><value>メディアファイルを書き戻せません：{0}。使用中のプログラムを閉じ、読み取り専用でないことを確認してください。</value></data>
+  <data name="NoValidBpm" xml:space="preserve"><value>4拍の長さを計算できる有効な BPM がありません。</value></data>
+  <data name="MediaToolBusy" xml:space="preserve"><value>別のメディア処理が実行中です。</value></data>
+  <data name="UnsupportedMediaType" xml:space="preserve"><value>このメディア形式には対応していません。</value></data>
+  <data name="CreateMeasure44" xml:space="preserve"><value>4/4 小節を作成</value></data>
+  <data name="CreateMeasure34" xml:space="preserve"><value>3/4 小節を作成</value></data>
+  <data name="MeasureCount1" xml:space="preserve"><value>1 小節</value></data>
+  <data name="MeasureCount2" xml:space="preserve"><value>2 小節</value></data>
+  <data name="MeasureCount3" xml:space="preserve"><value>3 小節</value></data>
+  <data name="MeasureCount4" xml:space="preserve"><value>4 小節</value></data>
+  <data name="MirrorSelection" xml:space="preserve"><value>選択範囲を反転</value></data>
+  <data name="FormatSelection" xml:space="preserve"><value>選択範囲に拍子ブラシを適用</value></data>
+  <data name="HighestDivision" xml:space="preserve"><value>最大分割</value></data>
+  <data name="Division8" xml:space="preserve"><value>8分</value></data>
+  <data name="Division12" xml:space="preserve"><value>12分</value></data>
+  <data name="Division16" xml:space="preserve"><value>16分</value></data>
+  <data name="Division24" xml:space="preserve"><value>24分</value></data>
+  <data name="Division32" xml:space="preserve"><value>32分</value></data>
+  <data name="SearchSelectedInLibrary" xml:space="preserve"><value>選択パターンをライブラリで検索</value></data>
+  <data name="SongTitleLabel" xml:space="preserve"><value>曲名</value></data>
+  <data name="ArtistLabel" xml:space="preserve"><value>アーティスト</value></data>
+  <data name="DesignerLabel" xml:space="preserve"><value>譜面制作者</value></data>
+  <data name="LevelLabel" xml:space="preserve"><value>レベル</value></data>
+  <data name="ExportOptions" xml:space="preserve"><value>書き出し設定</value></data>
+  <data name="FrameRate" xml:space="preserve"><value>フレームレート</value></data>
+  <data name="Resolution" xml:space="preserve"><value>解像度</value></data>
+  <data name="KeepCurrentResolution" xml:space="preserve"><value>現在のまま</value></data>
+  <data name="CustomOption" xml:space="preserve"><value>カスタム…</value></data>
+  <data name="EvenResolutionTip" xml:space="preserve"><value>偶数の解像度（例：1600×900）</value></data>
+  <data name="RecordingSafeLimit" xml:space="preserve"><value>推奨：60 fps は 2560×1440、120 fps は 1920×1080 以下。</value></data>
+  <data name="SongCard" xml:space="preserve"><value>楽曲カード</value></data>
+  <data name="OriginalStyle" xml:space="preserve"><value>オリジナル</value></data>
+  <data name="OfficialStyleCover" xml:space="preserve"><value>公式風ジャケット</value></data>
+  <data name="ShowSongIntro" xml:space="preserve"><value>冒頭の楽曲ジャケットを表示</value></data>
+  <data name="ShowAllPerfectEnding" xml:space="preserve"><value>譜面終了後に All Perfect 演出を再生</value></data>
+  <data name="ExportLayers" xml:space="preserve"><value>書き出しレイヤー</value></data>
+  <data name="BackgroundPvLayer" xml:space="preserve"><value>背景 / PV</value></data>
+  <data name="NotesLayer" xml:space="preserve"><value>ノーツ</value></data>
+  <data name="EffectsLayer" xml:space="preserve"><value>エフェクト（判定 / 全画面フィルター）</value></data>
+  <data name="UiLayer" xml:space="preserve"><value>UI（判定ライン / 情報 / 楽曲カード）</value></data>
+  <data name="LayeredExport" xml:space="preserve"><value>レイヤー別書き出し：選択したレイヤーごとに動画を作成</value></data>
+  <data name="StartRecording" xml:space="preserve"><value>録画開始</value></data>
+  <data name="Close" xml:space="preserve"><value>閉じる</value></data>
+  <data name="RecordOpenChartFirst" xml:space="preserve"><value>先に譜面を開いてください。</value></data>
+  <data name="RecordInvalidResolution" xml:space="preserve"><value>1920×1080 のような正の偶数解像度を入力するか、現在の解像度を使用してください。</value></data>
+  <data name="RecordResolutionHighWarning" xml:space="preserve"><value>{0}×{1}、{2} fps の非圧縮録画は非常に高負荷で、深刻な遅延、GPU メモリ不足、またはディスプレイドライバーのブラックスクリーンを引き起こす可能性があります。60 fps は 2560×1440、120 fps は 1920×1080 以下を推奨します。それでも続行しますか？</value></data>
+  <data name="RecordSelectLayer" xml:space="preserve"><value>書き出すレイヤーを1つ以上選択してください。</value></data>
+  <data name="RecordRenderingAudio" xml:space="preserve"><value>{0}：音声と効果音トラックを作成中（画面が一時停止する場合があります）…</value></data>
+  <data name="RecordPreparing" xml:space="preserve"><value>{0}：準備中（譜面の再読み込み / エンコーダーの起動）…</value></data>
+  <data name="RecordPreparingElapsed" xml:space="preserve"><value>{0}：準備中（譜面の再読み込み / エンコーダーの起動）… {1:0}秒</value></data>
+  <data name="RecordProgress" xml:space="preserve"><value>{0}：録画中… {1:0}秒経過、{2:0.0} MB 出力</value></data>
+  <data name="RecordCancelled" xml:space="preserve"><value>キャンセルしました。残りのレイヤーは録画しません。現在の処理は View 側で終了します。</value></data>
+  <data name="RecordTimeout" xml:space="preserve"><value>{0} の生成待機がタイムアウトしました。View 側のエラーを確認してください。</value></data>
+  <data name="RecordAllLayersDone" xml:space="preserve"><value>全 {0} レイヤーの録画が完了しました。動画は譜面フォルダー内にあります（out_layer.mp4）。</value></data>
+  <data name="RecordDone" xml:space="preserve"><value>録画が完了しました。動画は譜面フォルダー内の out.mp4 です。</value></data>
+  <data name="Cancelling" xml:space="preserve"><value>キャンセル中…</value></data>
+  <data name="CancellingBeforeClose" xml:space="preserve"><value>キャンセル中です。完了後に閉じてください…</value></data>
+  <data name="AutoOrganize" xml:space="preserve"><value>自動整理</value></data>
+  <data name="AddMeasureCommentsQuestion" xml:space="preserve"><value>4小節ごとに小節コメントを追加しますか？</value></data>
+  <data name="AddComments" xml:space="preserve"><value>コメントを追加</value></data>
+  <data name="SkipComments" xml:space="preserve"><value>追加しない</value></data>
+  <data name="ChartLibraryTitle" xml:space="preserve"><value>譜面リズム検索</value></data>
+  <data name="RhythmPattern" xml:space="preserve"><value>リズムパターン</value></data>
+  <data name="RhythmPatternExample" xml:space="preserve"><value>例：{16}1,,2,,3, または 1/5,,2/6</value></data>
+  <data name="ExactPosition" xml:space="preserve"><value>位置を一致</value></data>
+  <data name="Fuzzy" xml:space="preserve"><value>あいまい</value></data>
+  <data name="Search" xml:space="preserve"><value>検索</value></data>
+  <data name="Sort" xml:space="preserve"><value>並び順</value></data>
+  <data name="Count" xml:space="preserve"><value>回数</value></data>
+  <data name="Level" xml:space="preserve"><value>レベル</value></data>
+  <data name="DensityPerCombo" xml:space="preserve"><value>密度/CB</value></data>
+  <data name="StarCount" xml:space="preserve"><value>星数</value></data>
+  <data name="Descending" xml:space="preserve"><value>降順</value></data>
+  <data name="Song" xml:space="preserve"><value>楽曲</value></data>
+  <data name="Path" xml:space="preserve"><value>パス</value></data>
+  <data name="CopyMatch" xml:space="preserve"><value>一致箇所をコピー</value></data>
+  <data name="CopyContext" xml:space="preserve"><value>前後をコピー</value></data>
+  <data name="CopyPath" xml:space="preserve"><value>パスをコピー</value></data>
+  <data name="OpenChart" xml:space="preserve"><value>譜面を開く</value></data>
+  <data name="NoteDensityTitle" xml:space="preserve"><value>ノーツ密度グラフ</value></data>
+  <data name="SlideHeadLegend" xml:space="preserve"><value>Tap / Hold / Slide の始点</value></data>
+  <data name="SlideBodyLegend" xml:space="preserve"><value>Slide 本体</value></data>
+  <data name="AudioIntensityLegend" xml:space="preserve"><value>音声強度</value></data>
+  <data name="AssetsSection" xml:space="preserve"><value>素材</value></data>
+  <data name="DefaultFolder" xml:space="preserve"><value>既定フォルダー</value></data>
+  <data name="OverallTheme" xml:space="preserve"><value>全体テーマ</value></data>
+  <data name="WindowBackground" xml:space="preserve"><value>ウィンドウ背景</value></data>
+  <data name="DefaultOption" xml:space="preserve"><value>既定</value></data>
+  <data name="IntroBackground" xml:space="preserve"><value>冒頭ジャケット背景</value></data>
+  <data name="EditorFont" xml:space="preserve"><value>エディターフォント</value></data>
+  <data name="EditorFontSize" xml:space="preserve"><value>エディター文字サイズ</value></data>
+  <data name="ViewDisplayFont" xml:space="preserve"><value>プレイヤーフォント</value></data>
+  <data name="EnableVisualChartEditor" xml:space="preserve"><value>View のクリックでノートを作成</value></data>
+  <data name="SongInfoCard" xml:space="preserve"><value>楽曲情報カード</value></data>
+  <data name="EditorLightMode" xml:space="preserve"><value>編集領域のライトモード</value></data>
+  <data name="ShowGeneratedMark" xml:space="preserve"><value>左下の透かしと時刻を表示</value></data>
+  <data name="ShowSongDetail" xml:space="preserve"><value>冒頭ジャケットを表示</value></data>
+  <data name="ChartLibraryMissing" xml:space="preserve"><value>charts 譜面ライブラリが見つかりません（プログラムフォルダー内の charts フォルダーを確認してください）。</value></data>
+  <data name="ChartLibraryPrompt" xml:space="preserve"><value>リズムパターンを入力して検索をクリックしてください。</value></data>
+  <data name="ChartLibraryPath" xml:space="preserve"><value>譜面ライブラリ：{0}</value></data>
+  <data name="ChartLibraryEnterPattern" xml:space="preserve"><value>リズムパターンを入力してください。</value></data>
+  <data name="ChartLibrarySearching" xml:space="preserve"><value>検索中…</value></data>
+  <data name="ChartLibraryReading" xml:space="preserve"><value>譜面ライブラリを読み込み、リズムパターンを照合しています。</value></data>
+  <data name="ChartLibraryProgress" xml:space="preserve"><value>検索進捗：{0}/{1} 譜面  {2}</value></data>
+  <data name="ChartLibraryComplete" xml:space="preserve"><value>完了：{0} 件、{1} 箇所一致。</value></data>
+  <data name="ChartLibraryElapsed" xml:space="preserve"><value>所要時間 {0:F2}秒、難易度：{1}</value></data>
+  <data name="ChartLibraryCancelled" xml:space="preserve"><value>キャンセルしました。</value></data>
+  <data name="ChartLibraryFailed" xml:space="preserve"><value>検索に失敗しました。</value></data>
+  <data name="ChartLibraryCopiedMatch" xml:space="preserve"><value>一致した部分をコピーしました。</value></data>
+  <data name="ChartLibraryCopiedContext" xml:space="preserve"><value>前後の内容をコピーしました。</value></data>
+  <data name="ChartLibraryCopiedPath" xml:space="preserve"><value>maidata のパスをコピーしました。</value></data>
+  <data name="ChartLibraryPosition" xml:space="preserve"><value>BPM={0}   {1}cb から / 全 {2}cb   ☆{3}   {4:F2}s -&gt; {5:F2}s</value></data>
+  <data name="NoteDensityWindowTitle" xml:space="preserve"><value>ノーツ密度グラフ - {0}</value></data>
+  <data name="NoteDensitySummary" xml:space="preserve"><value>総ノーツ数 {0} · {1}</value></data>
+  <data name="NoteDensityRenderFailed" xml:space="preserve"><value>密度グラフを描画できませんでした：{0}</value></data>
+  <data name="AlphaHelpText" xml:space="preserve"><value><![CDATA[
+Alpha 構文ヘルプ
+================
+
+基本ルール
+----------
+<> コマンドは譜面の時間軸に記述し、カンマの時間枠を消費しません。
+使用できるノーツ種別：tap、each、hold、slide、star、break、touch、touchhold。
+種別ごとの値は全体値より優先されます。NULL で継承値に戻します。
+時間は秒数または 8:1、16:1 などの拍長で指定できます。拍長はコマンド直前の BPM を使用し、Slide の時間と同じ方法で換算されます。
+引数が空のときに Tab を押すと推奨値が入力されます。値がある場合は次の引数へ移動します。
+
+拍子、背景、コメント
+--------------------
+@4/4                 4/4 拍子に設定
+@3/4                 3/4 拍子に設定
+@start               メディア切り取り開始位置（単独行）
+@end                 メディア切り取り終了位置（単独行）
+@FF00FF              以降の編集領域に色を重ねる
+@NULL                編集領域の背景色を解除
+|| 1-4 小節          行コメント
+|* ブロックコメント *| ブロックコメント
+
+ノーツの色と透明度
+------------------
+<COLOR*FF00FF>       以降のすべてのノーツを着色
+<COLOR*tap=FF77AA,slide=66DDFF>
+<COLOR*NULL>         すべての既定色に戻す
+<COLOR*tap=NULL>     Tap だけを戻す
+<ALPHA*0.5>          全ノーツの透明度（0～1）
+<ALPHA*tap=0.4,slide=0.8>
+<ALPHA*NULL>
+<ALPHA*tap=NULL>
+
+ノーツサイズ
+------------
+<SIZE*1.25>          通常ノーツと星の始点を拡大（Slide 本体を除く）
+<SIZE*(1.2,0.8)>     X、Y の倍率を個別に設定
+<SIZE*tap=(1,2)>     Tap の X、Y 倍率だけを変更
+<SIZE*tap=0.9,star=1.2>
+<SIZE*slide=1.25>    Slide 本体だけを拡大
+<SIZE*hold=(1.1,0.8),touch=0.9>
+<SIZE*NULL>
+<SIZE*tap=NULL>
+<SIZE*slide=NULL>
+
+速度
+----
+<SV*2>               実スクロール速度の倍率
+<SV*tap=1.5,slide=0.8>
+<SV*tap=NULL>        この種別を全体 SV の継承に戻す
+<HS*1.2>             従来の落下速度の倍率
+<HS*hold=0.8,star=1.4>
+<HS*hold=NULL>
+
+判定ラインと表示
+----------------
+<JLINE*00FF00>       判定ラインの色を即時変更
+<JLINE*(00FF00,0.3)> 0.3 秒で切り替え
+<JLINE*(00FF00,8:1)> 現在の BPM の8分音符で切り替え
+<JLINE*NULL>         スキンの既定色に戻す
+表示コマンドで最後の切り替え時間を省略すると即時変更されます。8:1、16:1 などの拍長も使用できます。
+<ShowJudgeLine*(False)>
+<ShowJudgeLine*(False,1)>
+<ShowJudgeLine*(False,8:1)>
+<ShowJudgeArea*(True,1)>
+<ShowJudgeText*(False,1)>
+<ShowJudgeInfo*(False,1)>
+<ShowComboInfo*(False,1)>
+<InnerBrightness*(0.5,1)>
+<OuterBrightness*(0.8,1)>
+<ComboDisplay*(combo,0)>
+
+字幕
+----
+<TEXT*こんにちは>          次の TEXT まで表示
+<TEXT*(こんにちは,2)>      2 秒間表示
+<TEXT*(こんにちは,16:1)>   現在の BPM の16分音符1つ分表示
+<TEXT*>                    字幕を消去
+
+メディア
+----------
+パスは譜面フォルダーからの相対パスで、サブフォルダーも使用できます。メディアイベントは波形に表示されません。
+<AUDIO*(True,media/voice.ogg)>       OGG、WAV、MP3 を1回再生
+<AUDIO*(False)>                     追加音声を途中で停止
+<PVOVERLAY*(True,media/cutin.mp4)>   PNG、JPG、MP4 で譜面 PV を一時的に覆う
+<PVOVERLAY*(False)>                 オーバーレイを途中で終了して元の PV に戻す
+MP4 は再生終了時に自動で元へ戻ります。静止画は False または譜面停止まで表示されます。
+
+画面エフェクト
+--------------
+共通ルール：True で有効、False で無効になります。最後の [切り替え時間] は省略できます。
+時間を省略すると即時変更されます。秒数または 8:1、16:1 などの拍長を使用できます。
+異なる名前のエフェクトは重ねられます。同じ True を再指定すると現在値から新しい目標へ変化します。
+Gaussian  <Gaussian*(True,強度[,時間])>  ガウスぼかし
+Neon      <Neon*(True,強度[,時間])>      RGB 分離と輪郭発光
+Trail     <Trail*(True,強度[,時間])>     残像
+Fade      <Fade*(True,強度[,時間])>      黒へフェード
+Flash     <Flash*(True,強度[,時間])>     白へフラッシュ
+Brightness <Brightness*(True,強度[,時間])> 明るさを増加
+Saturation <Saturation*(True,強度[,時間])> 彩度を低下
+Contrast  <Contrast*(True,強度[,時間])>  コントラストを増加
+Rainbow   <Rainbow*(True,強度[,時間])>   動く虹色の合成
+Vignette  <Vignette*(True,強度[,時間])>  円形の表示範囲を縮小
+Zoom      <Zoom*(True,倍率[,時間])>      中央を基準に拡大
+Glitch    <Glitch*(True,強度[,時間])>    横方向のずれ
+TVNoise   <TVNoise*(True,強度[,時間])>   走査線とノイズ
+Hue       <Hue*(True,角度[,時間])>       色相回転（度）
+Tint      <Tint*(True,RRGGBB,強度[,時間])> 指定色へ合成
+Move      <Move*(True,dx,dy[,時間])>     画面を移動
+Rotate    <Rotate*(True,角度[,時間])>    中央を基準に回転
+Shake     <Shake*(True,強度,周波数[,角度,時間])> 画面を振動（Hz）
+すべてのエフェクトは <Effect*(False[,時間])> で無効にします。
+
+ノーツ修飾
+----------
+1f                    Tap 花火
+1hf[8:1]              Hold 花火
+1f-5[8:1]             Slide 始点の花火
+1m                    地雷ノーツ
+1d                    D エリア Tap
+2dh[8:1]              D エリア Hold
+3d-6d[8:1]            D エリア Slide
+
+ビジュアル編集
+----------------
+停止中のみ使用できます。判定ライン付近または外側をクリックすると Tap、内側では Touch を作成します。
+外周をドラッグすると通過した判定エリアに沿って Slide を作成します。ノーツを繰り返しクリックすると通常、Break、Touch の組み合わせを切り替えます。
+ジェスチャーは Slide の経路だけを作成し、時間はエディターの補完設定を使用します。
+]]></value></data>
+  <data name="AskExitPet" xml:space="preserve"><value>デスクトップペットも終了しますか？</value></data>
+  <data name="NoChartForDensity" xml:space="preserve"><value>解析できる譜面がありません。</value></data>
+  <data name="NoNotesForDensity" xml:space="preserve"><value>現在の難易度には解析できるノーツがありません。</value></data>
+  <data name="OrganizeNeedsDivision" xml:space="preserve"><value>自動整理するには、譜面本文に {16} などの分割指定が1つ以上必要です。</value></data>
+  <data name="MuriChartEmpty" xml:space="preserve"><value>譜面本文が空です。</value></data>
+  <data name="MuriToolMissing" xml:space="preserve"><value>MaiMuriDX が見つかりません（tools\MaiMuriDX に同梱されている必要があります）。検索先：{0}</value></data>
+  <data name="MuriNoOutput" xml:space="preserve"><value>（出力なし）</value></data>
+  <data name="MuriToolError" xml:space="preserve"><value>MaiMuriDX エラー：{0}</value></data>
+  <data name="MuriCheckFailed" xml:space="preserve"><value>無理配置チェックに失敗</value></data>
+  <data name="MuriResultTitle" xml:space="preserve"><value>無理配置チェック結果（MaiMuriDX）</value></data>
+  <data name="AudioConvertDone" xml:space="preserve"><value>変換が完了しました。元のファイルは backup に保存されました。</value></data>
+  <data name="MediaCutDone" xml:space="preserve"><value>編集が完了しました。元のファイルは backup に保存されました。</value></data>
+  <data name="MediaRangeTitle" xml:space="preserve"><value>時間範囲を削除</value></data>
+  <data name="StartSeconds" xml:space="preserve"><value>開始（秒）</value></data>
+  <data name="EndSeconds" xml:space="preserve"><value>終了（秒）</value></data>
+  <data name="InvalidMediaRange" xml:space="preserve"><value>有効な開始時間と終了時間を入力してください。</value></data>
+  <data name="FfmpegFailed" xml:space="preserve"><value>ffmpeg の実行に失敗しました。</value></data>
+  <data name="EmptyChart" xml:space="preserve"><value>現在の譜面は空です。</value></data>
+  <data name="ViewExecutableMissing" xml:space="preserve"><value>MajdataView.exe が見つかりません。完全なリリースパッケージ（App\MajdataView）を使用するか、MajdataView.exe を MajdataEdit.exe と同じフォルダーに配置してください。</value></data>
+  <data name="FoundSyntaxErrors" xml:space="preserve"><value>{0} 件の構文エラーが見つかりました</value></data>
+  <data name="SoftwareRenderMode" xml:space="preserve"><value>ソフトウェアレンダリングモードで実行しています。</value></data>
+  <data name="AudioDecodeFailed" xml:space="preserve"><value>MP3/OGG 音声をデコードできませんでした。{0}</value></data>
+  <data name="MeasureComment" xml:space="preserve"><value>小節 {0}</value></data>
+  <data name="RecordingLoadLabel" xml:space="preserve"><value>録画読み込み</value></data>
+  <data name="TransitionLabel" xml:space="preserve"><value>トランジション</value></data>
+  <data name="ValidationIssueAtLine" xml:space="preserve"><value>{0} 行目に問題があります：{1}</value></data>
+  <data name="ChartStatementInvalid" xml:space="preserve"><value>譜面の記述を解析できません</value></data>
+  <data name="ChartKeyRange" xml:space="preserve"><value>キーは 1 から 8 の範囲で指定してください</value></data>
+  <data name="SlideDurationInvalid" xml:space="preserve"><value>Slide の長さは 0 より大きい必要があります。[1:0] は使用できません</value></data>
+  <data name="SlideTargetMissing" xml:space="preserve"><value>Slide の終点キーがありません</value></data>
+  <data name="SlideChainInvalid" xml:space="preserve"><value>連結 Slide の形式が正しくありません</value></data>
+  <data name="SlideShapeUnknown" xml:space="preserve"><value>不明な Slide 形状：{0}</value></data>
+  <data name="WifiConnectionSlideUnsupported" xml:space="preserve"><value>Wifi Slide は Connection Slide の一部にできません</value></data>
+  <data name="LineSlideGap" xml:space="preserve"><value>直線 Slide の始点と終点は1キー以上離してください</value></data>
+  <data name="SlideShapeInvalid" xml:space="preserve"><value>{0} Slide の形状が正しくありません</value></data>
+  <data name="VSlideTurnInvalid" xml:space="preserve"><value>V Slide の曲がり角は始点から1キー離れた位置にしてください</value></data>
+  <data name="InvalidBrightnessDelay" xml:space="preserve"><value>明るさと更新間隔には有効な数値を入力してください。</value></data>
+  <data name="InvalidEditorSettings" xml:space="preserve"><value>明るさ、速度、更新間隔には有効な数値を入力してください。</value></data>
+  <data name="NoteSpeed" xml:space="preserve"><value>ノーツ速度</value></data>
+  <data name="StarSpeed" xml:space="preserve"><value>スター速度</value></data>
+  <data name="StarColor" xml:space="preserve"><value>星の色</value></data>
+  <data name="Pink" xml:space="preserve"><value>ピンク</value></data>
+  <data name="Original" xml:space="preserve"><value>オリジナル</value></data>
+  <data name="SoundBgmTip" xml:space="preserve"><value>BGM、録画開始音、メトロノーム、AP 音に影響します。</value></data>
+  <data name="SoundAnswerTip" xml:space="preserve"><value>正解音に影響します。</value></data>
+  <data name="SoundJudgeTip" xml:space="preserve"><value>Tap と Hold の判定音に影響します。</value></data>
+  <data name="SoundSlideTip" xml:space="preserve"><value>Slide と Break-Slide の開始音に影響します。</value></data>
+  <data name="SoundBreakTip" xml:space="preserve"><value>Break の判定音と Critical Perfect の歓声音に影響します。</value></data>
+  <data name="SoundBreakSlideTip" xml:space="preserve"><value>Break-Slide の完了音と Critical Perfect の歓声音に影響します。</value></data>
+  <data name="SoundExTip" xml:space="preserve"><value>EX Note の判定音に影響します。</value></data>
+  <data name="SoundTouchTip" xml:space="preserve"><value>Touch の判定音に影響します。</value></data>
+  <data name="SoundHanabiTip" xml:space="preserve"><value>花火音と Touch-Hold のループ音に影響します。</value></data>
+  <data name="FfmpegNotFound" xml:space="preserve"><value>ffmpeg.exe が見つかりません。プログラムフォルダーまたは PATH に配置してください。</value></data>
+  <data name="MuriDxUnsupported" xml:space="preserve"><value>無理配置チェックは現在 DX 譜面に対応していません。</value></data>
+  <data name="UnhandledError" xml:space="preserve"><value>エラー</value></data>
+  <data name="ChartReadErrorBody" xml:space="preserve"><value>maidata.txt の {0} 行目を読み込めませんでした：{1}</value></data>
+  <data name="ChartReadErrorTitle" xml:space="preserve"><value>譜面読み込みエラー</value></data>
+  <data name="EditorLine" xml:space="preserve"><value>行</value></data>
+  <data name="NewChartHint" xml:space="preserve"><value>右クリックで小節を追加し、View をクリックしてノーツを追加できます</value></data>
+  <data name="AlphaMissingClose" xml:space="preserve"><value>Alpha 構文に閉じ山括弧 &gt; がありません</value></data>
+  <data name="AlphaFormatError" xml:space="preserve"><value>Alpha 構文の形式が正しくありません</value></data>
+  <data name="AlphaMissingAsterisk" xml:space="preserve"><value>Alpha 構文に * がありません</value></data>
+  <data name="AlphaUnknownCommand" xml:space="preserve"><value>不明な Alpha コマンド：{0}</value></data>
+  <data name="MediaFileMissing" xml:space="preserve"><value>メディアファイルが見つかりません：{0}&#10;譜面フォルダーからの相対パスを指定してください。</value></data>
+  <data name="SoundSettings" xml:space="preserve"><value>音量設定</value></data>
+  <data name="AutoOnset" xml:space="preserve"><value>自動タイミング生成</value></data>
+  <data name="AutoOnsetDescription" xml:space="preserve"><value>現在の楽曲からタイミング骨格を生成します。BPM を空欄にすると自動検出します。生成される 1～8 のレーンは巡回する仮配置です。</value></data>
+  <data name="AutoOnsetBpmTip" xml:space="preserve"><value>空欄で BPM を自動推定します。本番では正確な BPM の入力を推奨します。</value></data>
+  <data name="AutoOnsetFirstTip" xml:space="preserve"><value>maidata の &amp;first（秒）です。空欄の場合は BPM と同時に推定します。</value></data>
+  <data name="AutoOnsetDifficultyTip" xml:space="preserve"><value>モデルの目標難易度です。13、13+ など、1～15 の値を指定できます。</value></data>
+  <data name="AutoOnsetThreshold" xml:space="preserve"><value>しきい値プリセット</value></data>
+  <data name="AutoOnsetThresholdRecommended" xml:space="preserve"><value>推奨（0.55）</value></data>
+  <data name="AutoOnsetThresholdDense" xml:space="preserve"><value>高密度（0.50）</value></data>
+  <data name="AutoOnsetThresholdSparse" xml:space="preserve"><value>低密度（0.60）</value></data>
+  <data name="AutoOnsetThresholdClean" xml:space="preserve"><value>よりクリーン（0.65）</value></data>
+  <data name="AutoOnsetThresholdTip" xml:space="preserve"><value>通常は変更不要です。値を下げるとノーツが増え、上げると減ります。</value></data>
+  <data name="AutoOnsetReplaceWarning" xml:space="preserve"><value>警告：生成すると現在の難易度の譜面全体を置き換えます。</value></data>
+  <data name="AutoOnsetGenerate" xml:space="preserve"><value>生成して置換</value></data>
+  <data name="AutoOnsetEngineMissing" xml:space="preserve"><value>自動タイミング生成エンジンが不完全です。tools\Maicaiyin を再度コピーしてください。</value></data>
+  <data name="AutoOnsetRunning" xml:space="preserve"><value>音声を解析してタイミングを生成しています…</value></data>
+  <data name="AutoOnsetNoOutput" xml:space="preserve"><value>有効な譜面が生成されませんでした。</value></data>
+  <data name="AutoOnsetEnvironmentInvalid" xml:space="preserve"><value>専用環境の検証に失敗しました。CPU NumPy 推論環境と NumPy 2.3.x が必要です。</value></data>
+  <data name="AutoOnsetPythonMissing" xml:space="preserve"><value>同梱の 64 ビット Python 3.12 ランタイムが不足または破損しています。tools フォルダー全体を再コピーしてください。</value></data>
+  <data name="AutoOnsetProcessFailed" xml:space="preserve"><value>自動タイミング生成がコード {0} で終了しました：&#10;{1}</value></data>
+  <data name="AutoOnsetBpmInvalid" xml:space="preserve"><value>BPM は空欄、または 0 より大きい数値にしてください。</value></data>
+  <data name="AutoOnsetFirstInvalid" xml:space="preserve"><value>First は空欄、または有効な秒数にしてください。</value></data>
+  <data name="AutoOnsetDifficultyInvalid" xml:space="preserve"><value>難易度は 1～15 で指定してください。13+ なども使用できます。</value></data>
+  <data name="AutoOnsetThresholdInvalid" xml:space="preserve"><value>しきい値プリセットが無効です。</value></data>
+  <data name="AutoOnsetReplaceConfirm" xml:space="preserve"><value>現在の難易度の譜面全体を完全に置き換えます。First の変更は全難易度に反映されます。続行しますか？</value></data>
+  <data name="AutoOnsetComplete" xml:space="preserve"><value>生成完了：BPM {0:0.###}、First {1:0.######}、{2} ノーツ。</value></data>
+  <data name="AutoOnsetCancelled" xml:space="preserve"><value>自動タイミング生成をキャンセルしました。</value></data>
+  <data name="AutoOnsetCancelling" xml:space="preserve"><value>キャンセルしています…</value></data>
+  <data name="AutoOnsetFailed" xml:space="preserve"><value>自動タイミング生成に失敗しました</value></data>
+  <data name="AutoOnsetOpenChartFirst" xml:space="preserve"><value>先に楽曲を開き、置き換える難易度を選択してください。</value></data>
+  <data name="AutoOnsetStopPlayback" xml:space="preserve"><value>再生または録画を停止してから実行してください。</value></data>
+  <data name="AutoOnsetApplied" xml:space="preserve"><value>譜面全体を置換し、16 分フォーマットと小節コメントなしの全譜面整理を完了しました。&#10;BPM {0:0.###}、First {1:0.######}、{2} ノーツ。</value></data>
+  <data name="AlphaHelpSyntaxLabel" xml:space="preserve"><value>構文</value></data>
+  <data name="AlphaHelpExampleLabel" xml:space="preserve"><value>例</value></data>
+  <data name="AlphaHelpStructuredText" xml:space="preserve"><value><![CDATA[
+# Alpha 構文と拡張構文
+> 現在のパーサーと補完を基準にしています。山括弧コマンドの順序は補完と同じ「ノーツ → 表示 → フィルター → メディア」です。その前にエディター専用マーカーと拡張ノーツ構文を説明します。
+## 1  基本ルール
+- Alpha コマンドは <COMMAND*引数> の形式です。名前は大文字小文字を区別しませんが、補完に表示される大文字を推奨します。
+- コマンドは時間軸上に置かれ、カンマ枠を消費せず、その時点以降に作用します。
+- True / False で状態を切り替え、NULL で対応するノーツ属性を解除します。
+- 時間は秒（0.5、2）または拍長（8:1、16:3）で指定し、直前の BPM を使用します。
+- 種別キー：tap、each、hold、slide、star、break、touch、touchhold。種別値は全体値より優先されます。
+- 「<」で分類補完を開きます。空の引数で Tab を押すと既定値を入力し、値がある場合は次へ移動します。
+! このページの角括弧は省略可能な部分を表します。実際には入力しません。[,時間] は最後のカンマと時間を省略できる意味です。
+E (120){4}<SV*1.5>1,2,<TEXT*(サビ開始,2)>3,4,
+## 2  エディターマーカーとコメント
+### 行コメントとブロックコメント
+S || コメント
+E (120){4}1,2,|| この行の以降は解析されません
+S |* 複数行コメント *|
+E |* カンマ、ノーツ、Alpha コマンドを複数行に書いてもすべて無視されます。 *|
+- “||” は行末まで、“|*” と “*|” の間は改行位置を保ったまま無視されます。
+- ブロックコメントは入れ子にできません。“*|” がない場合、“|*” からファイル末尾まですべて無視されます。
+### 波形の拍子
+S @分子/分母
+E @4/4
+E @7/8
+- 両方とも正の整数です。現在時刻以降の波形グリッドだけを変更し、View の速度や音声は変更しません。
+- マーカーはノーツ文字より前の時間枠先頭に置く必要があります。独立した行を推奨します。
+- 拍子には “@” を使用してください。旧 “&” 拍子は maidata 再読み込み時にファイル項目として扱われる可能性があるため、使用しないでください。
+### 重ね合わせノーツストリーム
+S @{分割数}ノーツ列,
+E @{4}1h,2h,3h,
+E {8}1,2,3,4,5,6,
+- “@” の直後が “{” の場合、現在時刻から独立したノーツ列を開始します。独自の分割数で進み、メイン譜面の時刻は進めません。
+- 同時刻のノーツは Each として結合されます。上の例は {8}1h/1,2,2h/3,4,3h/5,6, と同じです。
+- 重ねるメイン行の前に独立行で記述してください。@4/4 や @RRGGBB など他の @ マーカーには影響しません。
+### 編集領域の背景色
+S @RRGGBB
+E @3A587A
+S @NULL
+- 独立した行に置いてください。以降の編集背景だけを変更し、@NULL でテーマ色に戻します。“&RRGGBB / &NULL” も互換です。
+## 3  拡張ノーツ構文
+### C 以外の TouchHold
+S A/B/D/E エリア位置 + h[時間]
+E B1h[4:1] / E3hf[8:1]
+- A、B、D、E エリアで TouchHold を使用できます。エリア文字の後に 1～8 の位置番号が必要です。
+### Break Touch / TouchHold
+S エリア位置 + b
+S エリア位置 + h + b[時間]
+E B1b / E3b / Chb[4:1] / B1hb[8:1]
+- b で Touch または TouchHold を Break にします。h と b の順序はどちらでも使用できます。
+### Touch Slide
+S 始点[-|<|>|^]終点[時間]
+E A1-A3[8:1] / A1<A3<A5[8:1] / 1d-E5[8:1]
+E A1b-A2b[8:1] / A1!-A2[8:1] / A1?-A2[8:1]
+- A/B/C/D/E の Touch 終点を含む軌道は Touch Slide です。もう一方には通常キーまたは D キーも使用できます。
+- 頭の b は Break 頭、終点後の b は Break 軌道、! または ? は頭なしです。時間指定は必須です。
+### Mine、D ゾーン、修飾位置
+S m = 灰色 Mine、d = D ゾーン位置
+E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
+- Slide では位置が重要です。1m-5 は頭だけ、1-5m は軌道と移動星だけ、1m-5m は両方を灰色にします。
+- 開始キー後の d は D ゾーン開始、Slide 終点後の d は D ゾーン終点です。
+### rp / rq 逆向き円弧 Slide
+S 始点rp終点[時間] / 始点rq終点[時間]
+E 1rp3[8:1] / 1rq7[8:1]
+- rp と rq は、それぞれ pp と qq の反対方向へ円弧を進みます。
+## 4  ノーツ系 Alpha コマンド
+### SV — 実スクロール速度
+S <SV*倍率>
+S <SV*種別=倍率,種別=倍率>
+S <SV*種別=NULL>
+E <SV*1.5> / <SV*tap=2,hold=0.75> / <SV*tap=NULL>
+- 全体 SV は正数、0、負数を使用できます。種別 NULL で全体 SV の継承へ戻します。
+### HS — 従来の落下速度
+S <HS*倍率>
+S <HS*種別=倍率,種別=倍率>
+S <HS*種別=NULL>
+E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*hold=NULL>
+- 従来の出現・落下倍率を変更します。種別 NULL で追加倍率を解除します。
+### SPAWN — リングノーツの出現半径
+S <SPAWN*半径>
+S <SPAWN*種別=半径,種別=半径>
+S <SPAWN*NULL> / <SPAWN*種別=NULL>
+E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
+E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
+- 半径は -4.8～4.8 です。1.225 は従来位置、0 は中央、4.8 は手前の判定ライン、-4.8 は反対側の判定ラインです。
+- 半径に応じて初回表示と移動開始時刻が自動的に変わります。実速度は引き続き SV × HS で決まり、最終判定キーは変わらず、ガイドラインもその目標を示します。
+- Tap、Hold、Star 頭、Each、Break のリングノーツに作用します。Touch、TouchHold、Slide 軌道本体は変わりません。
+### BOUNCE — 判定ライン往復
+S <BOUNCE*時間>
+S <BOUNCE*種別=時間,種別=時間>
+S <BOUNCE*NULL> / <BOUNCE*種別=NULL>
+E <BOUNCE*8:1> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>
+- Tap、Star、Each、Hold は判定ラインから SPAWN 半径へ移動して停止し、判定ラインへ戻ります。
+- 時間は秒または拍比で指定できます。種別値は全体値より優先され、判定が早く有効になることはありません。
+### COLOR — ノーツ色
+S <COLOR*RRGGBB>
+S <COLOR*種別=色,種別=色>
+S <COLOR*NULL> / <COLOR*種別=NULL>
+E <COLOR*FF6699> / <COLOR*tap=FF77AA,slide=66DDFF> / <COLOR*tap=NULL> / <COLOR*NULL>
+- 全体値は以降のノーツに作用し、種別値が優先されます。色は6桁 RGB で指定します。
+### SIZE — ノーツサイズ
+S <SIZE*倍率> / <SIZE*(X倍率,Y倍率)>
+S <SIZE*種別=倍率> / <SIZE*種別=(X倍率,Y倍率)>
+S <SIZE*NULL> / <SIZE*種別=NULL>
+E <SIZE*1.2> / <SIZE*(1.2,0.8)> / <SIZE*tap=(1,1.5),star=0.9>
+E <SIZE*slide=1.25> / <SIZE*slide=NULL> / <SIZE*NULL>
+- 全体 SIZE は通常ノーツと星頭を変更しますが Slide 軌道は変更しません。軌道は slide= で設定します。
+### ALPHA — ノーツ透明度
+S <ALPHA*0..1>
+S <ALPHA*種別=0..1,種別=0..1>
+S <ALPHA*NULL> / <ALPHA*種別=NULL>
+E <ALPHA*0.5> / <ALPHA*tap=0.4,slide=0.8> / <ALPHA*tap=NULL>
+## 5  表示系 Alpha コマンド
+### JLINE — 判定ライン色
+S <JLINE*RRGGBB> / <JLINE*(RRGGBB[,切替時間])> / <JLINE*NULL>
+E <JLINE*00FF00> / <JLINE*(FF6699,0.3)> / <JLINE*(FFFFFF,8:1)> / <JLINE*NULL>
+- NULL でスキン色に戻します。再生中の判定ラインに作用します。
+### TEXT — 左上字幕
+S <TEXT*内容> / <TEXT*(内容[,表示時間])>
+E <TEXT*サビ> / <TEXT*(同時押し注意,2)> / <TEXT*(最終区間,16:3)>
+- 時間なしでは次の TEXT まで保持し、時間ありでは自動で消えます。最後のカンマ以降が有効な時間なら表示時間として扱います。
+### 表示スイッチ
+S <ShowJudgeLine*(True|False[,切替時間])>
+S <ShowJudgeArea*(True|False[,切替時間])>
+S <ShowJudgeText*(True|False[,切替時間])>
+S <ShowJudgeInfo*(True|False[,切替時間])>
+S <ShowComboInfo*(True|False[,切替時間])>
+E <ShowJudgeLine*(False,8:1)> / <ShowJudgeArea*(True,0.5)>
+E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
+- 時間を省略すると即時切替です。順に判定ライン、判定エリア、判定文字、左統計、右情報を制御します。
+- ShowJudgeArea の透明度は ShowJudgeLine 以下に制限されます。判定ラインを隠すと判定エリアも見えません。
+### ComboDisplay — 中央表示
+S <ComboDisplay*(モード[,切替時間])>
+E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
+- 主なモード：None/Off、Combo、Score、Achievement/Acc、AccDown、DxAcc、DxAccDown、DxScore、CScore、CScoreDedxDown。
+### 明るさ
+S <OuterBrightness*(0..1[,切替時間])>
+S <InnerBrightness*(0..1[,切替時間])>
+E <OuterBrightness*(0.8,8:1)> / <InnerBrightness*(0.45,1)>
+- 値は 0～1 に制限され、0 は暗く、1 は最大です。
+## 6  フィルター系 Alpha コマンド
+> 共通：True で有効・保持、False で無効。最後の切替時間は省略可能です。異なるフィルターは重ねられ、同名 True は現在値から新しい値へ変化します。
+S <Effect*(False[,切替時間])>
+E <Gaussian*(False,8:1)> / <Move*(False,0.5)> / <Tint*(False)>
+### Gaussian / Neon / Trail
+S <Gaussian*(True,強度[,切替時間])>
+S <Neon*(True,強度[,切替時間])>
+S <Trail*(True,強度[,切替時間])>
+E <Gaussian*(True,1.2,8:1)> / <Neon*(True,0.7)> / <Trail*(True,0.55,0.4)>
+- Gaussian はぼかし、Neon は RGB 分離と輪郭発光、Trail は過去フレームの残像です。
+### Fade / Flash / Brightness
+S <Fade*(True,強度[,切替時間])>
+S <Flash*(True,強度[,切替時間])>
+S <Brightness*(True,強度[,切替時間])>
+E <Fade*(True,1,1)> / <Flash*(True,0.8,0.1)> / <Brightness*(True,0.4,8:1)>
+- Fade は黒、Flash は白へ混合し、Brightness は明るさを追加します。Fade/Flash は通常 0～1 です。
+- Fade と Flash は同じ明暗チャンネルを共有します。後のコマンドが前の状態を置き換え、別々には重なりません。
+### Saturation / Contrast / Rainbow
+S <Saturation*(True,強度[,切替時間])>
+S <Contrast*(True,強度[,切替時間])>
+S <Rainbow*(True,強度[,切替時間])>
+E <Saturation*(True,1,1)> / <Contrast*(True,0.6)> / <Rainbow*(True,0.5,8:1)>
+- Saturation は 0 で原色、1 でほぼ白黒。Contrast は対比、Rainbow は動く虹色を加えます。
+### Vignette / Zoom / Glitch / TVNoise
+S <Vignette*(True,強度[,切替時間])>
+S <Zoom*(True,倍率[,切替時間])>
+S <Glitch*(True,強度[,切替時間])>
+S <TVNoise*(True,強度[,切替時間])>
+E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
+E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
+- Vignette は円形範囲を縮小、Zoom は最大 8、Glitch は横ずれ、TVNoise は走査線とノイズです。
+### Hue / Tint
+S <Hue*(True,角度[,切替時間])>
+S <Tint*(True,RRGGBB,強度[,切替時間])>
+E <Hue*(True,180,1)> / <Tint*(True,000000,1,0.5)> / <Tint*(False,8:1)>
+- Hue は度単位で色相を回転します。Tint は強度 0 で元画面、1 で対象色になります。
+### Move / Rotate / Shake
+S <Move*(True,dx,dy[,切替時間])>
+S <Rotate*(True,角度[,切替時間])>
+S <Shake*(True,強度,周波数[,角度,切替時間])>
+E <Move*(True,0.08,-0.04,8:1)> / <Rotate*(True,-15,0.5)>
+E <Shake*(True,0.5,12)> / <Shake*(True,0.5,12,30)> / <Shake*(True,0.5,12,,0.2)> / <Shake*(True,0.5,12,30,0.2)>
+E <Shake*(False)> / <Shake*(False,8:1)>
+- Move は正 X が右、正 Y が上。Rotate は画面中央基準です。Shake は Hz 指定で、強度 1 は画面の約 5% 移動します。角度と切替時間は個別に省略でき、切替時間だけの場合は角度の位置を空欄にします。角度省略時は既定の二次元振動です。0度は水平、90度は垂直です。
+## 7  メディア系 Alpha コマンド
+### AUDIO
+S <AUDIO*(True,相対パス.ogg|wav|mp3)> / <AUDIO*(False)>
+E <AUDIO*(True,media/voice.ogg)> / <AUDIO*(True,se/alert.wav)> / <AUDIO*(False)>
+- True で先頭から1回再生し、終了時に停止します。False で途中停止し、新しい True で別の追加音声へ切り替えます。
+### PVOVERLAY
+S <PVOVERLAY*(True,相対パス.png|jpg|jpeg|mp4[,切替時間])> / <PVOVERLAY*(False[,切替時間])>
+E <PVOVERLAY*(True,media/cutin.png,8:1)> / <PVOVERLAY*(True,media/movie.mp4,0.5)> / <PVOVERLAY*(False,8:1)>
+- PNG/JPG は False または譜面停止まで保持します。MP4 は終了時に PV を戻します。True が連続する場合は、指定時間で旧メディアから新メディアへクロスフェードします。
+! パスは譜面フォルダー基準です。絶対パスと “..” は使用不可で、ファイル名のカンマも避けてください。メディアイベントは波形に表示されます。
+## 8  エディター処理
+- 時間補完は Hold、TouchHold、Slide に [8:1]、[4:1]、[2:1]、[16:3] を提示します。[1:0] は時間なし Hold 専用で、Slide には提示しません。
+- Touch Slide は A/B/C/D/E、連結 `A1<A3<A5[8:1]`、BREAK `A1b-A2b[8:1]`、ヘッドなし `A1!-A2[8:1]` / `A1?-A2[8:1]` に対応します。
+- 「エフェクトなし譜面を書き出す」は <> コマンド、|| 以降、@ 行全体を削除するため、編集用拍子と背景色も出力には残りません。
+## 9  組み合わせ例
+E (160){16}<COLOR*star=FF66CC><SIZE*star=1.15>1-5[8:1],2,3,4,
+E <TEXT*(間奏,2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
+E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
+- 同時刻に複数の Alpha コマンドを連続して書けます。追加カンマは不要です。「ノーツ → 表示 → フィルター → メディア」の順にすると補完と一致して読みやすくなります。
+]]></value></data>
+  <data name="BackgroundFitMode" xml:space="preserve"><value>背景 / PV の拡大方法</value></data>
+  <data name="BackgroundFitHeight" xml:space="preserve"><value>高さに合わせる（縦横比維持）</value></data>
+  <data name="BackgroundFitWidth" xml:space="preserve"><value>幅に合わせる（縦横比維持）</value></data>
 </root>

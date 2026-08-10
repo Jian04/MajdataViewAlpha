@@ -1,0 +1,17 @@
+{
+  "name": "light",
+  "displayName": "Light",
+  "windowBackground": "#FFBEC4CB",
+  "buttonForeground": "#FF20242A",
+  "helperForeground": "#FF005F9E",
+  "buttonsBackground": "#FFAAB2BB",
+  "editorBackground": "#FFD5DAE0",
+  "editorForeground": "#FF20242A",
+  "editorSelection": "#663399FF",
+  "waveBackground": "#FF505760",
+  "waveAccent": "#FFB42332",
+  "scrollTrack": "#FF9FA7B0",
+  "scrollThumb": "#FF737C87",
+  "scrollThumbHover": "#FF59636F",
+  "menuSeparator": "#FF252A31"
+}

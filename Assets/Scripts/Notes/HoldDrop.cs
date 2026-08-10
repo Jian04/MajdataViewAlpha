@@ -6,6 +6,7 @@ public class HoldDrop : NoteLongDrop
 {
     public bool isEX;
     public bool isBreak;
+    public bool isFirework;
 
     public Sprite tapSpr;
     public Sprite holdOnSpr;
@@ -33,10 +34,10 @@ public class HoldDrop : NoteLongDrop
     private Animator animator;
 
     public Material breakMaterial;
-    // ALPHA: set by JsonDataLoader to override fill color
     public Material colorOverrideMaterial;
-    // ALPHA: uniform scale multiplier (set by JsonDataLoader from <NS x>)
     public float noteScale = 1f;
+    public float noteScaleX = 1f;
+    public float noteScaleY = 1f;
 
     private SpriteRenderer exSpriteRender;
     private bool holdAnimStart;
@@ -45,8 +46,8 @@ public class HoldDrop : NoteLongDrop
 
     private SpriteRenderer spriteRenderer;
     private MaterialPropertyBlock brightnessProperties;
-    private bool holdLineFlipped;
-    private bool holdLineRotationInitialized;
+    private bool hasLeftSpawn;
+    private bool hasTailLeftSpawn;
 
 
     private void Start()
@@ -60,6 +61,7 @@ public class HoldDrop : NoteLongDrop
         tapLine = Instantiate(tapLine, notes);
         tapLine.SetActive(false);
         lineSpriteRender = tapLine.GetComponent<SpriteRenderer>();
+        ApplyBaseRotation();
 
         exSpriteRender = transform.GetChild(0).GetComponent<SpriteRenderer>();
 
@@ -98,7 +100,6 @@ public class HoldDrop : NoteLongDrop
             spriteRenderer.sharedMaterial = breakMaterial;
         }
 
-        // ALPHA: apply color override to hold body, tail cap, and guide arc.
         if (colorOverrideMaterial != null)
         {
             spriteRenderer.sharedMaterial = colorOverrideMaterial;
@@ -118,15 +119,15 @@ public class HoldDrop : NoteLongDrop
         holdEndRender.enabled = false;
 
         sensor = GameObject.Find("Sensors")
-                                   .transform.GetChild(startPosition - 1)
+                                   .transform.GetChild(SensorChildIndex)
                                    .GetComponent<Sensor>();
         manager = GameObject.Find("Sensors")
                                 .GetComponent<SensorManager>();
         inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
-        sensorPos = (SensorType)(startPosition - 1);
+        sensorPos = (SensorType)SensorChildIndex;
         if (!previewOnly)
-            inputManager.BindArea(Check, sensorPos);
+            BindJudgeInput(Check);
     }
     private void FixedUpdate()
     {
@@ -135,7 +136,7 @@ public class HoldDrop : NoteLongDrop
         var timing = GetJudgeTiming();
         var remainingTime = GetRemainingTime();
 
-        if (remainingTime == 0 && isJudged) // Hold完成后Destroy
+        if (remainingTime == 0 && isJudged) // Destroy after the Hold completes
         {
             Destroy(tapLine);
             Destroy(holdEffect);
@@ -143,24 +144,26 @@ public class HoldDrop : NoteLongDrop
         }
         else if(timing >= -0.01f)
         {
-            // AutoPlay相关
+            // AutoPlay behavior
             switch (InputManager.Mode)
             {
                 case AutoPlayMode.Enable:
                     if(!isJudged)
-                        objectCounter.NextNote(startPosition);
+                        objectCounter.NextNote(JudgeQueueKey);
                     judgeResult = JudgeType.Perfect;
                     isJudged = true;
                     PlayHoldEffect();
                     return;
                 case AutoPlayMode.DJAuto:
                     if (!isJudged)
+                        inputManager.ClickSensor(sensorPos, true);
+                    if (isJudged)
                         manager.SetSensorOn(sensor.Type, guid);
                     break;
                 case AutoPlayMode.Random:
                     if (!isJudged)
                     {
-                        objectCounter.NextNote(startPosition);
+                        objectCounter.NextNote(JudgeQueueKey);
                         judgeResult = (JudgeType)UnityEngine.Random.Range(1, 14);
                         isJudged = true;
                     }
@@ -172,13 +175,13 @@ public class HoldDrop : NoteLongDrop
             }
         }
 
-        if (isJudged) // 头部判定完成后开始累计按压时长
+        if (isJudged) // Accumulate press duration after judging the head
         {
-            if (timing <= 0.1f) // 忽略头部6帧
+            if (timing <= 0.1f) // Ignore the first 6 frames
                 return;
-            else if (remainingTime <= 0.2f) // 忽略尾部12帧
+            else if (remainingTime <= 0.2f) // Ignore the last 12 frames
                 return;
-            else if (!timeProvider.isStart) // 忽略暂停
+            else if (!timeProvider.isStart) // Ignore paused time
                 return;
             var on = inputManager.CheckAreaStatus(sensorPos,SensorStatus.On);
             if (on)
@@ -189,12 +192,12 @@ public class HoldDrop : NoteLongDrop
                 StopHoldEffect();
             }
         }
-        else if (timing > 0.15f && !isJudged) // 头部Miss
+        else if (timing > 0.15f && !isJudged) // Missed head
         {
             judgeDiff = 150;
             judgeResult = JudgeType.Miss;
             isJudged = true;
-            objectCounter.NextNote(startPosition);
+            objectCounter.NextNote(JudgeQueueKey);
         }
     }
     void Check(object sender, InputEventArgs arg)
@@ -203,21 +206,23 @@ public class HoldDrop : NoteLongDrop
             return;
         if (arg.Type != sensor.Type)
             return;
-        else if (isJudged || !noteManager.CanJudge(gameObject, startPosition))
+        else if (isJudged || !noteManager.CanJudge(gameObject, JudgeQueueKey))
             return;
         else if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
             return;
         if (arg.IsClick)
         {
-            if (!inputManager.IsIdle(arg))
-                return;
-            else
+            if (InputManager.Mode != AutoPlayMode.DJAuto)
+            {
+                if (!inputManager.IsIdle(arg))
+                    return;
                 inputManager.SetBusy(arg);
+            }
             Judge();
             if (isJudged)
             {
                 inputManager.UnbindArea(Check, sensorPos);
-                objectCounter.NextNote(startPosition);
+                objectCounter.NextNote(JudgeQueueKey);
             }
         }
     }
@@ -272,8 +277,7 @@ public class HoldDrop : NoteLongDrop
         isJudged = true;
         PlayHoldEffect();
     }
-    // ALPHA: run after the Animator update (Unity order: Update → Animator → LateUpdate)
-    // so our material override wins over any material the HoldShine animator may set.
+    // The animator may replace the hold material during Update.
     private void LateUpdate()
     {
         if (holdAnimStart && colorOverrideMaterial != null)
@@ -283,17 +287,66 @@ public class HoldDrop : NoteLongDrop
     // Update is called once per frame
     private void Update()
     {
-        if (!timeProvider.isStart)
+        if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < 0f)
         {
+            spriteRenderer.forceRenderingOff = true;
+            exSpriteRender.forceRenderingOff = true;
+            holdEndRender.enabled = false;
+            tapLine.SetActive(false);
+            if (holdEffect != null)
+                holdEffect.SetActive(false);
+            return;
+        }
+
+        var judgeOffset = GetJudgeTiming();
+        if (IsBeforeBounceWindow(judgeOffset))
+        {
+            spriteRenderer.forceRenderingOff = true;
+            exSpriteRender.forceRenderingOff = true;
+            holdEndRender.enabled = false;
             tapLine.SetActive(false);
             return;
         }
 
-        var distance = GetSvDistance();
-        var destScale = distance * 0.4f + 0.51f;
-        if (destScale < 0f)
+        var isBouncing = IsBounceActive(judgeOffset);
+        var distance = isBouncing ? GetBounceDistance(judgeOffset) : GetSvDistance();
+        var destScale = GetSpawnScale(distance);
+        if (isBouncing)
         {
-            destScale = 0f;
+            spriteRenderer.forceRenderingOff = false;
+            if (isEX)
+                exSpriteRender.forceRenderingOff = false;
+
+            var bodyLength = speed * (float)(
+                SvController.GetCumulativeScroll((double)time + LastFor, scrollType) -
+                SvController.GetCumulativeScroll(time, scrollType));
+            var tailDistance = distance - bodyLength;
+            var bodyCenter = (distance + tailDistance) * 0.5f;
+            var bodySize = Mathf.Abs(distance - tailDistance) + 1.4f;
+            holdEndRender.enabled = Mathf.Abs(bodyLength) > 0.001f;
+            spriteRenderer.size = new Vector2(1.22f, bodySize);
+            exSpriteRender.size = spriteRenderer.size;
+            holdEndRender.transform.localPosition = new Vector3(0f, 0.6825f - bodySize / 2f);
+            transform.position = getPositionFromDistance(bodyCenter);
+            transform.localScale = new Vector3(
+                noteScale * noteScaleX,
+                noteScale * noteScaleY,
+                1f);
+
+            var bounceLineScale = Mathf.Clamp01(distance / 4.8f);
+            tapLine.SetActive(distance > 0.001f && distance <= 4.8f);
+            tapLine.transform.localScale = new Vector3(
+                bounceLineScale, bounceLineScale, 1f);
+            return;
+        }
+        if (!hasLeftSpawn)
+            hasLeftSpawn = HasLeftSpawnAtCurrentTime(noteScrollPos);
+        if (!hasLeftSpawn && destScale < 0f)
+        {
+            spriteRenderer.forceRenderingOff = true;
+            exSpriteRender.forceRenderingOff = true;
+            holdEndRender.enabled = false;
+            tapLine.SetActive(false);
             return;
         }
 
@@ -303,17 +356,23 @@ public class HoldDrop : NoteLongDrop
         spriteRenderer.size = new Vector2(1.22f, 1.4f);
 
         var holdTime = GetJudgeTiming() - LastFor;
-        var holdDistance = 4.8f - speed * (float)(SvController.GetCumulativeScroll((double)time + LastFor) - SvController.GetCumulativeScroll(timeProvider.AudioTime));
-        if (holdTime >= 0 || 
-            holdTime >= 0 && LastFor <= 0.15f)
+        var holdDistance = 4.8f - speed * (float)(
+            SvController.GetCumulativeScroll((double)time + LastFor, scrollType) -
+            SvController.GetCumulativeScroll(timeProvider.AudioTime, scrollType));
+        if (!hasTailLeftSpawn)
+            hasTailLeftSpawn = HasLeftSpawnAtCurrentTime(
+                SvController.GetCumulativeScroll((double)time + LastFor, scrollType));
+        if (holdTime >= 0)
         {
+            tapLine.SetActive(false);
             tapLine.transform.localScale = new Vector3(1f, 1f, 1f);
             transform.position = getPositionFromDistance(4.8f);
             return;
         }
 
 
-        UpdateHoldLineRotation(distance);
+        // Judgement remains on the original key even when SV moves the note body
+        // to the opposite side.
         holdEffect.transform.position = getPositionFromDistance(4.8f);
 
         if (isBreak &&
@@ -327,44 +386,40 @@ public class HoldDrop : NoteLongDrop
         }
 
 
-        if (destScale > 0.3f) tapLine.SetActive(true);
+        tapLine.SetActive(distance > 0.001f && distance <= 4.8f && destScale > 0.3f);
 
-        if (distance < 1.225f)
+        if (!hasLeftSpawn)
         {
-            transform.localScale = new Vector3(destScale * noteScale, destScale * noteScale);
+            transform.localScale = new Vector3(
+                destScale * noteScale * noteScaleX,
+                destScale * noteScale * noteScaleY,
+                1f);
             spriteRenderer.size = new Vector2(1.22f, 1.42f);
-            distance = 1.225f;
+            distance = spawnRadius;
             var pos = getPositionFromDistance(distance);
             transform.position = pos;
         }
         else
         {
-            if (holdDistance < 1.225f && distance >= 4.8f) // 头到达 尾未出现
-            {
-                holdDistance = 1.225f;
-                distance = 4.8f;
-            }
-            else if (holdDistance < 1.225f && distance < 4.8f) // 头未到达 尾未出现
-            {
-                holdDistance = 1.225f;
-            }
-            else if (holdDistance >= 1.225f && distance >= 4.8f) // 头到达 尾出现
-            {
+            // The head reaches the judgement line by time, not by radial distance.
+            // This lets negative SV move through the centre without being clamped.
+            if (GetJudgeTiming() >= 0f)
                 distance = 4.8f;
 
+            if (hasTailLeftSpawn)
                 holdEndRender.enabled = true;
-            }
-            else if (holdDistance >= 1.225f && distance < 4.8f) // 头未到达 尾出现
-            {
-                holdEndRender.enabled = true;
-            }
+            else
+                holdDistance = spawnRadius;
 
             var dis = (distance - holdDistance) / 2 + holdDistance;
-            transform.position = getPositionFromDistance(dis); //0.325
-            var size = distance - holdDistance + 1.4f;
+            transform.position = getPositionFromDistance(dis);
+            var size = Mathf.Abs(distance - holdDistance) + 1.4f;
             spriteRenderer.size = new Vector2(1.22f, size);
             holdEndRender.transform.localPosition = new Vector3(0f, 0.6825f - size / 2);
-            transform.localScale = new Vector3(noteScale, noteScale);
+            transform.localScale = new Vector3(
+                noteScale * noteScaleX,
+                noteScale * noteScaleY,
+                1f);
         }
 
         var lineScale = Mathf.Abs(distance / 4.8f);
@@ -373,21 +428,18 @@ public class HoldDrop : NoteLongDrop
         exSpriteRender.size = spriteRenderer.size;
     }
 
-    private void UpdateHoldLineRotation(float distance)
+    private void ApplyBaseRotation()
     {
-        var shouldFlip = State == NoteStatus.Running && distance < 0f;
-        if (holdLineRotationInitialized && holdLineFlipped == shouldFlip)
-            return;
-
-        holdLineRotationInitialized = true;
-        holdLineFlipped = shouldFlip;
-        var position = shouldFlip ? (startPosition + 3) % 8 + 1 : startPosition;
-        var rotation = Quaternion.Euler(0, 0, -22.5f + -45f * (position - 1));
+        var dZoneOffset = isDZone ? 22.5f : 0f;
+        var rotation = Quaternion.Euler(
+            0f, 0f, -22.5f + -45f * (startPosition - 1) + dZoneOffset);
         transform.rotation = rotation;
         tapLine.transform.rotation = rotation;
     }
     private void OnDestroy()
     {
+        if (tapLine != null)
+            Destroy(tapLine);
         if (inputManager != null)
             inputManager.UnbindArea(Check, sensorPos);
         if (manager != null && sensor != null)
@@ -449,21 +501,31 @@ public class HoldDrop : NoteLongDrop
         }
         var effectManager = GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
         if (effectManager == null) return;
-        effectManager.PlayEffect(startPosition, isBreak, result, noteTintColor);
-        effectManager.PlayFastLate(startPosition, result);
+        effectManager.PlayEffect(JudgeQueueKey, isBreak, result, noteTintColor);
+        effectManager.PlayFastLate(JudgeQueueKey, result);
+        if (isFirework && result != JudgeType.Miss)
+        {
+            var firework = GameObject.Find("FireworkEffect");
+            var animator = firework?.GetComponent<Animator>();
+            if (animator != null)
+            {
+                firework.transform.position = transform.position;
+                animator.SetTrigger("Fire");
+            }
+        }
         objectCounter.ReportResult(this, result, isBreak);
         if (!isJudged)
-            objectCounter.NextNote(startPosition);
+            objectCounter.NextNote(JudgeQueueKey);
 
         manager.SetSensorOff(sensor.Type, guid);
     }
     protected override void PlayHoldEffect()
     {
         base.PlayHoldEffect();
-        GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>()?.ResetEffect(startPosition);
+        GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>()?.ResetEffect(JudgeQueueKey);
         if (LastFor <= 0.3)
             return;
-        else if (!holdAnimStart && GetJudgeTiming() >= 0.1f)//忽略开头6帧与结尾12帧
+        else if (!holdAnimStart && GetJudgeTiming() >= 0.1f)// Ignore the first 6 and last 12 frames
         {
             holdAnimStart = true;
             animator.runtimeAnimatorController = HoldShine;
@@ -475,7 +537,6 @@ public class HoldDrop : NoteLongDrop
                 sprRenderer.sprite = eachHoldOnSpr;
             else
                 sprRenderer.sprite = holdOnSpr;
-            // ALPHA: animator activation can reset the material; re-apply color override
             if (colorOverrideMaterial != null)
                 sprRenderer.sharedMaterial = colorOverrideMaterial;
         }
@@ -488,7 +549,6 @@ public class HoldDrop : NoteLongDrop
         animator.enabled = false;
         var sprRenderer = GetComponent<SpriteRenderer>();
         sprRenderer.sprite = holdOffSpr;
-        // ALPHA: sprite assignment can reset the material; re-apply color override
         if (colorOverrideMaterial != null)
             sprRenderer.sharedMaterial = colorOverrideMaterial;
     }

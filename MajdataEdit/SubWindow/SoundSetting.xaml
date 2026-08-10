@@ -8,11 +8,11 @@
         lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit"
         lex:ResxLocalizationProvider.DefaultDictionary="Langs"
         mc:Ignorable="d"
-        Title="SoundSetting" Height="381" Width="1149" Background="{DynamicResource WindowBackground}" MinHeight="290"
+        Title="{lex:Loc Key=SoundSettings}" Height="381" Width="1149" Background="{DynamicResource WindowBackground}" MinHeight="290"
         MinWidth="646" ResizeMode="NoResize" Loaded="SoundSettingWindow_Loaded" Closing="SoundSettingWindow_Closing">
     <Grid>
         <Grid HorizontalAlignment="Left" Margin="10,10,0,56" Width="120" Background="#FF272727"
-              ToolTip="此选项会影响BGM、录制模式启动音效、节拍提示音和AP音效">
+              ToolTip="{lex:Loc Key=SoundBgmTip}">
             <Label x:Name="BGM_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
@@ -27,7 +27,8 @@
             <ScrollViewer HorizontalAlignment="Left" Height="100" Margin="110,15,-90,0" VerticalAlignment="Top"
                           Width="100" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="135,10,0,56" Width="120" Background="#FF272727" ToolTip="此选项会影响正解音">
+        <Grid HorizontalAlignment="Left" Margin="135,10,0,56" Width="120" Background="#FF272727"
+              ToolTip="{lex:Loc Key=SoundAnswerTip}">
             <Label x:Name="Answer_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
@@ -41,7 +42,7 @@
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
         <Grid HorizontalAlignment="Left" Margin="260,10,0,56" Width="120" Background="#FF272727"
-              ToolTip="此选项会影响Tap与Hold的判定音效">
+              ToolTip="{lex:Loc Key=SoundJudgeTip}">
             <Label x:Name="Judge_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
@@ -55,7 +56,7 @@
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
         <Grid HorizontalAlignment="Left" Margin="385,10,0,56" Width="120" Background="#FF272727"
-              ToolTip="此选项会影响Slide与Break-Slide的启动音效">
+              ToolTip="{lex:Loc Key=SoundSlideTip}">
             <Label x:Name="Slide_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
@@ -69,7 +70,7 @@
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
         <Grid HorizontalAlignment="Left" Margin="510,10,0,56" Width="120" Background="#FF272727"
-              ToolTip="此选项会影响Break的判定音效与CP时的音效（欢呼声）">
+              ToolTip="{lex:Loc Key=SoundBreakTip}">
             <Label x:Name="Break_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
@@ -83,7 +84,7 @@
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
         <Grid HorizontalAlignment="Left" Margin="635,10,0,56" Width="120" Background="#FF272727"
-              ToolTip="此选项会影响Break-Slide完成时的判定音效与CP时的音效（欢呼声）">
+              ToolTip="{lex:Loc Key=SoundBreakSlideTip}">
             <Label x:Name="BreakSlide_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
@@ -97,7 +98,7 @@
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
         <Grid HorizontalAlignment="Left" Margin="760,10,0,56" Width="120" Background="#FF272727"
-              ToolTip="此选项会影响Ex-note的判定音效">
+              ToolTip="{lex:Loc Key=SoundExTip}">
             <Label x:Name="EX_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
@@ -112,7 +113,7 @@
                    HorizontalContentAlignment="Center" />
         </Grid>
         <Grid HorizontalAlignment="Left" Margin="885,10,0,56" Width="120" Background="#FF272727"
-              ToolTip="此选项会影响Touch的判定音效">
+              ToolTip="{lex:Loc Key=SoundTouchTip}">
             <Label x:Name="Touch_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
@@ -127,7 +128,7 @@
                    HorizontalContentAlignment="Center" />
         </Grid>
         <Grid HorizontalAlignment="Left" Margin="1010,10,0,56" Width="120" Background="#FF272727"
-              ToolTip="此选项会影响烟花的音效与Touch-Hold按住音效">
+              ToolTip="{lex:Loc Key=SoundHanabiTip}">
             <Label x:Name="Hanabi_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />

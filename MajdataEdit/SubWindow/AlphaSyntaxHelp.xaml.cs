@@ -1,131 +1,253 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Media;
 
 namespace MajdataEdit;
 
 public partial class AlphaSyntaxHelp : Window
 {
+    private static readonly FontFamily BodyFont =
+        new("Segoe UI, Microsoft YaHei UI, Yu Gothic UI");
+    private static readonly FontFamily CodeFont =
+        new("Cascadia Mono, Cascadia Code, Consolas, Microsoft YaHei UI");
+
     public AlphaSyntaxHelp()
     {
         InitializeComponent();
-        HelpTextBox.Text = HelpText;
+        BuildDocument(MainWindow.GetLocalizedString("AlphaHelpStructuredText"));
     }
 
-    private const string HelpText = @"
-Alpha 语法帮助
-==============
+    private void BuildDocument(string source)
+    {
+        NavigationPanel.Children.Clear();
+        var document = new FlowDocument
+        {
+            PagePadding = new Thickness(28, 24, 32, 36),
+            ColumnWidth = double.PositiveInfinity,
+            FontFamily = BodyFont,
+            FontSize = 13.5,
+            LineHeight = 21
+        };
+        document.SetResourceReference(TextElement.ForegroundProperty, "ButtonForeground");
 
-基本规则
---------
-Alpha 命令写在谱面时间轴里，命令本身不占拍。
-常用格式：
-  <NAME*value>
-  <NAME*(value,duration)>
+        var lines = source.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd();
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            if (line.StartsWith("# ", StringComparison.Ordinal))
+            {
+                document.Blocks.Add(CreateHeading(line[2..], 28, new Thickness(0, 0, 0, 9)));
+                continue;
+            }
+            if (line.StartsWith("> ", StringComparison.Ordinal))
+            {
+                document.Blocks.Add(CreateLead(line[2..]));
+                continue;
+            }
+            if (line.StartsWith("## ", StringComparison.Ordinal))
+            {
+                var title = line[3..];
+                var section = CreateSectionHeading(title);
+                document.Blocks.Add(section);
+                AddNavigationButton(title, section);
+                continue;
+            }
+            if (line.StartsWith("### ", StringComparison.Ordinal))
+            {
+                document.Blocks.Add(CreateHeading(line[4..], 17, new Thickness(0, 15, 0, 5)));
+                continue;
+            }
+            if (line.StartsWith("S ", StringComparison.Ordinal))
+            {
+                document.Blocks.Add(CreateCodeCard(
+                    MainWindow.GetLocalizedString("AlphaHelpSyntaxLabel"), line[2..], false));
+                continue;
+            }
+            if (line.StartsWith("E ", StringComparison.Ordinal))
+            {
+                document.Blocks.Add(CreateCodeCard(
+                    MainWindow.GetLocalizedString("AlphaHelpExampleLabel"), line[2..], true));
+                continue;
+            }
+            if (line.StartsWith("! ", StringComparison.Ordinal))
+            {
+                document.Blocks.Add(CreateCallout(line[2..]));
+                continue;
+            }
+            if (line.StartsWith("- ", StringComparison.Ordinal))
+            {
+                document.Blocks.Add(CreateParagraph("•  " + line[2..], new Thickness(12, 1, 0, 2)));
+                continue;
+            }
+            document.Blocks.Add(CreateParagraph(line, new Thickness(0, 1, 0, 6)));
+        }
 
-duration 单位是秒。显示控制和画面特效通常会在 duration 秒内渐变。
+        HelpViewer.Document = document;
+    }
 
-一、音符外观
-------------
-COLOR：修改后续音符颜色。
-  <COLOR*FF00FF>
-  <COLOR*tap=FF77AA,hold=66DDFF,slide=55CCFF,star=FFFFFF,break=FF5533,touch=AAFFAA,touchhold=66FFFF>
-  <COLOR*NULL>
-  <COLOR*tap=NULL,slide=NULL>
+    private static Paragraph CreateHeading(string text, double size, Thickness margin)
+    {
+        var paragraph = new Paragraph(new Run(text))
+        {
+            FontFamily = BodyFont,
+            FontSize = size,
+            FontWeight = FontWeights.SemiBold,
+            Margin = margin,
+            KeepWithNext = true
+        };
+        paragraph.SetResourceReference(TextElement.ForegroundProperty, "ButtonForeground");
+        return paragraph;
+    }
 
-SIZE：修改后续音符整体大小倍率。
-  <SIZE*1.25>
-  <SIZE*0.8>
-  <SIZE*1>
+    private static Paragraph CreateParagraph(string text, Thickness margin)
+    {
+        var paragraph = new Paragraph(new Run(text))
+        {
+            Margin = margin,
+            TextAlignment = TextAlignment.Left
+        };
+        paragraph.SetResourceReference(TextElement.ForegroundProperty, "ButtonForeground");
+        return paragraph;
+    }
 
-ALPHA：修改后续音符透明度，0 为透明，1 为不透明。
-  <ALPHA*0.5>
-  <ALPHA*tap=0.5,slide=0.8,touch=0.4>
-  <ALPHA*1>
+    private static Paragraph CreateLead(string text)
+    {
+        var paragraph = new Paragraph(new Run(text))
+        {
+            Padding = new Thickness(13, 10, 13, 10),
+            Margin = new Thickness(0, 0, 0, 18),
+            FontFamily = BodyFont,
+            FontSize = 13.5,
+            LineHeight = 21,
+            BorderThickness = new Thickness(1)
+        };
+        paragraph.SetResourceReference(TextElement.ForegroundProperty, "ButtonForeground");
+        paragraph.SetResourceReference(TextElement.BackgroundProperty, "EditorBackground");
+        paragraph.SetResourceReference(Block.BorderBrushProperty, "MenuSeparator");
+        return paragraph;
+    }
 
-m：地雷 note 修饰，优先级类似 break。
-  1m
-  1hm[8:1]
-  1bm-5[8:1]
-  1-5m[8:1]
-  1-5[8:1]m
+    private static Paragraph CreateSectionHeading(string text)
+    {
+        var title = new Paragraph(new Run(text))
+        {
+            FontFamily = BodyFont,
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            Padding = new Thickness(0, 1, 0, 5),
+            Margin = new Thickness(0, 18, 0, 7),
+            KeepWithNext = true
+        };
+        title.SetResourceReference(TextElement.ForegroundProperty, "HelperForeground");
+        return title;
+    }
 
-二、速度 / SV
--------------
-SV：修改视觉滚动速度，支持负数。
-  <SV*2.0>
-  <SV*0.5>
-  <SV*-1.0>
-  <SV*1>
+    private static Paragraph CreateCodeCard(string label, string code, bool example)
+    {
+        var paragraph = new Paragraph
+        {
+            FontFamily = CodeFont,
+            FontSize = 13,
+            LineHeight = 20,
+            Padding = new Thickness(12, 8, 12, 9),
+            Margin = new Thickness(0, 3, 0, 6),
+            BorderThickness = new Thickness(example ? 1 : 0, 1, 1, 1)
+        };
+        paragraph.SetResourceReference(TextElement.ForegroundProperty, "ButtonForeground");
+        paragraph.SetResourceReference(TextElement.BackgroundProperty, "EditorBackground");
+        paragraph.SetResourceReference(Block.BorderBrushProperty,
+            example ? "HelperForeground" : "MenuSeparator");
+        var labelRun = new Run(label)
+        {
+            FontFamily = BodyFont,
+            FontSize = 10.5,
+            FontWeight = FontWeights.SemiBold
+        };
+        labelRun.SetResourceReference(TextElement.ForegroundProperty,
+            example ? "HelperForeground" : "ButtonForeground");
+        paragraph.Inlines.Add(labelRun);
+        paragraph.Inlines.Add(new LineBreak());
+        AddCodeRuns(paragraph, code, !example);
+        return paragraph;
+    }
 
-三、显示控制
-------------
-判定线：
-  <ShowJudgeLine*(False,2)>
-  <ShowJudgeLine*(True,1)>
+    private static Paragraph CreateCallout(string text)
+    {
+        var paragraph = new Paragraph(new Run(text))
+        {
+            FontFamily = BodyFont,
+            Padding = new Thickness(11, 8, 10, 8),
+            Margin = new Thickness(0, 5, 0, 8),
+            LineHeight = 20,
+            BorderThickness = new Thickness(4, 0, 0, 0)
+        };
+        paragraph.SetResourceReference(TextElement.ForegroundProperty, "ButtonForeground");
+        paragraph.SetResourceReference(TextElement.BackgroundProperty, "EditorBackground");
+        paragraph.SetResourceReference(Block.BorderBrushProperty, "HelperForeground");
+        return paragraph;
+    }
 
-左侧判定统计：
-  <ShowJudgeInfo*(False,1)>
-  <ShowJudgeInfo*(True,1)>
+    private static void AddCodeRuns(Paragraph paragraph, string code, bool styleOptional)
+    {
+        if (!styleOptional || !code.Contains('['))
+        {
+            paragraph.Inlines.Add(new Run(code));
+            return;
+        }
 
-右侧 combo / 分数信息：
-  <ShowComboInfo*(False,1)>
-  <ShowComboInfo*(True,1)>
+        var start = 0;
+        var optionalDepth = 0;
+        for (var index = 0; index <= code.Length; index++)
+        {
+            var boundary = index == code.Length || code[index] is '[' or ']';
+            if (!boundary)
+                continue;
+            if (index > start)
+                paragraph.Inlines.Add(CreateCodeRun(code[start..index], optionalDepth > 0));
+            if (index == code.Length)
+                break;
 
-判定文字：
-  <ShowJudgeText*(False,1)>
-  <ShowJudgeText*(True,1)>
+            var opening = code[index] == '[';
+            if (opening)
+                optionalDepth++;
+            paragraph.Inlines.Add(CreateCodeRun(code[index].ToString(), true));
+            if (!opening)
+                optionalDepth = Math.Max(0, optionalDepth - 1);
+            start = index + 1;
+        }
+    }
 
-内外背景亮度：
-  <InnerBrightness*(0.5,2)>
-  <OuterBrightness*(0.9,2)>
+    private static Run CreateCodeRun(string text, bool optional)
+    {
+        var run = new Run(text);
+        if (!optional)
+            return run;
+        var source = Application.Current?.TryFindResource("ButtonForeground") as Brush ?? Brushes.Gray;
+        var brush = source.CloneCurrentValue();
+        brush.Opacity = 0.48;
+        run.Foreground = brush;
+        run.FontStyle = FontStyles.Italic;
+        return run;
+    }
 
-中间显示内容：
-  <ComboDisplay*(none,0)>
-  <ComboDisplay*(combo,0)>
-  <ComboDisplay*(score,1)>
-  <ComboDisplay*(achievement,1)>
-  <ComboDisplay*(dxscore,1)>
-
-四、字幕 TEXT
--------------
-持续到下一条 TEXT：
-  <TEXT*你好>
-
-持续指定秒数：
-  <TEXT*(你好,2)>
-
-清空字幕：
-  <TEXT*>
-  <TEXT*(,0)>
-
-五、画面特效
-------------
-统一格式：
-  <Effect*(duration,intensity)>
-
-参数：
-  duration：持续 / 渐变时间，单位秒。
-  intensity：强度，0 通常表示关闭。
-
-示例：
-  <Gaussian*(2,2)>      高斯模糊，强度 2，持续 2 秒
-  <Fade*(1,1)>          黑屏 / 闪场，强度 1，持续 1 秒
-  <Brightness*(2,0.4)>  亮度变化
-  <Saturation*(2,-0.5)> 饱和度变化
-  <Contrast*(2,0.3)>    对比度变化
-  <Neon*(1,2)>          霓虹 / RGB 分离
-  <Trail*(1,1)>         残影 / 拖尾
-  <Rainbow*(1,1)>       彩虹偏移
-  <Flash*(1,1)>         闪白
-  <Vignette*(1,1)>      暗角 / 收缩感
-  <Zoom*(1,1)>          缩放冲击
-  <Glitch*(1,1)>        故障效果
-  <TVNoise*(1,1)>       横向电视噪声
-
-六、编辑器分段背景
-------------------
-只影响编辑器显示，不发送给 View。
-  &FF00FF
-  &55AAFF
-  &NULL
-";
+    private void AddNavigationButton(string title, Block target)
+    {
+        var button = new Button
+        {
+            Content = title,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(9, 6, 7, 6),
+            Margin = new Thickness(0, 1, 0, 1),
+            FontFamily = BodyFont,
+            FontSize = 12.5
+        };
+        button.SetResourceReference(Control.TemplateProperty, "DarkButton");
+        button.SetResourceReference(Control.ForegroundProperty, "ButtonForeground");
+        button.SetResourceReference(Control.BackgroundProperty, "ButtonsBackground");
+        button.Click += (_, _) => target.BringIntoView();
+        NavigationPanel.Children.Add(button);
+    }
 }

@@ -3,7 +3,7 @@
 namespace MajdataEdit;
 
 /// <summary>
-///     BPMtap.xaml 的交互逻辑
+///     Interaction logic for BPMtap.xaml
 /// </summary>
 public partial class BPMtap : Window
 {

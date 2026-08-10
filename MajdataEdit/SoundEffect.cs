@@ -15,19 +15,19 @@ public partial class MainWindow
     public int answerStream = -114514;
 
     public int bgmStream = -114514;
-    public int breakSlideStartStream = -114514; // break-slide启动音效
-    public int breakSlideStream = -114514; // break-slide欢呼声（critical perfect音效）
-    public int breakStream = -114514; // 这个才是欢呼声
+    public int breakSlideStartStream = -114514; // Break Slide start sound effect
+    public int breakSlideStream = -114514; // Break Slide cheer (Critical Perfect sound)
+    public int breakStream = -114514; // This is the cheer sound.
     public int clockStream = -114514;
-    private double extraTime4AllPerfect; // 需要在播放完后等待All Perfect特效的秒数
+    private double extraTime4AllPerfect; // Seconds to wait after playback for the All Perfect effect.
     public int fanfareStream = -114514;
     public int hanabiStream = -114514;
     public int holdRiserStream = -114514;
-    private bool isPlan2Stop; // 已准备停止 当all perfect无法在播放完BGM前结束时需要此功能
+    private bool isPlan2Stop; // Defers stopping when All Perfect cannot finish before the BGM ends.
 
-    private bool isPlaying; // 为了解决播放到结束时自动停止
-    public int judgeBreakSlideStream = -114514; // break-slide判定音效
-    public int judgeBreakStream = -114514; // 这个是break的判定音效 不是欢呼声
+    private bool isPlaying; // Supports automatic stopping at the end of playback.
+    public int judgeBreakSlideStream = -114514; // Break Slide judgment sound
+    public int judgeBreakStream = -114514; // Break judgment sound, not the cheer.
     public int judgeExStream = -114514;
     public int judgeStream = -114514;
 
@@ -133,7 +133,8 @@ public partial class MainWindow
                     Bass.BASS_ChannelPlay(fanfareStream, true);
                 }
 
-                if (se.hasClock) Bass.BASS_ChannelPlay(clockStream, true);
+                if (se.hasClock)
+                    Bass.BASS_ChannelPlay(clockStream, true);
                 //
                 Dispatcher.Invoke(() =>
                 {
@@ -152,7 +153,7 @@ public partial class MainWindow
 
     private double GetAllPerfectStartTime()
     {
-        // 获取All Perfect理论上播放的时间点 也就是最后一个被完成的note
+        // Find the theoretical All Perfect trigger time: the completion time of the final note.
         double latestNoteFinishTime = -1;
         double baseTime, noteTime;
         foreach (var noteGroup in SimaiProcess.notelist)
@@ -175,41 +176,35 @@ public partial class MainWindow
         return latestNoteFinishTime;
     }
 
+    private double GetRecordingEndTime()
+    {
+        var chartEnd = Math.Max(0d, GetAllPerfectStartTime());
+        return chartEnd + (editorSetting?.ShowAllPerfect == true
+            ? AllPerfectDuration + 3d
+            : 5d);
+    }
+
     private void generateSoundEffectList(double startTime, bool isOpIncluded)
     {
         waitToBePlayed = new List<SoundEffectTiming>();
         if (isOpIncluded)
         {
             var clockCountText = SimaiProcess.GetClockCountText();
-            if (!string.IsNullOrWhiteSpace(clockCountText))
+            if (!string.IsNullOrWhiteSpace(clockCountText) && SimaiProcess.notelist.Count > 0)
             {
                 try
                 {
-                    var clock_cnt = int.Parse(clockCountText);
+                    var clock_cnt = Math.Max(0, int.Parse(clockCountText));
                     var clock_int = 60.0d / SimaiProcess.notelist[0].currentBpm;
                     for (var i = 0; i < clock_cnt; i++)
-                        waitToBePlayed.Add(new SoundEffectTiming(i * clock_int, _hasClock: true));
+                    {
+                        var clockTime = i * clock_int;
+                        if (!waitToBePlayed.Any(item => Math.Abs(item.time - clockTime) < 0.001d))
+                            waitToBePlayed.Add(new SoundEffectTiming(clockTime, _hasClock: true));
+                    }
                 }
                 catch
                 {
-                }
-            }
-            else
-            {
-                var cmds = SimaiProcess.other_commands!.Split('\n');
-                foreach (var cmdl in cmds)
-                {
-                    if (cmdl.Length > 12 && cmdl.Substring(1, 11) == "clock_count")
-                        try
-                        {
-                            var clock_cnt = int.Parse(cmdl.Substring(13));
-                            var clock_int = 60.0d / SimaiProcess.notelist[0].currentBpm;
-                            for (var i = 0; i < clock_cnt; i++)
-                                waitToBePlayed.Add(new SoundEffectTiming(i * clock_int, _hasClock: true));
-                        }
-                        catch
-                        {
-                        }
                 }
             }
         }
@@ -221,7 +216,7 @@ public partial class MainWindow
 
             SoundEffectTiming stobj;
 
-            // 如果目前为止已经有一个SE了 那么就直接使用这个SE
+            // Reuse an existing SE at this point if one has already been created.
             var combIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - noteGroup.time) < 0.001f);
             if (combIndex != -1)
                 stobj = waitToBePlayed[combIndex];
@@ -237,25 +232,29 @@ public partial class MainWindow
                     case SimaiNoteType.Tap:
                     {
                         stobj.hasAnswer = true;
+                        // ALPHA: 1f is a firework Tap that cheers on hit, like Cf.
+                        if (note.isHanabi) stobj.hasHanabi = true;
                         if (note.isBreak)
                         {
-                            // 如果是Break 则有Break判定音和Break欢呼音（2600）
+                            // Break notes use both the Break judgment sound and Break cheer (2600).
                             stobj.hasBreak = true;
                             stobj.hasJudgeBreak = true;
                         }
 
                         if (note.isEx)
-                            // 如果是Ex 则有Ex判定音
+                            // Ex notes use the Ex judgment sound.
                             stobj.hasJudgeEx = true;
                         if (!note.isBreak && !note.isEx)
-                            // 如果二者皆没有 则是普通note 播放普通判定音
+                            // Otherwise this is a normal note and uses the normal judgment sound.
                             stobj.hasJudge = true;
                         break;
                     }
                     case SimaiNoteType.Hold:
                     {
                         stobj.hasAnswer = true;
-                        // 类似于Tap 判断Break和Ex的音效 二者皆无则为普通
+                        // ALPHA: 1hf is a firework Hold that cheers when its head is hit, like Cf.
+                        if (note.isHanabi) stobj.hasHanabi = true;
+                        // As with Tap, select Break or Ex sounds; otherwise use the normal sound.
                         if (note.isBreak)
                         {
                             stobj.hasBreak = true;
@@ -265,10 +264,10 @@ public partial class MainWindow
                         if (note.isEx) stobj.hasJudgeEx = true;
                         if (!note.isBreak && !note.isEx) stobj.hasJudge = true;
 
-                        // 计算Hold尾部的音效
+                        // Calculate the Hold-tail sound effect.
                         if (!(note.holdTime <= 0.00f))
                         {
-                            // 如果是短hold（六角tap），则忽略尾部音效。否则，才会计算尾部音效
+                            // Short Holds (hexagonal Taps) have no tail sound; calculate it only for longer Holds.
                             var targetTime = noteGroup.time + note.holdTime;
                             var nearIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - targetTime) < 0.001f);
                             if (nearIndex != -1)
@@ -278,7 +277,7 @@ public partial class MainWindow
                             }
                             else
                             {
-                                // 只有最普通的Hold才有结尾的判定音 Break和Ex型则没有（Break没有为推定）
+                                // Only normal Holds have an ending judgment sound; Break and Ex variants do not (inferred for Break).
                                 var holdRelease = new SoundEffectTiming(targetTime, true, !note.isBreak && !note.isEx);
                                 waitToBePlayed.Add(holdRelease);
                             }
@@ -290,8 +289,12 @@ public partial class MainWindow
                     {
                         if (!note.isSlideNoHead)
                         {
-                            // 当Slide不是无头星星的时候 才有answer音和判定音
+                            // Only headed Slides have answer and judgment sounds.
                             stobj.hasAnswer = true;
+                            if (note.isTouchSlide && note.touchArea != 'K')
+                                stobj.hasTouch = true;
+                            // ALPHA: 1f-5 is a firework star head that cheers on hit, like Cf.
+                            if (note.isHanabi) stobj.hasHanabi = true;
                             if (note.isBreak)
                             {
                                 stobj.hasBreak = true;
@@ -302,16 +305,16 @@ public partial class MainWindow
                             if (!note.isBreak && !note.isEx) stobj.hasJudge = true;
                         }
 
-                        // Slide启动音效
+                        // Slide start sound effect
                         var targetTime = note.slideStartTime;
                         var nearIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - targetTime) < 0.001f);
                         if (nearIndex != -1)
                         {
                             if (note.isSlideBreak)
-                                // 如果是break slide的话 使用break slide的启动音效
+                                // Use the Break Slide start sound for Break Slides.
                                 waitToBePlayed[nearIndex].hasBreakSlideStart = true;
                             else
-                                // 否则使用普通slide的启动音效
+                                // Otherwise use the normal Slide start sound.
                                 waitToBePlayed[nearIndex].hasSlide = true;
                         }
                         else
@@ -324,7 +327,7 @@ public partial class MainWindow
                             waitToBePlayed.Add(slide);
                         }
 
-                        // Slide尾巴 如果是Break Slide的话 就要添加一个Break音效
+                        // Add a Break sound at the Slide tail for Break Slides.
                         if (note.isSlideBreak)
                         {
                             targetTime = note.slideStartTime + note.slideTime;
@@ -349,19 +352,31 @@ public partial class MainWindow
                         stobj.hasAnswer = true;
                         stobj.hasTouch = true;
                         if (note.isHanabi) stobj.hasHanabi = true;
+                        // ALPHA: Break Touch (Cxb) emits the Break judgment sound and cheer, like Break Tap/Hold.
+                        if (note.isBreak)
+                        {
+                            stobj.hasBreak = true;
+                            stobj.hasJudgeBreak = true;
+                        }
                         break;
                     }
                     case SimaiNoteType.TouchHold:
                     {
                         stobj.hasAnswer = true;
                         stobj.hasTouch = true;
-                        // 只有真正有时长的TouchHold才播放riser并计算结尾。
-                        // 像 [1:0] 这种0时长写法 holdTime 会被解析成0，riser的开始与结束
-                        // 落在同一时刻，排序后Stop可能排在Play之前，导致12.68秒的riser永远停不下来。
+                        // ALPHA: Break TouchHold (Chb) emits the Break judgment sound and cheer at the head, like Break Hold.
+                        if (note.isBreak)
+                        {
+                            stobj.hasBreak = true;
+                            stobj.hasJudgeBreak = true;
+                        }
+                        // Play the riser and calculate the tail only for TouchHolds with a positive duration.
+                        // A zero-duration form such as [1:0] parses holdTime as zero, placing riser start and end
+                        // at the same time. Sorting may put Stop before Play, leaving the 12.68-second riser running forever.
                         if (note.holdTime > 0.00f)
                         {
                             stobj.hasTouchHold = true;
-                            // 计算TouchHold结尾
+                            // Calculate the TouchHold tail.
                             var targetTime = noteGroup.time + note.holdTime;
                             var nearIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - targetTime) < 0.001f);
                             if (nearIndex != -1)
@@ -379,7 +394,7 @@ public partial class MainWindow
                         }
                         else if (note.isHanabi)
                         {
-                            // 0时长TouchHold退化成普通Touch，烟花照常保留
+                            // Treat a zero-duration TouchHold as a normal Touch while preserving its firework.
                             stobj.hasHanabi = true;
                         }
 
@@ -393,16 +408,17 @@ public partial class MainWindow
                 waitToBePlayed.Add(stobj);
         }
 
-        if (isOpIncluded && editorSetting?.ShowAllPerfect == true)
-            waitToBePlayed.Add(new SoundEffectTiming(GetAllPerfectStartTime(), _hasAllPerfect: true));
+        var allPerfectTime = GetAllPerfectStartTime();
+        if (editorSetting?.ShowAllPerfect == true && allPerfectTime >= startTime - 0.001d)
+            waitToBePlayed.Add(new SoundEffectTiming(allPerfectTime, _hasAllPerfect: true));
         waitToBePlayed.Sort((o1, o2) => o1.time < o2.time ? -1 : 1);
 
         var apTime = GetAllPerfectStartTime();
-        if (songLength < apTime + 4.0)
-            // 如果BGM的时长不足以播放完AP特效 这里假设AP特效持续4秒
-            extraTime4AllPerfect = apTime + 4.0 - songLength; // 预留给AP的额外时间（播放结束后）
+        if (songLength < apTime + AllPerfectDuration)
+            extraTime4AllPerfect =
+                apTime + AllPerfectDuration - songLength; // Extra post-playback time reserved for AP.
         else
-            // 如果足够播完 那么就等到BGM结束再停止
+            // If there is enough time, stop when the BGM ends.
             extraTime4AllPerfect = -1;
 
         //Console.WriteLine(JsonConvert.SerializeObject(waitToBePlayed));
@@ -410,29 +426,34 @@ public partial class MainWindow
 
     private void renderSoundEffect(double delaySeconds)
     {
-        //TODO: 改为异步并增加提示窗口
+        // TODO: Make this asynchronous and add a prompt window.
         var path = Environment.CurrentDirectory + "/SFX";
         var tempPath = GetViewerWorkingDirectory();
-        string converterPath;
 
         var pathEnv = new List<string>
         {
-            tempPath
+            tempPath,
+            AppContext.BaseDirectory,
+            Environment.CurrentDirectory
         };
-        pathEnv.AddRange(Environment.GetEnvironmentVariable("PATH")!.Split(Path.PathSeparator));
-        converterPath = pathEnv.FirstOrDefault(scanPath =>
-        {
-            return File.Exists(scanPath + "/ffmpeg.exe");
-        })!;
+        var systemPath = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(systemPath))
+            pathEnv.AddRange(systemPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
+        var converterPath = pathEnv.FirstOrDefault(scanPath =>
+            !string.IsNullOrWhiteSpace(scanPath) &&
+            File.Exists(Path.Combine(scanPath, "ffmpeg.exe")));
 
-        var throwErrorOnMismatch = converterPath.Length == 0;
+        var throwErrorOnMismatch = string.IsNullOrEmpty(converterPath);
 
-        //默认参数：16bit
-        string getBasePath(string rawPath) { return rawPath.Split('/').Last(); }
+        // Default: 16-bit
+        string getBasePath(string rawPath) { return Path.GetFileNameWithoutExtension(rawPath); }
 
         var useOgg = File.Exists(maidataDir + "/track.ogg");
 
         var bgmBank = new SoundBank(maidataDir + "/track" + (useOgg ? ".ogg" : ".mp3"));
+        if (bgmBank.Frequency <= 0)
+            throw new InvalidOperationException(
+                $"无法读取谱面音频：{bgmBank.FilePath}\n请确认音频文件没有损坏，并可被 BASS 解码。");
 
         var comparableBanks = new Dictionary<string, SoundBank>();
 
@@ -469,35 +490,56 @@ public partial class MainWindow
         comparableBanks["Break Slide Start"] = breakSlideStartBank;
         comparableBanks["Break Slide"] = breakSlideBank;
         comparableBanks["Judge Break Slide"] = judgeBreakSlideBank;
+        var mediaBanks = new Dictionary<string, SoundBank>(StringComparer.OrdinalIgnoreCase);
+        foreach (var media in GetEffectiveMediaTable()
+                     .Where(item => item.kind == "audio" && item.enabled &&
+                                    !string.IsNullOrWhiteSpace(item.path)))
+        {
+            if (mediaBanks.ContainsKey(media.path))
+                continue;
+            var mediaPath = Path.GetFullPath(Path.Combine(
+                maidataDir, media.path.Replace('/', Path.DirectorySeparatorChar)));
+            var mediaBank = new SoundBank(mediaPath);
+            mediaBanks[media.path] = mediaBank;
+            comparableBanks["Media " + mediaBanks.Count] = mediaBank;
+        }
 
+        var conversionIndex = 0;
         foreach (var compPair in comparableBanks)
         {
             // Skip non existent file.
             if (compPair.Value.Frequency < 0)
                 continue;
 
-            if (bgmBank.FrequencyCheck(compPair.Value))
+            if (bgmBank.MixFormatCheck(compPair.Value))
                 continue;
 
             if (throwErrorOnMismatch)
                 throw new Exception(
-                    string.Format("BGM and {0} do not have same sample rate. Convert the {0} from {1}Hz into {2}Hz!",
+                    string.Format("BGM and {0} do not have the same stereo sample format. Convert {0} from {1}Hz into stereo {2}Hz!",
                         compPair.Key, compPair.Value.Frequency, bgmBank.Frequency)
                 );
 
-            Console.WriteLine("Convert sample of {0} ({1}/{2})...", compPair.Key, compPair.Value.Info!.length,
+            Console.WriteLine("Convert sample of {0} ({1}/{2})...", compPair.Key,
+                compPair.Value.Info?.length ?? 0,
                 compPair.Value.Frequency);
-            compPair.Value.Reassign(converterPath, tempPath, "t_" + getBasePath(compPair.Value.FilePath),
+            compPair.Value.Reassign(converterPath!, tempPath,
+                $"t_{conversionIndex++}_{getBasePath(compPair.Value.FilePath)}.wav",
                 bgmBank.Frequency);
         }
 
         var freq = bgmBank.Frequency;
 
-        //读取原始采样数据
-        var sampleCount = (long)((songLength + 5f) * freq * 2);
+        // Keep the mixed WAV beyond the intended video stop. ffmpeg -shortest will then
+        // finish on the video pipe, never on an early audio EOF.
+        const double encoderSafetySeconds = 5d;
+        var renderDuration = Math.Max(songLength, GetRecordingEndTime() + encoderSafetySeconds);
+        var sampleCount = (long)(renderDuration * freq * 2);
         bgmBank.RawSize = sampleCount;
         Console.WriteLine(sampleCount);
         bgmBank.InitializeRawSample();
+        var bgmRaw = bgmBank.Raw ?? throw new InvalidOperationException(
+            $"无法读取谱面音频采样：{bgmBank.FilePath}\n请尝试将 track.mp3/track.ogg 转换为 44100 Hz。");
 
         foreach (var compPair in comparableBanks)
         {
@@ -505,12 +547,14 @@ public partial class MainWindow
             if (compPair.Value.Frequency < 0)
                 continue;
 
-            if (!bgmBank.FrequencyCheck(compPair.Value))
+            if (!bgmBank.MixFormatCheck(compPair.Value))
                 continue;
 
             Console.WriteLine("Init sample for {0}...", compPair.Key);
             compPair.Value.InitializeRawSample();
         }
+        // Use a silent lead-in if track_start.wav is missing or undecodable instead of crashing the recording.
+        var trackStartRaw = trackStartBank.Raw ?? Array.Empty<short>();
 
         var trackOps = new List<SoundDataRange>();
         var typeSamples = new Dictionary<SoundDataType, short[]>();
@@ -519,6 +563,9 @@ public partial class MainWindow
             if (sType == 0) continue;
             typeSamples[sType] = new short[sampleCount];
         }
+        var mediaSamples = new short[sampleCount];
+        var timelineAudioReplacesBgm = GetEffectiveMediaTable().Any(item =>
+            item.timelineClip && item.kind == "audio" && item.enabled);
 
         SoundBank? getSampleFromType(SoundDataType type)
         {
@@ -559,10 +606,10 @@ public partial class MainWindow
                 typeSamples[type][t] = 0;
         }
 
-        //生成每个音效的track
+        // Generate the track for each sound effect.
         foreach (var soundTiming in waitToBePlayed!)
         {
-            var startIndex = (int)(soundTiming.time * freq) * 2; //乘2因为有两个channel
+            var startIndex = (int)(soundTiming.time * freq) * 2; // Multiply by two for the two channels.
             if (soundTiming.hasAnswer) sampleWrite(startIndex, SoundDataType.Answer);
             if (soundTiming.hasJudge) sampleWrite(startIndex, SoundDataType.Judge);
             if (soundTiming.hasJudgeBreak) sampleWrite(startIndex, SoundDataType.JudgeBreak);
@@ -580,7 +627,7 @@ public partial class MainWindow
 
             if (soundTiming.hasTouchHoldEnd)
             {
-                //不覆盖整个track，只覆盖可能有的部分
+                // Overwrite only the available portion, not the entire track.
                 var lastTouchHoldOp = trackOps.FindLast(trackOp => trackOp.Type == SoundDataType.TouchHold);
                 sampleWipe(startIndex, (int)lastTouchHoldOp.To, SoundDataType.TouchHold);
                 continue;
@@ -600,7 +647,55 @@ public partial class MainWindow
             if (soundTiming.hasClock) sampleWrite(startIndex, SoundDataType.Clock);
         }
 
-        //获取原来实时播放时候的音量
+        void WriteMediaClip(MediaChange media, double? stopTime)
+        {
+            if (!mediaBanks.TryGetValue(media.path, out var bank) || bank.Raw == null)
+                return;
+            var destinationStart = (long)(media.time * freq) * 2;
+            var skippedTimelineSamples = destinationStart < 0 ? -destinationStart : 0;
+            var sourceStart = Math.Max(0, (long)(media.sourceOffset * freq) * 2);
+            sourceStart += skippedTimelineSamples;
+            destinationStart = Math.Max(0, destinationStart);
+            var available = bank.Raw.LongLength - sourceStart;
+            if (media.duration > 0d)
+                available = Math.Min(available,
+                    Math.Max(0, (long)(media.duration * freq) * 2 - skippedTimelineSamples));
+            if (stopTime.HasValue)
+                available = Math.Min(available,
+                    Math.Max(0, (long)((stopTime.Value - media.time) * freq) * 2 - skippedTimelineSamples));
+            available = Math.Min(available, mediaSamples.LongLength - destinationStart);
+            for (long offset = 0; offset < available; offset++)
+            {
+                var mixed = mediaSamples[destinationStart + offset] + bank.Raw[sourceStart + offset];
+                mediaSamples[destinationStart + offset] =
+                    (short)Math.Clamp(mixed, short.MinValue, short.MaxValue);
+            }
+        }
+
+        foreach (var trackEvents in GetEffectiveMediaTable()
+                     .Where(item => item.kind == "audio")
+                     .GroupBy(item => item.track))
+        {
+            MediaChange? activeMedia = null;
+            foreach (var media in trackEvents.OrderBy(item => item.time))
+            {
+                if (media.enabled)
+                {
+                    if (activeMedia != null)
+                        WriteMediaClip(activeMedia, media.time);
+                    activeMedia = media;
+                }
+                else if (activeMedia != null)
+                {
+                    WriteMediaClip(activeMedia, media.time);
+                    activeMedia = null;
+                }
+            }
+            if (activeMedia != null)
+                WriteMediaClip(activeMedia, null);
+        }
+
+        // Get the volume used during real-time playback.
 
         float bgmVol = 1f,
             answerVol = 1f,
@@ -623,22 +718,24 @@ public partial class MainWindow
 
         var filedata = new List<byte>();
         var delayEmpty = new short[(int)(delaySeconds * freq * 2)];
-        var filehead = CreateWaveFileHeader(bgmBank.Raw!.Length * 2 + delayEmpty.Length * 2, 2, freq, 16).ToList();
+        var filehead = CreateWaveFileHeader(bgmRaw.Length * 2 + delayEmpty.Length * 2, 2, freq, 16).ToList();
 
         //if (trackStartRAW.Length > delayEmpty.Length)
-        //    throw new Exception("track_start音效过长,请勿大于5秒");
+        //    throw new Exception("track_start is too long; keep it under five seconds.");
 
         for (var i = 0; i < delayEmpty.Length; i++)
         {
-            if (i < trackStartBank.Raw!.Length)
-                delayEmpty[i] = trackStartBank.Raw[i];
+            if (i < trackStartRaw.Length)
+                delayEmpty[i] = trackStartRaw[i];
             filehead.AddRange(BitConverter.GetBytes(delayEmpty[i]));
         }
 
         for (var i = 0; i < sampleCount; i++)
         {
             // Apply BGM Data
-            var sampleValue = bgmBank.Raw[i] * bgmVol;
+            var sampleValue = timelineAudioReplacesBgm
+                ? mediaSamples[i] * bgmVol
+                : bgmRaw[i] * bgmVol + mediaSamples[i];
 
             foreach (var sampleTuple in typeSamples)
             {
@@ -697,6 +794,7 @@ public partial class MainWindow
         File.WriteAllBytes(maidataDir + "/out.wav", filehead.ToArray());
 
         typeSamples.Clear();
+        Array.Clear(mediaSamples);
         bgmBank.Free();
         comparableBanks.Values.ToList().ForEach(otherBank =>
         {
@@ -706,53 +804,53 @@ public partial class MainWindow
     }
 
     /// <summary>
-    ///     创建WAV音频文件头信息,爱来自cnblogs:https://www.cnblogs.com/CUIT-DX037/p/14070754.html
+    ///     Creates a WAV audio file header. Adapted from https://www.cnblogs.com/CUIT-DX037/p/14070754.html
     /// </summary>
-    /// <param name="data_Len">音频数据长度</param>
-    /// <param name="data_SoundCH">音频声道数</param>
-    /// <param name="data_Sample">采样率，常见有：11025、22050、44100等</param>
-    /// <param name="data_SamplingBits">采样位数，常见有：4、8、12、16、24、32</param>
+    /// <param name="data_Len">Audio data length.</param>
+    /// <param name="data_SoundCH">Number of audio channels.</param>
+    /// <param name="data_Sample">Sample rate, commonly 11025, 22050, 44100, etc.</param>
+    /// <param name="data_SamplingBits">Bits per sample, commonly 4, 8, 12, 16, 24, or 32.</param>
     /// <returns></returns>
     private static byte[] CreateWaveFileHeader(int data_Len, int data_SoundCH, int data_Sample, int data_SamplingBits)
     {
-        // WAV音频文件头信息
-        var WAV_HeaderInfo = new List<byte>(); // 长度应该是44个字节
+        // WAV audio file header
+        var WAV_HeaderInfo = new List<byte>(); // Should be 44 bytes long.
         WAV_HeaderInfo.AddRange(
             Encoding.ASCII
-                .GetBytes("RIFF")); // 4个字节：固定格式，“RIFF”对应的ASCII码，表明这个文件是有效的 "资源互换文件格式（Resources lnterchange File Format）"
-        WAV_HeaderInfo.AddRange(BitConverter.GetBytes(data_Len + 44 - 8)); // 4个字节：总长度-8字节，表明从此后面所有的数据长度，小端模式存储数据
-        WAV_HeaderInfo.AddRange(Encoding.ASCII.GetBytes("WAVE")); // 4个字节：固定格式，“WAVE”对应的ASCII码，表明这个文件的格式是WAV
-        WAV_HeaderInfo.AddRange(Encoding.ASCII.GetBytes("fmt ")); // 4个字节：固定格式，“fmt ”(有一个空格)对应的ASCII码，它是一个格式块标识
-        WAV_HeaderInfo.AddRange(BitConverter.GetBytes(16)); // 4个字节：fmt的数据块的长度（如果没有其他附加信息，通常为16），小端模式存储数据
+                .GetBytes("RIFF")); // Four-byte ASCII "RIFF" signature marking a valid Resource Interchange File Format file.
+        WAV_HeaderInfo.AddRange(BitConverter.GetBytes(data_Len + 44 - 8)); // Four-byte little-endian length of all following data: total length minus eight.
+        WAV_HeaderInfo.AddRange(Encoding.ASCII.GetBytes("WAVE")); // Four-byte ASCII "WAVE" signature identifying the WAV format.
+        WAV_HeaderInfo.AddRange(Encoding.ASCII.GetBytes("fmt ")); // Four-byte ASCII "fmt " format-block identifier, including the trailing space.
+        WAV_HeaderInfo.AddRange(BitConverter.GetBytes(16)); // Four-byte little-endian fmt block length, normally 16 without extra information.
         var fmt_Struct = new
         {
-            PCM_Code = (short)1, // 4B，编码格式代码：常见WAV文件采用PCM脉冲编码调制格式，通常为1。
-            SoundChannel = (short)data_SoundCH, // 2B，声道数
-            SampleRate = data_Sample, // 4B，没个通道的采样率：常见有：11025、22050、44100等
+            PCM_Code = (short)1, // Encoding format code; standard WAV files usually use PCM value 1.
+            SoundChannel = (short)data_SoundCH, // 2B: number of channels
+            SampleRate = data_Sample, // 4B: sample rate per channel, commonly 11025, 22050, 44100, etc.
             BytesPerSec =
                 data_SamplingBits * data_Sample * data_SoundCH /
-                8, // 4B，数据传输速率 = 声道数×采样频率×每样本的数据位数/8。播放软件利用此值可以估计缓冲区的大小。
-            BlockAlign = (short)(data_SamplingBits * data_SoundCH / 8), // 2B，采样帧大小 = 声道数×每样本的数据位数/8。
-            SamplingBits = (short)data_SamplingBits // 4B，每个采样值（采样本）的位数，常见有：4、8、12、16、24、32
+                8, // 4B: byte rate = channels × sample rate × bits per sample / 8; players use it to estimate buffer size.
+            BlockAlign = (short)(data_SamplingBits * data_SoundCH / 8), // 2B: sample-frame size = channels × bits per sample / 8.
+            SamplingBits = (short)data_SamplingBits // Bits per sample, commonly 4, 8, 12, 16, 24, or 32.
         };
-        // 依次写入fmt数据块的数据（默认长度为16）
+        // Write the fmt block fields in order; the default length is 16.
         WAV_HeaderInfo.AddRange(BitConverter.GetBytes(fmt_Struct.PCM_Code));
         WAV_HeaderInfo.AddRange(BitConverter.GetBytes(fmt_Struct.SoundChannel));
         WAV_HeaderInfo.AddRange(BitConverter.GetBytes(fmt_Struct.SampleRate));
         WAV_HeaderInfo.AddRange(BitConverter.GetBytes(fmt_Struct.BytesPerSec));
         WAV_HeaderInfo.AddRange(BitConverter.GetBytes(fmt_Struct.BlockAlign));
         WAV_HeaderInfo.AddRange(BitConverter.GetBytes(fmt_Struct.SamplingBits));
-        /* 还 可以继续写入其他的扩展信息，那么fmt的长度计算要增加。*/
+        /* Additional extension data may follow, in which case the fmt length must increase. */
 
-        WAV_HeaderInfo.AddRange(Encoding.ASCII.GetBytes("data")); // 4个字节：固定格式，“data”对应的ASCII码
-        WAV_HeaderInfo.AddRange(BitConverter.GetBytes(data_Len)); // 4个字节：正式音频数据的长度。数据使用小端模式存放，如果是多声道，则声道数据交替存放。
-        /* 到这里文件头信息填写完成，通常情况下共44个字节*/
+        WAV_HeaderInfo.AddRange(Encoding.ASCII.GetBytes("data")); // Four-byte ASCII "data" signature.
+        WAV_HeaderInfo.AddRange(BitConverter.GetBytes(data_Len)); // Four-byte audio-data length; data is little-endian and channels are interleaved.
+        /* The header is now complete and is normally 44 bytes long. */
         return WAV_HeaderInfo.ToArray();
     }
 
     private void WaveStopMonitorUpdate()
     {
-        // 监控是否应当停止
+        // Monitor whether playback should stop.
         if (!isPlan2Stop &&
             isPlaying &&
             Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_STOPPED)
@@ -760,12 +858,12 @@ public partial class MainWindow
             isPlan2Stop = true;
             if (extraTime4AllPerfect < 0)
             {
-                // 足够播完 直接停止
+                // Stop immediately when there is enough time to finish.
                 Dispatcher.Invoke(() => { ToggleStop(); });
             }
             else
             {
-                // 不够播完 等待后停止
+                // Otherwise wait before stopping.
                 var stopPlayingTimer = new Timer(double.IsNormal(extraTime4AllPerfect)? (int)(extraTime4AllPerfect * 1000) : int.MaxValue)
                 {
                     AutoReset = false
@@ -806,7 +904,7 @@ public partial class MainWindow
             time = _time;
             hasAnswer = _hasAnswer;
             hasJudge = _hasJudge;
-            hasJudgeBreak = _hasJudgeBreak; // 我是笨蛋
+            hasJudgeBreak = _hasJudgeBreak; // Preserve the judgment-Break flag.
             hasBreak = _hasBreak;
             hasTouch = _hasTouch;
             hasHanabi = _hasHanabi;
@@ -916,6 +1014,11 @@ public partial class MainWindow
         public bool FrequencyCheck(SoundBank other)
         {
             return Frequency == other.Frequency && Frequency > 0;
+        }
+
+        public bool MixFormatCheck(SoundBank other)
+        {
+            return FrequencyCheck(other) && Info?.chans == 2 && other.Info?.chans == 2;
         }
     }
 

@@ -6,8 +6,8 @@
 namespace MajdataEdit.AutoSaveModule;
 
 /// <summary>
-///     全局自动保存
-///     它将自动保存的文件存储在majdata的根目录中
+///     Global autosave.
+///     Stores autosave files in the Majdata root directory.
 /// </summary>
 public class GlobalAutoSave : IAutoSave
 {

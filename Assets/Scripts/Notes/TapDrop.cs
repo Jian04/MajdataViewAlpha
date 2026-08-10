@@ -27,7 +27,7 @@ public class TapDrop : TapBase
             spriteRenderer.sharedMaterial = breakMaterial;
         }
 
-        // ALPHA: apply color override to note circle and guide arc.
+        // The note and its guide share the same optional tint material.
         if (colorOverrideMaterial != null)
         {
             spriteRenderer.sharedMaterial = colorOverrideMaterial;
@@ -37,16 +37,23 @@ public class TapDrop : TapBase
 
         spriteRenderer.forceRenderingOff = true;
         exSpriteRender.forceRenderingOff = true;
-        sensor = GameObject.Find("Sensors")
-                                   .transform.GetChild(startPosition - 1)
-                                   .GetComponent<Sensor>();
-        manager = GameObject.Find("Sensors")
-                                .GetComponent<SensorManager>();
+        var sensorRoot = GameObject.Find("Sensors");
+        if (sensorRoot == null || SensorChildIndex < 0 || SensorChildIndex >= sensorRoot.transform.childCount)
+        {
+            Debug.LogError(
+                $"TapDrop rejected invalid sensor: start={startPosition}, dZone={isDZone}, " +
+                $"index={SensorChildIndex}, sensors={sensorRoot?.transform.childCount ?? 0}.");
+            Destroy(gameObject);
+            return;
+        }
+
+        sensor = sensorRoot.transform.GetChild(SensorChildIndex).GetComponent<Sensor>();
+        manager = sensorRoot.GetComponent<SensorManager>();
         inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
-        sensorPos = (SensorType)(startPosition - 1);
+        sensorPos = (SensorType)SensorChildIndex;
         if (!previewOnly)
-            inputManager.BindArea(Check, sensorPos);
+            BindJudgeInput(Check);
         State = NoteStatus.Initialized;
     }
 }

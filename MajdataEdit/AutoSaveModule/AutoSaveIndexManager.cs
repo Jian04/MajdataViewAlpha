@@ -29,7 +29,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
     {
         if (path != curPath)
         {
-            // 只有当新目录和之前设置的目录不同时，才会触发index文件读写
+            // Read or write the index only when the new directory differs from the configured directory.
             curPath = path;
             LoadOrCreateIndexFile();
         }
@@ -70,7 +70,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
 
         index.Count++;
 
-        // 将变更存储到index文件中
+        // Store changes in the index file.
         UpdateIndexFile();
 
         return path;
@@ -83,7 +83,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
 
     public void RefreshIndex()
     {
-        // 先扫描一遍，如果有文件已经被删了就先移除掉
+        // Scan first and remove entries for deleted files.
         for (var i = index!.Count - 1; i >= 0; i--)
         {
             var fileInfo = index.FilesInfo[i];
@@ -94,7 +94,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
             }
         }
 
-        // 然后从this.index.FileInfo的表头开始删除 直到保证自动保存文件的数量符合maxAutoSaveCount的要求
+        // Delete from the start of this.index.FileInfo until the autosave count meets maxAutoSaveCount.
         while (index.Count > maxAutoSaveCount)
         {
             var fileInfo = index.FilesInfo[0];
@@ -103,7 +103,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
             index.Count--;
         }
 
-        // 将变更存储到index文件中
+        // Store changes in the index file.
         UpdateIndexFile();
     }
 
@@ -133,7 +133,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
 
 
     /// <summary>
-    ///     若文件夹不存在则创建
+    ///     Creates the folder if it does not exist.
     /// </summary>
     /// <param name="dirPath"></param>
     private void CreateDirectoryIfNotExists(string dirPath)
@@ -142,7 +142,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
     }
 
     /// <summary>
-    ///     保证文件夹处于隐藏状态
+    ///     Ensures the folder is hidden.
     /// </summary>
     /// <param name="dirPath"></param>
     private void KeepDirectoryHidden(string dirPath)
@@ -154,7 +154,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
     }
 
     /// <summary>
-    ///     将saveIndex存储到index文件中
+    ///     Stores saveIndex in the index file.
     /// </summary>
     private void UpdateIndexFile()
     {
@@ -165,7 +165,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
     }
 
     /// <summary>
-    ///     从index文件读取saveIndex
+    ///     Reads saveIndex from the index file.
     /// </summary>
     private void LoadIndexFromFile()
     {
@@ -176,7 +176,7 @@ internal class AutoSaveIndexManager : IAutoSaveIndexManager
     }
 
     /// <summary>
-    ///     获取当前时间字符串
+    ///     Gets the current time string.
     /// </summary>
     /// <returns></returns>
     private string GetCurrentTimeString()

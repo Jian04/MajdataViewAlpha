@@ -49,6 +49,11 @@ Shader "Hidden/AlphaScreenEffects"
             float _Zoom;
             float _Glitch;
             float _TVNoise;
+            float _Hue;        // Hue rotation in radians
+            float4 _TintColor; // Color tint; alpha is blend amount
+            float _OffsetX;    // Camera shift as screen-width ratio, including shake
+            float _OffsetY;
+            float _Rotate;     // Screen rotation in radians
 
             v2f vert(appdata input)
             {
@@ -67,6 +72,23 @@ Shader "Hidden/AlphaScreenEffects"
                     float zoomScale = 1.0 + _Zoom * 0.12;
                     uv = (uv - 0.5) / zoomScale + 0.5;
                 }
+
+                // Rotate around screen center with aspect-ratio correction
+                [branch]
+                if (abs(_Rotate) > 0.0001)
+                {
+                    float aspect = _MainTex_TexelSize.y / _MainTex_TexelSize.x;
+                    float2 p = uv - 0.5;
+                    p.x *= aspect;
+                    float sinR = sin(_Rotate);
+                    float cosR = cos(_Rotate);
+                    p = float2(p.x * cosR - p.y * sinR, p.x * sinR + p.y * cosR);
+                    p.x /= aspect;
+                    uv = p + 0.5;
+                }
+
+                // Camera shift/shake: dx > 0 moves screen content right
+                uv -= float2(_OffsetX, _OffsetY);
 
                 // TV-style horizontal interference: each moving row gets its
                 // own horizontal displacement instead of full-screen grain.
@@ -91,6 +113,10 @@ Shader "Hidden/AlphaScreenEffects"
                         sin(_EffectTime * 71.0) * 0.006) * glitchBand * _Glitch;
                 }
 
+                float insideFrame =
+                    step(0.0, uv.x) * step(uv.x, 1.0) *
+                    step(0.0, uv.y) * step(uv.y, 1.0);
+                uv = saturate(uv);
                 fixed4 center = tex2D(_MainTex, uv);
                 fixed4 color = center;
                 [branch]
@@ -218,10 +244,23 @@ Shader "Hidden/AlphaScreenEffects"
                         length(circleUv));
                     color.rgb *= irisMask;
                 }
+                // Rotate the overall hue
+                [branch]
+                if (abs(_Hue) > 0.0001)
+                {
+                    const float3 hueAxis = float3(0.57735, 0.57735, 0.57735);
+                    float cosH = cos(_Hue);
+                    float sinH = sin(_Hue);
+                    color.rgb = color.rgb * cosH + cross(hueAxis, color.rgb) * sinH +
+                        hueAxis * dot(hueAxis, color.rgb) * (1.0 - cosH);
+                }
                 color.rgb = _Flash >= 0.0
                     ? lerp(color.rgb, float3(1.0, 1.0, 1.0), saturate(_Flash))
                     : lerp(color.rgb, float3(0.0, 0.0, 0.0), saturate(-_Flash));
+                // Color tint (TINT): generalized FLASH effect supporting any color
+                color.rgb = lerp(color.rgb, _TintColor.rgb, saturate(_TintColor.a));
                 color.rgb *= 1.0 - saturate(_Fade);
+                color.rgb *= insideFrame;
                 return color;
             }
             ENDCG

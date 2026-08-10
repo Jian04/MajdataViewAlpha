@@ -64,7 +64,7 @@ internal sealed class ColorSectionBackgroundRenderer : IBackgroundRenderer
         var sectionStart = 0;
         for (var i = 0; i < text.Length;)
         {
-            if (text[i] != '&' || !TryReadMarker(text, i, out var color, out var length))
+            if (text[i] is not ('@' or '&') || !TryReadMarker(text, i, out var color, out var length))
             {
                 i++;
                 continue;
@@ -104,7 +104,7 @@ internal sealed class ColorSectionBackgroundRenderer : IBackgroundRenderer
         color = "";
         length = 0;
         if (start + 5 <= text.Length &&
-            string.Equals(text.Substring(start, 5), "&NULL", StringComparison.OrdinalIgnoreCase))
+            string.Equals(text.Substring(start + 1, 4), "NULL", StringComparison.OrdinalIgnoreCase))
         {
             length = 5;
             return true;

@@ -41,17 +41,22 @@ public class CustomSkin : MonoBehaviour
 
     public Sprite Touch;
     public Sprite Touch_Each;
+    public Sprite Touch_Break;
     public Sprite TouchPoint;
     public Sprite TouchPoint_Each;
+    public Sprite TouchPoint_Break;
     public Sprite TouchJust;
     public Sprite[] TouchBorder = new Sprite[2];
     public Sprite[] TouchBorder_Each = new Sprite[2];
 
     public Sprite[] TouchHold = new Sprite[5];
+    public Sprite[] TouchHold_Break = new Sprite[5];
+
+    public Sprite JudgeArea;
 
     public Texture2D test;
     private SpriteRenderer Outline;
-    private string loadedSkinPath;
+    private string loadedSkinKey;
 
     // Start is called before the first frame update
     private void Start()
@@ -59,9 +64,13 @@ public class CustomSkin : MonoBehaviour
         LoadSkin("dx");
     }
 
-    public void LoadSkin(string skinName)
+    public void LoadSkin(string skinName, string tapSkinName = null, string holdSkinName = null,
+        string starSkinName = null, bool pinkStar = false)
     {
-        var root = Path.Combine(new DirectoryInfo(Application.dataPath).Parent.FullName, "Skin");
+        // Prefer packaged skins so Editor and release builds resolve the same files.
+        var external = Path.Combine(new DirectoryInfo(Application.dataPath).Parent.FullName, "Skin");
+        var bundled = Path.Combine(Application.streamingAssetsPath, "Skin");
+        var root = Directory.Exists(bundled) ? bundled : external;
         var requested = Path.Combine(root, SanitizeSkinName(skinName));
         var dx = Path.Combine(root, "dx");
         var path = Directory.Exists(requested)
@@ -69,18 +78,25 @@ public class CustomSkin : MonoBehaviour
             : Directory.Exists(dx)
                 ? dx
                 : root;
-        if (string.Equals(loadedSkinPath, path, System.StringComparison.OrdinalIgnoreCase))
+        var tapPath = ResolvePartPath(root, tapSkinName, path);
+        var holdPath = ResolvePartPath(root, holdSkinName, path);
+        var legacyPinkStar = TryGetPinkStarBase(starSkinName, out var starBaseSkinName);
+        pinkStar |= legacyPinkStar;
+        var starPath = ResolvePartPath(root, starBaseSkinName, path);
+        var skinKey = string.Join("|", path, tapPath, holdPath, starPath, pinkStar);
+        if (string.Equals(loadedSkinKey, skinKey, System.StringComparison.OrdinalIgnoreCase))
             return;
-        loadedSkinPath = path;
+        loadedSkinKey = skinKey;
         Outline = gameObject.GetComponent<SpriteRenderer>();
-        Debug.Log($"Loading skin: {path}");
+        Debug.Log($"Loading skin: base={path}, tap={tapPath}, hold={holdPath}, star={starPath}");
 
         Outline.sprite = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "outline.png"));
+        JudgeArea = LoadOrFallback(Path.Combine(path, "judge_area.png"), null);
 
-        Tap = SpriteLoader.LoadSpriteFromFile(path + "/tap.png");
-        Tap_Each = SpriteLoader.LoadSpriteFromFile(path + "/tap_each.png");
-        Tap_Break = SpriteLoader.LoadSpriteFromFile(path + "/tap_break.png");
-        Tap_Ex = SpriteLoader.LoadSpriteFromFile(path + "/tap_ex.png");
+        Tap = LoadPart(tapPath, path, "tap.png");
+        Tap_Each = LoadPart(tapPath, path, "tap_each.png");
+        Tap_Break = LoadPart(tapPath, path, "tap_break.png");
+        Tap_Ex = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "tap_ex.png"));
 
         Slide = SpriteLoader.LoadSpriteFromFile(path + "/slide.png");
         Slide_Each = SpriteLoader.LoadSpriteFromFile(path + "/slide_each.png");
@@ -92,37 +108,28 @@ public class CustomSkin : MonoBehaviour
             Wifi_Break[i] = SpriteLoader.LoadSpriteFromFile(path + "/wifi_break_" + i + ".png");
         }
 
-        Star = SpriteLoader.LoadSpriteFromFile(path + "/star.png");
-        Star_Double = SpriteLoader.LoadSpriteFromFile(path + "/star_double.png");
-        Star_Each = SpriteLoader.LoadSpriteFromFile(path + "/star_each.png");
-        Star_Each_Double = SpriteLoader.LoadSpriteFromFile(path + "/star_each_double.png");
-        Star_Break = SpriteLoader.LoadSpriteFromFile(path + "/star_break.png");
-        Star_Break_Double = SpriteLoader.LoadSpriteFromFile(path + "/star_break_double.png");
-        Star_Ex = SpriteLoader.LoadSpriteFromFile(path + "/star_ex.png");
-        Star_Ex_Double = SpriteLoader.LoadSpriteFromFile(path + "/star_ex_double.png");
+        Star = pinkStar
+            ? LoadVariantPart(starPath, path, "star_pink.png", "star.png")
+            : LoadPart(starPath, path, "star.png");
+        Star_Double = pinkStar
+            ? LoadVariantPart(starPath, path, "star_pink_double.png", "star_double.png")
+            : LoadPart(starPath, path, "star_double.png");
+        Star_Each = LoadPart(starPath, path, "star_each.png");
+        Star_Each_Double = LoadPart(starPath, path, "star_each_double.png");
+        Star_Break = LoadPart(starPath, path, "star_break.png");
+        Star_Break_Double = LoadPart(starPath, path, "star_break_double.png");
+        Star_Ex = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "star_ex.png"));
+        Star_Ex_Double = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "star_ex_double.png"));
 
         var border = new Vector4(0, 58, 0, 58);
-        Hold = SpriteLoader.LoadSpriteFromFile(path + "/hold.png", border);        
-        Hold_Each = SpriteLoader.LoadSpriteFromFile(path + "/hold_each.png", border);
-        Hold_Each_On = SpriteLoader.LoadSpriteFromFile(path + "/hold_each_on.png", border);
-        Hold_Ex = SpriteLoader.LoadSpriteFromFile(path + "/hold_ex.png", border);
-        Hold_Break = SpriteLoader.LoadSpriteFromFile(path + "/hold_break.png", border);
-        Hold_Break_On = SpriteLoader.LoadSpriteFromFile(path + "/hold_break_on.png", border);
-
-        if (File.Exists(Path.Combine(path, "hold_on.png")))
-            Hold_On = SpriteLoader.LoadSpriteFromFile(path + "/hold_on.png", border);
-        else
-            Hold_On = Hold;
-        Hold_Off = SpriteLoader.LoadSpriteFromFile(path + "/hold_off.png", border);
-        if (File.Exists(Path.Combine(path, "hold_each_on.png")))
-            Hold_Each_On = SpriteLoader.LoadSpriteFromFile(path + "/hold_each_on.png", border);
-        else
-            Hold_Each_On = Hold_Each;
-
-        if (File.Exists(Path.Combine(path, "hold_break_on.png")))
-            Hold_Break_On = SpriteLoader.LoadSpriteFromFile(path + "/hold_break_on.png", border);
-        else
-            Hold_Break_On = Hold_Break;
+        Hold = LoadPart(holdPath, path, "hold.png", border);
+        Hold_Each = LoadPart(holdPath, path, "hold_each.png", border);
+        Hold_Ex = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "hold_ex.png"), border);
+        Hold_Break = LoadPart(holdPath, path, "hold_break.png", border);
+        Hold_On = LoadOptionalPart(holdPath, path, "hold_on.png", border, Hold);
+        Hold_Off = LoadPart(holdPath, path, "hold_off.png", border);
+        Hold_Each_On = LoadOptionalPart(holdPath, path, "hold_each_on.png", border, Hold_Each);
+        Hold_Break_On = LoadOptionalPart(holdPath, path, "hold_break_on.png", border, Hold_Break);
 
         Just[0] = SpriteLoader.LoadSpriteFromFile(path + "/just_curv_r.png");
         Just[1] = SpriteLoader.LoadSpriteFromFile(path + "/just_str_r.png");
@@ -191,7 +198,77 @@ public class CustomSkin : MonoBehaviour
         for (var i = 0; i < 4; i++) TouchHold[i] = SpriteLoader.LoadSpriteFromFile(path + "/touchhold_" + i + ".png");
         TouchHold[4] = SpriteLoader.LoadSpriteFromFile(path + "/touchhold_border.png");
 
-        Debug.Log(test);
+        // Third-party skins without break sprites use their normal sprites.
+        Touch_Break = LoadOrFallback(path + "/touch_break.png", Touch);
+        TouchPoint_Break = LoadOrFallback(path + "/touch_point_break.png", TouchPoint);
+        for (var i = 0; i < 4; i++)
+            TouchHold_Break[i] = LoadOrFallback(path + "/touchhold_break_" + i + ".png", TouchHold[i]);
+        TouchHold_Break[4] = LoadOrFallback(path + "/touchhold_break_border.png", TouchHold[4]);
+
+    }
+
+    private static Sprite LoadOrFallback(string filePath, Sprite fallback)
+        => File.Exists(filePath) ? SpriteLoader.LoadSpriteFromFile(filePath) : fallback;
+
+    private static Sprite LoadPart(string primaryPath, string fallbackPath, string fileName)
+    {
+        var primary = Path.Combine(primaryPath, fileName);
+        return SpriteLoader.LoadSpriteFromFile(File.Exists(primary)
+            ? primary
+            : Path.Combine(fallbackPath, fileName));
+    }
+
+    private static Sprite LoadVariantPart(string primaryPath, string fallbackPath, string variantFileName,
+        string defaultFileName)
+    {
+        var primaryVariant = Path.Combine(primaryPath, variantFileName);
+        if (File.Exists(primaryVariant))
+            return SpriteLoader.LoadSpriteFromFile(primaryVariant);
+
+        var fallbackVariant = Path.Combine(fallbackPath, variantFileName);
+        return File.Exists(fallbackVariant)
+            ? SpriteLoader.LoadSpriteFromFile(fallbackVariant)
+            : LoadPart(primaryPath, fallbackPath, defaultFileName);
+    }
+
+    private static Sprite LoadPart(string primaryPath, string fallbackPath, string fileName, Vector4 border)
+    {
+        var primary = Path.Combine(primaryPath, fileName);
+        return SpriteLoader.LoadSpriteFromFile(File.Exists(primary)
+            ? primary
+            : Path.Combine(fallbackPath, fileName), border);
+    }
+
+    private static Sprite LoadOptionalPart(string primaryPath, string fallbackPath, string fileName,
+        Vector4 border, Sprite fallback)
+    {
+        var primary = Path.Combine(primaryPath, fileName);
+        if (File.Exists(primary))
+            return SpriteLoader.LoadSpriteFromFile(primary, border);
+        var secondary = Path.Combine(fallbackPath, fileName);
+        return File.Exists(secondary) ? SpriteLoader.LoadSpriteFromFile(secondary, border) : fallback;
+    }
+
+    private static string ResolvePartPath(string root, string skinName, string fallbackPath)
+    {
+        if (string.IsNullOrWhiteSpace(skinName))
+            return fallbackPath;
+        var candidate = Path.Combine(root, SanitizeSkinName(skinName));
+        return Directory.Exists(candidate) ? candidate : fallbackPath;
+    }
+
+    private static bool TryGetPinkStarBase(string skinName, out string baseSkinName)
+    {
+        const string suffix = "-pink";
+        if (!string.IsNullOrWhiteSpace(skinName) &&
+            skinName.EndsWith(suffix, System.StringComparison.OrdinalIgnoreCase))
+        {
+            baseSkinName = skinName.Substring(0, skinName.Length - suffix.Length);
+            return !string.IsNullOrWhiteSpace(baseSkinName);
+        }
+
+        baseSkinName = skinName;
+        return false;
     }
 
     private static string SanitizeSkinName(string skinName)
@@ -204,4 +281,5 @@ public class CustomSkin : MonoBehaviour
             skinName = skinName.Replace(invalid.ToString(), "");
         return string.IsNullOrWhiteSpace(skinName) ? "dx" : skinName;
     }
+
 }
