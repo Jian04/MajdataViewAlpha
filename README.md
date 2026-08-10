@@ -7,7 +7,7 @@ MajdataViewAlpha 是面向 maimai / 舞萌谱面制作、预览与视频导出�
 
 项目地址：<https://github.com/Jian04/MajdataViewAlpha>
 
-## v0.4.2 更新（相对 v0.4.1）
+## v0.4.2 更新（相对 v0.4.0）
 
 ### Edit 与媒体时间线
 
@@ -230,6 +230,7 @@ dotnet build .\MajdataLauncher\MajdataLauncher.csproj -c Release
 ## 已知问题
 
 - D 区 Tap 使用星星或与星星 Slide 组合时，可能出现未知的显示或判定表现。
+- 部分 View 背景样式下，D 区音符可能不显示。
 
 ## 致谢与许可
 
