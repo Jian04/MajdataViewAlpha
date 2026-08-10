@@ -7,7 +7,7 @@ MajdataViewAlpha 是面向 maimai / 舞萌谱面制作、预览与视频导出�
 
 项目地址：<https://github.com/Jian04/MajdataViewAlpha>
 
-## v0.4.2 更新（相对 v0.4.1）
+## v0.4.2 更新
 
 ### Edit 与媒体时间线
 
