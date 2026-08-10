@@ -239,5 +239,6 @@ dotnet build .\MajdataLauncher\MajdataLauncher.csproj -c Release
 - 配置库谱面来源：[Maichart-Converts](https://github.com/Neskol/Maichart-Converts)
 - Simai：Celeca
 - Hanabi 特效：青山散人
+- 仿官谱歌曲封面制作：筱崎文音
 
 本项目遵循 GPL-3.0，与原版保持一致。谱面、音乐、图片、视频及其他素材版权归各自权利人所有。
