@@ -7,6 +7,27 @@ MajdataViewAlpha 是面向 maimai / 舞萌谱面制作、预览与视频导出�
 
 项目地址：<https://github.com/Jian04/MajdataViewAlpha>
 
+## v0.5.3 更新（相对 v0.4.2）
+
+### Touch Slide 与 SlideCode
+
+- 对照 AstroDX / SimaiSharp 重新核对 Touch Slide 的位置解析、`<`、`>`、`^`、`v`、`V`、`p/q` 与 D/E 区连接方向，修正同点弧线、端点切线和路径采样。
+- 新增 Touch Slide 的多段路径、无头、Break 头、TouchHold 与 A/B/C/D/E 区互连支持，并将 Touch Slide 纳入语法错误检查、补全和语法帮助。
+- 迁移 SlideCode 的节点、内外圈、切线、轨道转移、终点判定路由和终点特效位置；保留 Alpha 的 Unity 绘制与判定适配。
+- 增加 SlideCode / Touch Slide 几何与判定回归测试，覆盖正常路径、边界路径和大量非法输入，避免解析异常直接阻塞播放。
+
+### 编辑器与性能
+
+- 将 Alpha 命令提示、语法着色、错误定位、格式刷、音符流合并、节奏型检索和媒体时间线逻辑整理为可独立维护的模块。
+- 对长谱面播放、Slide / Touch Slide 路径、判定区查找和波形相关更新减少重复分配与重复计算，降低首次播放和密集谱面卡顿风险。
+- 更新中英文日文语法帮助，补充 `BOUNCE`、`FAKE`、`DESTROY`、`COLORV`、`SIZEV`、`ALPHAV`、Touch Slide、SlideCode 与音符流示例。
+- 保留与 4.4.0 播放、暂停、拖动、音效和媒体时间线的兼容处理，并加强异常音符和不完整输入的容错。
+
+### 兼容边界
+
+- Touch Slide 当前重点覆盖 Alpha 已支持的基础路径和 D/E 区扩展；AstroDX 中的 `s/z/w` 特殊路径、逐段 `#` 延迟以及部分逐段时长语义仍不宣称完全兼容。
+- SlideCode 的路径几何、判定转移表和终点位置已按 MajdataPlay 对齐，但 Unity 侧的箭头采样和生命周期仍由 Alpha 自己管理。
+
 ## v0.4.2 更新（相对 v0.4.0）
 
 ### Edit 与媒体时间线
@@ -15,14 +36,15 @@ MajdataViewAlpha 是面向 maimai / 舞萌谱面制作、预览与视频导出�
 - 修复编辑器宽度变化时波形图视野不同步、光标落在下一时间格以及暂停后媒体丢失等问题。
 - 完善双视频轨、双音频轨媒体时间线：点击仅选中片段，拖动时才应用拍线吸附；支持切割、删除、撤销、续编和与主波形同步预览。
 - 媒体导出支持手动选择分辨率、帧率与码率，也可使用智能策略优先保持 30 FPS，并逐步调整分辨率和码率至 20 MB 以内；音频可选是否转换为 44100 Hz。
-- 新增可重叠音符流 `@{分拍}...`，用于在不推进主谱时间的情况下叠加另一条音符序列。
+- 新增可重叠音符流 `@{分拍}...` 与跨行写法 `@* ... *@`；编辑区右键可将音符流按精确时间合并回主谱。
 - 补全 Alpha 命令提示和语法帮助，新增 `BOUNCE`、Touch Slide、Break Touch / TouchHold 的签名、参数和示例。
 
 ### Alpha 语法与音符
 
 - 新增 `BOUNCE`：让 Tap、Star、Each 与 Hold 从判定线运动到指定出生半径后回落；支持秒数、拍长、按音符类型设置和 `NULL` 恢复。
-- `SV`、`HS`、`SPAWN`、`SIZE` 等命令支持按音符类型单独设置；全局 `SIZE` 不再缩放 Slide 轨迹，需使用 `slide=` 显式调整。
+- `SV`、`HS`、`SPAWN`、`SIZE` 等命令支持按音符类型单独设置；Slide 轨迹使用 `SV*slide` 控制运动，`HS*slide` 仅覆盖运动星渐入速度，视觉命令可用 `star`、`slidestar`、`slide` 分别控制星形头、运动星和轨迹。
 - 新增 Touch Slide，支持普通键与 A/B/C/D/E Touch 区互连、连续路径、无头以及 Break 头 / Break 轨迹，例如 `1d-E5[8:1]`、`A1<A3<A5[8:1]`、`A1b-A2b[8:1]`。
+- Touch Slide 可用连续同向的 `<` 或 `>` 生成等距螺旋：`A1<<E5[8:1]` 绕一圈后进入 E5，`A1<<<E5[8:1]` 绕两圈后进入 E5。该多圈写法不适用于普通数字 Slide，也不支持混合方向符号。
 - 完善 D 区 Tap、Hold 与 Slide。D 区 `s/z` 保留原版中段判定路线，只重新连接 D 区头尾；D 区端点同时接入 Touch Slide 的绘制和传感器判定。
 - 修正 D 区直线、圆弧、`p/q`、`pp/qq` 等路径的间距、切线衔接、星星方向和终点判定特效位置。
 - `PVOVERLAY` 支持图片或视频替换当前 PV，并可在连续覆盖之间进行渐变。
@@ -122,7 +144,7 @@ Alpha 命令写在谱面时间线中：
 
 命令分为四类：
 
-- 音符：`SV`、`HS`、`SPAWN`、`BOUNCE`、`COLOR`、`SIZE`、`ALPHA`
+- 音符：`SV`、`HS`、`SPAWN`、`SPAWNMODE`、`DESTROY`、`BOUNCE`、`FAKE`、`COLOR/COLORV`、`SIZE/SIZEV`、`ALPHA/ALPHAV`
 - 显示：`JLINE`、`TEXT`、显示开关、`ComboDisplay`、内外圈亮度
 - 滤镜：Gaussian、Neon、Trail、Fade、Flash、Brightness、Saturation、Contrast、Rainbow、Vignette、Zoom、Glitch、TVNoise、Hue、Tint、Move、Rotate、Shake
 - 媒体：`AUDIO`、`PVOVERLAY`
@@ -156,7 +178,13 @@ Alpha 命令写在谱面时间线中：
 - `@RRGGBB` / `@NULL`：编辑区分段背景色。
 - `m`：Mine。
 - `d`：D 区。
-- Touch Slide：普通键与 A/B/C/D/E Touch 区之间的直线或圆弧 Slide，必须填写时长。
+- `x`：EX 音符或 Slide 头；`f`：击打烟花。
+- `$` / `$$`：不旋转 / 固定速度旋转的星形 TAP。
+- `?` / `!`：无头 Slide；`?` 保留运动星淡入，`!` 在开始移动时直接显示。
+- `b`：Break；在 Slide 中头和轨迹的修饰位置分别生效。
+- Touch Slide：普通键与 A/B/C/D/E Touch 区之间的直线、圆弧或多圈等距螺旋 Slide，必须填写时长；多圈仅支持连续同向的 `<` 或 `>`。
+- 大 `P/Q` Touch Slide：`1P35[8:1]` 绕 3 号侧边圈后切线进入 5，`1P3E5Q0A5[8:1]` 可继续连接中央圈；`0` 是中央圈、`1-8` 是侧边圈、`9` 是最外圈。
+- SlideCode：`5Q9A1P98CQ49K5[8:1]` 使用 `A/B/C` 节点、`P/Q` 顺逆时针轨道和末尾 `K` 终点组合连续轨迹；同一指令可连续写多个参数，例如 `A357`、`P98`。
 - `rp` / `rq`：反向圆弧 Slide。
 
 ### 桌宠启动器
@@ -235,6 +263,8 @@ dotnet build .\MajdataLauncher\MajdataLauncher.csproj -c Release
 ## 致谢与许可
 
 - 原项目及原作者：[MajdataView / MajdataEdit](https://github.com/LingFeng-bbben/MajdataView)，bbben（LingFeng-bbben）
+- Touch Slide 圆弧方向参考 [AstroDX / SimaiSharp](https://github.com/reflektone-games/SimaiSharp/blob/5ef06f91ffdcc77d494baba46d2df4c8d67ca1d6/SimaiSharp/src/Internal/SyntacticAnalysis/Deserializer.cs)；多圈螺旋等扩展不代表 AstroDX 全语法兼容。
+- SlideCode 判定区阈值、转移表与终点特效位置参考 [MajdataPlay](https://github.com/TeamMajdata/MajdataPlay/tree/c3423a4bba536e53921e8fdedab2b9d91121b393/Assets/Scripts/Scenes/Game/Misc/Parsing)（GPL-3.0）。
 - 自动踩音：[Maicaiyin](https://github.com/Jian04/Maicaiyin)
 - 配置库 / 节奏型检索：[MaiChartAssistant](https://github.com/Jian04/MaiChartAssistant)
 - 配置库谱面来源：[Maichart-Converts](https://github.com/Neskol/Maichart-Converts)

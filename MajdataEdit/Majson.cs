@@ -1,4 +1,6 @@
-﻿namespace MajdataEdit;
+using MajdataCore;
+
+namespace MajdataEdit;
 
 internal class Majson
 {
@@ -12,11 +14,16 @@ internal class Majson
     public List<SimaiTimingPoint> timingList = new();
     public string title = "default";
     public string wholeBpm = "";
+    public string utageLabel = "宴";
+    public bool utageCoop;
     // ALPHA: true SV table
     public List<SvPoint> svTable = new();
     public List<SpeedChange> hsTable = new();
     public List<SpawnChange> spawnTable = new();
+    public List<SpawnModeChange> spawnModeTable = new();
     public List<BounceChange> bounceTable = new();
+    public List<DestroyChange> destroyTable = new();
+    public List<FakeChange> fakeTable = new();
     // ALPHA: mid-chart note color change events
     public List<ColorChange> colorTable = new();
     // ALPHA: mid-chart note size change events
@@ -32,6 +39,8 @@ internal class Majson
 internal class SvPoint
 {
     public double time;
+    public int sourcePosition;
+    public int streamIndex;
     public float multiplier;
     public string? noteType;
     public bool reset;
@@ -40,15 +49,30 @@ internal class SvPoint
 internal class SpeedChange
 {
     public double time;
+    public int sourcePosition;
+    public int streamIndex;
     public string? noteType;
     public float multiplier = 1f;
+    public bool reset;
 }
 
 internal class SpawnChange
 {
     public double time;
+    public int sourcePosition;
+    public int streamIndex;
     public string? noteType;
     public float radius = 1.225f;
+    public bool reset;
+}
+
+internal class SpawnModeChange
+{
+    public double time;
+    public int sourcePosition;
+    public int streamIndex;
+    public string? noteType;
+    public SpawnVisualMode mode = SpawnVisualMode.Rewind;
     public bool reset;
 }
 
@@ -57,27 +81,38 @@ internal class SpawnChange
 internal class ColorChange
 {
     public double time;
+    public int sourcePosition;
+    public int streamIndex;
     public string noteType = string.Empty;
     public string color = string.Empty;
     public float duration;
+    public bool live;
 }
 
 /// <summary>A timed note scale override.</summary>
 internal class SizeChange
 {
     public double time;
+    public int sourcePosition;
+    public int streamIndex;
     public string? noteType;
     public float scale;
     public float scaleX;
     public float scaleY;
+    public bool reset;
+    public bool live;
 }
 
 /// <summary>A timed note opacity override.</summary>
 internal class AlphaChange
 {
     public double time;
+    public int sourcePosition;
+    public int streamIndex;
     public string? noteType;
     public float alpha;
+    public bool reset;
+    public bool live;
 }
 
 internal class DisplayChange
@@ -93,6 +128,16 @@ internal class SubtitleChange
     public double time;
     public string text = "";
     public float duration = -1f;
+    // Left edge and top edge as a fraction of the screen, on top of the margin a
+    // caption has always had, so a caption that asks for neither lands exactly
+    // where captions have always landed. Zero point size means the same.
+    public float x;
+    public float y;
+    public float size;
+    public string font = "";
+    public int index;
+    public string style = "Fade";
+    public float transition;
 }
 
 internal class EffectChange
@@ -130,13 +175,36 @@ internal class MediaChange
 internal class BounceChange
 {
     public double time;
+    public int sourcePosition;
+    public int streamIndex;
     public string? noteType;
     public float duration;
     public bool reset;
 }
 
+internal class DestroyChange
+{
+    public double time;
+    public int sourcePosition;
+    public int streamIndex;
+    public string? noteType;
+    public float radius = 4.8f;
+    public bool reset;
+}
+
+internal class FakeChange
+{
+    public double time;
+    public int sourcePosition;
+    public int streamIndex;
+    public string? noteType;
+    public bool enabled;
+    public bool reset;
+}
+
 internal class EditRequestjson
 {
+    public int protocolVersion = 1;
     public string language = "en-US";
     public float audioSpeed;
     public float mediaAudioVolume = 1f;
@@ -144,10 +212,12 @@ internal class EditRequestjson
     public float innerBackgroundCover;
     public float outerBackgroundCover;
     public int backgroundFitMode;
+    public bool clipBackgroundToRing;
     public bool showJudgeInfo;
     public bool showComboInfo;
     public bool showJudgeLine = true;
     public bool showJudgeText = true;
+    public bool showMineHitFeedback = true;
     // ALPHA: Judgment-area overlay toggle. Forced off whenever showJudgeLine is off (see MainWindowCore).
     public bool showJudgeArea = false;
     public EditorComboIndicator comboStatusType;
@@ -169,6 +239,7 @@ internal class EditRequestjson
     public string introBgTheme = "default";
     public int songDetailStyle = 0;
     public bool previewFlow;
+    public bool deferPlaybackStart;
     public float previewTimelineTime;
     public bool showSongDetail = true;
     public bool showAllPerfect = true;
@@ -219,7 +290,9 @@ internal enum EditorControlMethod
     Continue,
     Record,
     SetDisplay,
-    Preview
+    Preview,
+    TimelinePreview,
+    Seek
 }
 
 //this setting is per maidata
@@ -233,6 +306,7 @@ internal class MajSetting
     public float Ex_Level = 0.7f;
     public float Hanabi_Level = 0.7f;
     public float Judge_Level = 0.7f;
+    public float Mine_Level = 0.7f;
     public int lastEditDiff;
     public double lastEditTime;
     public float Slide_Level = 0.7f;
@@ -250,11 +324,18 @@ public class EditorSetting
     public bool ShowComboInfo = true;
     public bool ShowJudgeLine = true;
     public bool ShowJudgeText = true;
+    public bool ShowMineHitFeedback = true;
+    // Keeps the background inside the play circle, so raising the outer
+    // brightness no longer uncovers the four corners of the picture while the
+    // notes out there stay visible.
+    public bool ClipBackgroundToRing;
     public bool ShowJudgeArea = true;
     public bool ShowSongDetail = true;
     public bool ShowAllPerfect = true;
     public bool ShowGeneratedMark = true;
     public int SongDetailStyle = 1;
+    public string RecordUtageLabel = "\u5bb4";
+    public bool RecordUtageCoop;
     public string Skin = "dx";
     public string TapSkin = "dx";
     public string HoldSkin = "dx";
@@ -271,6 +352,7 @@ public class EditorSetting
     public float Default_Ex_Level = 0.7f;
     public float Default_Hanabi_Level = 0.7f;
     public float Default_Judge_Level = 0.7f;
+    public float Default_Mine_Level = 0.7f;
     public float Default_Slide_Level = 0.7f;
     public float Default_Touch_Level = 0.7f;
     public float DefaultSlideAccuracy = 0.2f;
@@ -282,7 +364,7 @@ public class EditorSetting
     public bool EditorLightTheme = false;
     public string EditorTheme = ThemeManager.DefaultTheme;
     // Editor window decoration: "default" (theme solid color), "circleplus" (Japanese site animation), or "circle" (international site animation).
-    public string EditorBackgroundStyle = "circleplus";
+    public string EditorBackgroundStyle = "default";
     // View intro transition background: "default" (original pink-purple), "circleplus", or "circle".
     public string ViewIntroStyle = "circleplus";
     public string IncreasePlaybackSpeedKey = "Ctrl+p";

@@ -108,6 +108,9 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         titleText = title;
         artistText = artist;
         designerText = designer;
+        LoadFonts();
+        if (designerText != null && regularFont != null)
+            designerText.font = regularFont;
         CaptureOriginal();
 
         if (TryApplyCachedCard(data))
@@ -571,7 +574,9 @@ public sealed class SongDetailTemplateView : MonoBehaviour
                       Resources.Load<Font>("Fonts/helveticanowtext-black") ?? titleFont;
         regularFont ??= Resources.Load<Font>("Fonts/Aileron-Regular") ??
                          Resources.Load<Font>("Fonts/helveticanowtext-black") ??
-                         Font.CreateDynamicFontFromOSFont(new[] { "Segoe UI", "Arial" }, 32);
+                         Font.CreateDynamicFontFromOSFont(
+                             new[] { "Segoe UI", "Microsoft YaHei UI", "Arial" }, 32) ??
+                         bodyFont;
     }
 
     private void EnsureTemplateLayers(Majson data)

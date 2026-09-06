@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
@@ -37,6 +37,7 @@ public partial class SoundSetting : Window
         SliderValueBindingMap.Add(EX_Slider, EX_Value);
         SliderValueBindingMap.Add(Touch_Slider, Touch_Value);
         SliderValueBindingMap.Add(Hanabi_Slider, Hanabi_Value);
+        SliderValueBindingMap.Add(Mine_Slider, Mine_Value);
 
         SetSlider(BGM_Slider, MainWindow.bgmStream, MainWindow.trackStartStream, MainWindow.allperfectStream,
             MainWindow.clockStream);
@@ -48,6 +49,7 @@ public partial class SoundSetting : Window
         SetSlider(EX_Slider, MainWindow.judgeExStream);
         SetSlider(Touch_Slider, MainWindow.touchStream);
         SetSlider(Hanabi_Slider, MainWindow.hanabiStream, MainWindow.holdRiserStream);
+        SetMineSlider();
 
         UpdateLevelTimer.AutoReset = true;
         UpdateLevelTimer.Elapsed += UpdateLevelTimer_Elapsed;
@@ -68,6 +70,7 @@ public partial class SoundSetting : Window
             UpdateProgressBar(EX_Level, MainWindow.judgeExStream);
             UpdateProgressBar(Touch_Level, MainWindow.touchStream);
             UpdateProgressBar(Hanabi_Level, MainWindow.hanabiStream, MainWindow.holdRiserStream);
+            UpdateProgressBar(Mine_Level, MainWindow.MineSoundStreams.ToArray());
         });
     }
 
@@ -101,11 +104,23 @@ public partial class SoundSetting : Window
             var sld = (Slider)sender;
             foreach (var channel in channels)
                 Bass.BASS_ChannelSetAttribute(channel, BASSAttribute.BASS_ATTRIB_VOL, (float)sld.Value);
+            MainWindow.SetMineVolume(MainWindow.MineVolume);
 
             SliderValueBindingMap[sld].Content = sld.Value.ToString("P0");
         }
 
         slider.ValueChanged += Slider_ValueChanged;
+    }
+
+    private void SetMineSlider()
+    {
+        Mine_Slider.Value = MainWindow.MineVolume;
+        Mine_Value.Content = Mine_Slider.Value.ToString("P0");
+        Mine_Slider.ValueChanged += (_, args) =>
+        {
+            MainWindow.SetMineVolume((float)args.NewValue);
+            Mine_Value.Content = args.NewValue.ToString("P0");
+        };
     }
 
     private void SoundSettingWindow_Closing(object sender, CancelEventArgs e)
@@ -134,6 +149,7 @@ public partial class SoundSetting : Window
             ref MainWindow.editorSetting!.Default_Touch_Level);
         Bass.BASS_ChannelGetAttribute(MainWindow.hanabiStream, BASSAttribute.BASS_ATTRIB_VOL,
             ref MainWindow.editorSetting!.Default_Hanabi_Level);
+        MainWindow.editorSetting!.Default_Mine_Level = MainWindow.MineVolume;
         MainWindow.SaveEditorSetting();
         MessageBox.Show(MainWindow.GetLocalizedString("SetVolumeDefaultSuccess"));
     }
@@ -149,5 +165,6 @@ public partial class SoundSetting : Window
         EX_Slider.Value = MainWindow.editorSetting!.Default_Ex_Level;
         Touch_Slider.Value = MainWindow.editorSetting!.Default_Touch_Level;
         Hanabi_Slider.Value = MainWindow.editorSetting!.Default_Hanabi_Level;
+        Mine_Slider.Value = MainWindow.editorSetting!.Default_Mine_Level;
     }
 }

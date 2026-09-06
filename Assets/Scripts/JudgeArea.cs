@@ -86,8 +86,9 @@ public class JudgeArea
     }
     public int SlideIndex { get; set; }
     List<Area> areas = new();
+    private SensorType[] sensorTypes;
     public Area[] GetAreas() => areas.ToArray();
-    public SensorType[] GetSensorTypes() => areas.Select(x => x.Type).ToArray();
+    public SensorType[] GetSensorTypes() => sensorTypes ??= areas.Select(x => x.Type).ToArray();
     public JudgeArea(Dictionary<SensorType,bool> types, int slideIndex)
     {
         SlideIndex = slideIndex;
@@ -115,18 +116,18 @@ public class JudgeArea
     }
     public void Judge(SensorType type ,SensorStatus status)
     {
-        var areaList = areas.Where(x => x.Type == type);
-
-        if (areaList.Count() == 0)
-            return;
-
-        var area = areaList.First();
-        area.Judge(status);
+        foreach (var area in areas)
+            if (area.Type == type)
+            {
+                area.Judge(status);
+                return;
+            }
     }
     public void AddArea(SensorType type, bool isLast = false)
     {
         if (areas.Any(x => x.Type == type))
             return;
+        sensorTypes = null;
         areas.Add(new Area()
         {
             Type = type,

@@ -1,8 +1,8 @@
 using System.Text;
 
-namespace MajdataEdit;
+namespace Baseline042;
 
-internal static class AlphaCommandBoundary
+public static class AlphaCommandBoundary
 {
     public static bool IsPotentialStart(string text, int openIndex)
     {

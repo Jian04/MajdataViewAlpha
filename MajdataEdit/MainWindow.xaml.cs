@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -15,7 +15,6 @@ using MajdataEdit.AutoSaveModule;
 using MajdataEdit.Editor;
 using Microsoft.Win32;
 using Un4seen.Bass;
-using MajdataEdit.SyntaxModule;
 using Timer = System.Timers.Timer;
 
 namespace MajdataEdit;
@@ -253,29 +252,53 @@ public partial class MainWindow : Window
                 return;
             }
 
-        var process = Process.GetProcessesByName("MajdataView");
-        if (process.Length > 0)
+        var viewProcesses = Process.GetProcessesByName("MajdataView");
+        var closeView = false;
+        if (viewProcesses.Length > 0)
         {
-            var result = MessageBox.Show(GetLocalizedString("AskCloseView"), GetLocalizedString("Attention"),
-                MessageBoxButton.YesNo);
-            if (result == MessageBoxResult.Yes)
-                process[0].Kill();
+            var result = MessageBox.Show(
+                GetLocalizedString("AskCloseView"),
+                GetLocalizedString("Attention"),
+                MessageBoxButton.YesNoCancel);
+            if (result == MessageBoxResult.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+            closeView = result == MessageBoxResult.Yes;
         }
 
-        var petProcess = Process.GetProcessesByName("MajdataLauncher");
-        if (petProcess.Length > 0)
+        var petProcesses = Process.GetProcessesByName("MajdataLauncher");
+        var closePet = false;
+        if (petProcesses.Length > 0)
         {
-            var petResult = MessageBox.Show(GetLocalizedString("AskExitPet"), GetLocalizedString("Attention"),
-                MessageBoxButton.YesNo);
-            if (petResult == MessageBoxResult.Yes)
-                foreach (var pet in petProcess)
-                    pet.Kill();
+            var result = MessageBox.Show(
+                GetLocalizedString("AskExitPet"),
+                GetLocalizedString("Attention"),
+                MessageBoxButton.YesNoCancel);
+            if (result == MessageBoxResult.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+            closePet = result == MessageBoxResult.Yes;
         }
 
+        // Everything that talks to View has to go quiet before View is killed,
+        // otherwise a preview tick fires into a closed port and the user sees a
+        // "connection refused" box on the way out.
+        WebControl.IsShuttingDown = true;
         currentTimeRefreshTimer.Stop();
         StopVisualEditBridge();
         notePreviewTimer.Stop();
         visualEffectRefreshTimer.Stop();
+
+        if (closeView)
+            foreach (var view in viewProcesses)
+                view.Kill();
+        if (closePet)
+            foreach (var pet in petProcesses)
+                pet.Kill();
 
         soundSetting.Close();
         //if (bpmtap != null) { bpmtap.Close(); }
@@ -521,15 +544,26 @@ public partial class MainWindow : Window
     private void FormatBrush32_MenuItem_Click(object? sender, RoutedEventArgs e)
         => ApplyBeatFormatBrush(32);
 
+    private void FormatBrush384_MenuItem_Click(object? sender, RoutedEventArgs e)
+        => ApplyBeatFormatBrush(384);
+
     private void ApplyBeatFormatBrush(int? targetBeat)
     {
+        var text = fumenEditor.Text;
         if (!fumenEditor.HasSelection)
+        {
+            var wholeChart = BeatFormatBrush.Transform(text, targetBeat);
+            if (!string.Equals(text, wholeChart, StringComparison.Ordinal))
+                fumenEditor.Text = wholeChart;
             return;
+        }
 
         var selection = fumenEditor.Selection;
-        var original = fumenEditor.SelectedText;
+        var original = text.Substring(
+            Math.Clamp(selection.Start, 0, text.Length),
+            Math.Clamp(selection.Length, 0, Math.Max(0, text.Length - selection.Start)));
         var transformed = BeatFormatBrush.TransformSelection(
-            fumenEditor.Text, selection.Start, selection.Length, targetBeat);
+            text, selection.Start, selection.Length, targetBeat);
         if (!string.Equals(original, transformed, StringComparison.Ordinal))
             fumenEditor.ReplaceSelection(transformed);
     }
@@ -562,6 +596,41 @@ public partial class MainWindow : Window
 
         var window = new ChartLibraryWindow(query) { Owner = this };
         window.Show();
+    }
+
+    private void FumenContextMenu_Opened(object? sender, RoutedEventArgs e)
+    {
+        MergeNoteStreamsMenuItem.Visibility = NoteStreamMerger.CanMerge(
+            fumenEditor.Text, FumenContent.CaretOffset)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void MergeNoteStreams_MenuItem_Click(object? sender, RoutedEventArgs e)
+    {
+        if (!NoteStreamMerger.TryBuildMerge(
+                fumenEditor.Text,
+                FumenContent.CaretOffset,
+                out var start,
+                out var length,
+                out var replacement,
+                out var error))
+        {
+            MessageBox.Show(error, GetLocalizedString("MergeNoteStreams"));
+            return;
+        }
+
+        FumenContent.Document.BeginUpdate();
+        try
+        {
+            FumenContent.Document.Replace(start, length, replacement);
+            FumenContent.CaretOffset = start + replacement.Length;
+        }
+        finally
+        {
+            FumenContent.Document.EndUpdate();
+        }
+        FumenContent.Focus();
     }
 
     private async void MuriCheck_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -876,20 +945,21 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        var errList = SyntaxChecker.ErrorList;
-        errList.ForEach(e =>
+        // The same list the squiggles come from, so the window cannot show a chart
+        // as clean while the editor is underlining it. Positions are already
+        // zero-based, which is what SelectLineColumn expects.
+        foreach (var error in latestParseErrors)
         {
-            e.positionY--;
-            mcrWindow.errorPosition.Add(e);
+            mcrWindow.errorPosition.Add(new ErrorInfo(error.PositionX, error.PositionY));
             var eRow = new ListBoxItem
             {
-                Content = e.eMessage,
+                Content = error.Message,
                 Name = "rr" + mcrWindow.CheckResult_Listbox.Items.Count
             };
             eRow.AddHandler(PreviewMouseDoubleClickEvent,
                 new MouseButtonEventHandler(mcrWindow.ListBoxItem_PreviewMouseDoubleClick));
             mcrWindow.CheckResult_Listbox.Items.Add(eRow);
-        });
+        }
         mcrWindow.Show();
     }
     private void SyntaxCheckButton_Click(object sender, MouseButtonEventArgs e)
@@ -942,28 +1012,38 @@ public partial class MainWindow : Window
 
     #region Keyboard shortcuts
 
-    private void PlayAndPause_CanExecute(object? sender, CanExecuteRoutedEventArgs e) // Keyboard shortcut
+    // Every shortcut below does its work in Executed, where work belongs. They
+    // used to do it from CanExecute and never answer the question CanExecute was
+    // asking, so WPF concluded the command could not run: it ran the handler,
+    // then left the keystroke unclaimed for the editor to type out. That is where
+    // the stray "s" from Ctrl+S came from, and an "f" from Ctrl+F with it.
+    private void Shortcut_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = true;
+    }
+
+    private void PlayAndPause_Executed(object? sender, ExecutedRoutedEventArgs e) // Keyboard shortcut
     {
         TogglePlayAndStop();
     }
 
-    private void StopPlaying_CanExecute(object? sender, CanExecuteRoutedEventArgs e) // Keyboard shortcut
+    private void StopPlaying_Executed(object? sender, ExecutedRoutedEventArgs e) // Keyboard shortcut
     {
         TogglePlayAndPause();
     }
 
-    private void SaveFile_Command_CanExecute(object? sender, CanExecuteRoutedEventArgs e)
+    private void SaveFile_Command_Executed(object? sender, ExecutedRoutedEventArgs e)
     {
         SaveFumen(true);
         SystemSounds.Beep.Play();
     }
 
-    private void SendToView_CanExecute(object? sender, CanExecuteRoutedEventArgs e)
+    private void SendToView_Executed(object? sender, ExecutedRoutedEventArgs e)
     {
-        TogglePlayAndStop(PlayMethod.Op);
+        JumpToIntroAndPlay();
     }
 
-    private void IncreasePlaybackSpeed_CanExecute(object? sender, CanExecuteRoutedEventArgs e)
+    private void IncreasePlaybackSpeed_Executed(object? sender, ExecutedRoutedEventArgs e)
     {
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING) return;
         var speed = GetPlaybackSpeed();
@@ -976,7 +1056,7 @@ public partial class MainWindow : Window
         playbackSpeedHideTimer.Start();
     }
 
-    private void DecreasePlaybackSpeed_CanExecute(object? sender, CanExecuteRoutedEventArgs e)
+    private void DecreasePlaybackSpeed_Executed(object? sender, ExecutedRoutedEventArgs e)
     {
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING) return;
         var speed = GetPlaybackSpeed();
@@ -998,7 +1078,7 @@ public partial class MainWindow : Window
         ((Timer)sender!).Stop();
     }
 
-    private void FindCommand_CanExecute(object? sender, CanExecuteRoutedEventArgs e)
+    private void FindCommand_Executed(object? sender, ExecutedRoutedEventArgs e)
     {
         if (FindGrid.Visibility == Visibility.Collapsed)
         {
@@ -1011,27 +1091,27 @@ public partial class MainWindow : Window
         }
     }
 
-    private void MirrorLRCommand_CanExecute(object? sender, CanExecuteRoutedEventArgs e)
+    private void MirrorLRCommand_Executed(object? sender, ExecutedRoutedEventArgs e)
     {
         MirrorLeftRight_MenuItem_Click(sender, null);
     }
 
-    private void MirrorUDCommand_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+    private void MirrorUDCommand_Executed(object sender, ExecutedRoutedEventArgs e)
     {
         MirrorUpDown_MenuItem_Click(sender, null);
     }
 
-    private void Mirror180Command_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+    private void Mirror180Command_Executed(object sender, ExecutedRoutedEventArgs e)
     {
         Mirror180_MenuItem_Click(sender, null);
     }
 
-    private void Mirror45Command_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+    private void Mirror45Command_Executed(object sender, ExecutedRoutedEventArgs e)
     {
         Mirror45_MenuItem_Click(sender, null);
     }
 
-    private void MirrorCcw45Command_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+    private void MirrorCcw45Command_Executed(object sender, ExecutedRoutedEventArgs e)
     {
         MirrorCcw45_MenuItem_Click(sender, null);
     }
@@ -1069,6 +1149,7 @@ public partial class MainWindow : Window
             }
             return;
         }
+        ClearStoppedNotePreview();
         SetRawFumenText(SimaiProcess.fumens[i]);
         suppressLevelTextChange = true;
         try
@@ -1085,6 +1166,10 @@ public partial class MainWindow : Window
         chartParsePending = false;
         DrawWave();
         SyntaxCheck(false);
+        // A paused timeline preview keeps the previously loaded chart in View and
+        // only receives Seek afterwards, so the difficulty swap has to force a
+        // reload or View would keep showing the difficulty we just left.
+        QueueNotePreview(chartChanged: true);
         SchedulePreBakeSongDetail(); // Pre-bake the selected difficulty cover after switching difficulty.
     }
 
@@ -1092,10 +1177,11 @@ public partial class MainWindow : Window
     {
         if (isLoading || suppressLevelTextChange)
             return;
-        SetSavedState(false);
-        if (selectedDifficulty == -1) return;
+        if (selectedDifficulty == -1)
+            return;
         if (string.Equals(SimaiProcess.levels[selectedDifficulty], LevelTextBox.Text, StringComparison.Ordinal))
             return;
+        SetSavedState(false);
         SimaiProcess.levels[selectedDifficulty] = LevelTextBox.Text;
         InvalidateSongDetailCache(selectedDifficulty);
     }
@@ -1104,24 +1190,28 @@ public partial class MainWindow : Window
     {
         if (isLoading)
             return;
+        // An offset being typed is not an offset of zero: dropping to zero here
+        // moved the whole chart against its audio for as long as the box was
+        // half-written.
+        if (!SimaiProcess.TryReadOffset(OffsetTextBox.Text, out var offset))
+        {
+            SetSavedState(false);
+            return;
+        }
+        if (Math.Abs(SimaiProcess.first - offset) < 0.000001f)
+            return;
         SetSavedState(false);
-        try
-        {
-            SimaiProcess.first = float.Parse(OffsetTextBox.Text);
-            SimaiProcess.Serialize(GetRawFumenText());
-            DrawWave();
-        }
-        catch
-        {
-            SimaiProcess.first = 0f;
-        }
+        SimaiProcess.first = offset;
+        SimaiProcess.Serialize(GetRawFumenText());
+        DrawWave();
     }
 
     private void OffsetTextBox_MouseWheel(object sender, MouseWheelEventArgs e)
     {
-        var offset = float.Parse(OffsetTextBox.Text);
+        if (!SimaiProcess.TryReadOffset(OffsetTextBox.Text, out var offset))
+            offset = SimaiProcess.first;
         offset += e.Delta > 0 ? 0.01f : -0.01f;
-        OffsetTextBox.Text = offset.ToString();
+        OffsetTextBox.Text = offset.ToString(CultureInfo.InvariantCulture);
     }
 
     private void FollowPlayCheck_Click(object sender, RoutedEventArgs e)
@@ -1164,7 +1254,7 @@ public partial class MainWindow : Window
         RefreshSyntaxValidationSlot();
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING && (bool)FollowPlayCheck.IsChecked!)
             return;
-        var time = SimaiProcess.Serialize(GetRawFumenText(), GetRawFumenPosition());
+        var time = GetCaretTimingTime();
         NoteNowText.Content = (Math.Abs(time) - Math.Floor(Math.Abs(time)))
             .ToString(".0000", System.Globalization.CultureInfo.InvariantCulture);
 
@@ -1211,12 +1301,29 @@ public partial class MainWindow : Window
         QueueImmediateWaveRefresh();
         chartChangeTimer.Stop();
         chartChangeTimer.Start();
-        QueueNotePreview();
+        QueueNotePreview(chartChanged: true);
     }
 
 
     private void FumenContent_OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (Keyboard.Modifiers == ModifierKeys.Control &&
+            e.Key is Key.Up or Key.Down)
+        {
+            var current = FumenContent.Document.GetLineByOffset(FumenContent.CaretOffset);
+            var targetNumber = current.LineNumber + (e.Key == Key.Up ? -1 : 1);
+            if (targetNumber >= 1 && targetNumber <= FumenContent.Document.LineCount)
+            {
+                var target = FumenContent.Document.GetLineByNumber(targetNumber);
+                var column = FumenContent.CaretOffset - current.Offset;
+                FumenContent.CaretOffset = target.Offset + Math.Min(column, target.Length);
+                FumenContent.Select(FumenContent.CaretOffset, 0);
+                FumenContent.ScrollToLine(targetNumber);
+            }
+            e.Handled = true;
+            return;
+        }
+
         // Toggle overwrite mode when Insert is pressed without modifiers.
         if (e.Key == Key.Insert && Keyboard.Modifiers == ModifierKeys.None)
         {
@@ -1247,14 +1354,16 @@ public partial class MainWindow : Window
 
     private void MusicWave_MouseWheel(object sender, MouseWheelEventArgs e)
     {
-        ScrollWave(-e.Delta);
+        ScrollWave(-e.Delta, syncCaret: true);
     }
 
     private void MusicWave_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (isPlaying)
+            TogglePause();
         waveScrubActive = true;
         MusicWave.CaptureMouse();
-        lastMousePointX = e.GetPosition(this).X;
+        lastMousePointX = e.GetPosition(MusicWave).X;
     }
 
     private void MusicWave_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1262,6 +1371,12 @@ public partial class MainWindow : Window
         waveScrubActive = false;
         MusicWave.ReleaseMouseCapture();
         MediaTimelinePanel.SyncPlayhead(GetTimelinePosition());
+        if (GetTimelinePosition() >= 0d && GetTimelinePosition() <= songLength)
+        {
+            if (FollowPlayCheck.IsChecked == true)
+                fumenEditor.Focus();
+            SeekTextFromTime();
+        }
     }
 
     private void MusicWave_LostMouseCapture(object sender, MouseEventArgs e)
@@ -1273,19 +1388,18 @@ public partial class MainWindow : Window
     {
         if (e.LeftButton == MouseButtonState.Pressed)
         {
-            var delta = e.GetPosition(this).X - lastMousePointX;
-            lastMousePointX = e.GetPosition(this).X;
+            var delta = e.GetPosition(MusicWave).X - lastMousePointX;
+            lastMousePointX = e.GetPosition(MusicWave).X;
             ScrollWave(-delta);
         }
 
-        lastMousePointX = e.GetPosition(this).X;
+        lastMousePointX = e.GetPosition(MusicWave).X;
     }
 
     private void MusicWave_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        // Match 4.4.0: keep the time range and redraw it at the new pixel width.
-        // A wider editor therefore expands the waveform instead of cancelling the
-        // resize by changing the zoom range.
+        // Keep the visible duration symmetric around the playhead. Width changes
+        // therefore zoom the existing time window from either edge.
         QueueWaveResize();
     }
 

@@ -36,6 +36,32 @@ internal static class ThemeManager
     public static string ThemeDirectory =>
         Path.Combine(AppContext.BaseDirectory, "Themes");
 
+    /// <summary>
+    /// Themes are files anyone can add to the folder above, so "light" is the name
+    /// of one theme rather than a kind of theme. What the syntax colours, the
+    /// waveform pens and View's standby screen actually need to know is whether
+    /// they are drawing on a light surface, and the theme's own editor background
+    /// answers that for every theme instead of only for the two shipped ones.
+    /// </summary>
+    public static bool IsLight(EditorTheme? theme)
+    {
+        if (theme == null)
+            return false;
+        try
+        {
+            var color = (Color)ColorConverter.ConvertFromString(theme.editorBackground);
+            var luminance =
+                (0.2126 * color.R + 0.7152 * color.G + 0.0722 * color.B) / 255d;
+            return luminance > 0.5d;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static bool CurrentIsLight => IsLight(CurrentTheme);
+
     public static IReadOnlyList<EditorTheme> LoadThemes()
     {
         EnsureDefaultThemeFile();

@@ -80,13 +80,20 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(maidataDir) || !Directory.Exists(maidataDir))
             return;
 
+        var preservedPosition = MediaTimelinePanel.Visibility ==
+                                System.Windows.Visibility.Visible
+            ? MediaTimelinePanel.CurrentPlayhead
+            : GetTimelinePosition();
         var generation = Interlocked.Increment(ref timelineAudioBuildGeneration);
         var task = MediaTools.BuildTimelineAudioAsync(maidataDir);
         timelineAudioBuildTask = task;
-        _ = ApplyTimelineAudioBuildAsync(task, generation);
+        _ = ApplyTimelineAudioBuildAsync(task, generation, preservedPosition);
     }
 
-    private async Task ApplyTimelineAudioBuildAsync(Task<string?> task, int generation)
+    private async Task ApplyTimelineAudioBuildAsync(
+        Task<string?> task,
+        int generation,
+        double preservedPosition)
     {
         string? path;
         try
@@ -104,7 +111,7 @@ public partial class MainWindow
         await Dispatcher.InvokeAsync(() =>
         {
             if (generation == timelineAudioBuildGeneration && !isPlaying)
-                SwitchTimelineAudioSource(path);
+                SwitchTimelineAudioSource(path, preservedPosition);
         });
     }
 
@@ -126,7 +133,9 @@ public partial class MainWindow
         }
     }
 
-    private void SwitchTimelineAudioSource(string? timelinePath)
+    private void SwitchTimelineAudioSource(
+        string? timelinePath,
+        double? preservedPosition = null)
     {
         var originalPath = GetOriginalTrackPath();
         var targetPath = !string.IsNullOrWhiteSpace(timelinePath) && File.Exists(timelinePath)
@@ -139,9 +148,14 @@ public partial class MainWindow
             Path.GetFullPath(loadedTrackPath).Equals(Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
             return;
 
-        var position = bgmStream > 0
-            ? Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream))
-            : 0d;
+        var position = preservedPosition ?? (bgmStream > 0
+            ? Bass.BASS_ChannelBytes2Seconds(
+                bgmStream, Bass.BASS_ChannelGetPosition(bgmStream))
+            : 0d);
+        // The waveform timer can read the channel while the replacement stream is
+        // being decoded. Keep an explicit cursor until the new channel is ready so
+        // the playhead never renders one frame at zero.
+        flowTimelineCursor = position;
         var volume = editorSetting?.Default_BGM_Level ?? 1f;
         var tempo = 0f;
         if (bgmStream > 0)
@@ -158,14 +172,14 @@ public partial class MainWindow
             ? null
             : targetPath;
         ReloadCurrentTrack(position, volume, tempo);
+        MediaTimelinePanel.SyncPlayhead(position);
     }
 
     private void MediaTimelinePanel_PlayheadChanged(object? sender, MediaPlayheadRequest request)
     {
         CancelNotePreview();
-        if (isPlaying || ((lastEditorState == EditorControlMethod.Pause || pausePending) &&
-                          (pendingScrubStop == null || pendingScrubStop.IsCompleted)))
-            StopPlaybackForScrub();
+        if (isPlaying)
+            TogglePause();
         SetTimelinePosition(request.Time);
         SimaiProcess.ClearNoteListPlayedState();
         if (request.Time <= songLength)
@@ -254,6 +268,11 @@ public partial class MainWindow
             SimaiProcess.mediaTrimEnd);
         var visualEnd = videoClips.Select(clip => clip.TimelineEnd).DefaultIfEmpty(songLength).Max();
         QueueTimelineAudioRefresh();
+        if (pausedTimelinePreviewActive || pausedTimelinePreviewRequested)
+        {
+            pausedTimelinePreviewNeedsReload = true;
+            QueueNotePreview();
+        }
         await RebuildTimelineWaveformAsync(audioClips, visualEnd);
     }
 
@@ -265,6 +284,22 @@ public partial class MainWindow
         if (!File.Exists(projectPath) && !MediaTimelineProject.HasTemporaryFile(maidataDir))
         {
             waveformDisplayLength = songLength;
+            var sourcePath = GetCurrentTrackPath();
+            if (!string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath))
+            {
+                var clip = new MediaTimelineClip
+                {
+                    Track = MediaTrackKind.Audio,
+                    TrackIndex = 0,
+                    SourcePath = sourcePath,
+                    Name = Path.GetFileName(sourcePath),
+                    TimelineStart = 0d,
+                    SourceOffset = 0d,
+                    SourceDuration = songLength,
+                    Duration = songLength
+                };
+                _ = RebuildTimelineWaveformAsync(new[] { clip }, songLength);
+            }
             return;
         }
 

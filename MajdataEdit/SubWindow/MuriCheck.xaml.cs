@@ -1,10 +1,7 @@
-﻿using System.IO;
-using System.Text.RegularExpressions;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 
 namespace MajdataEdit;
 
@@ -12,66 +9,12 @@ namespace MajdataEdit;
 ///     Interaction logic for BPMtap.xaml
 /// </summary>
 /*
- * The detection and UI logic currently share this file.
- * They should be separated when time permits.
+ * The detection itself lives in MuriDetector; this file is the UI around it.
  */
-internal class MaimaiOperationMultNote
-{
-    public int endArea;
-    public double endTime;
-    public string noteContent;
-    public int ntype;
-    public int positionX;
-    public int positionY;
-
-    public int startArea;
-
-    // Represents one operation for simultaneous-note detection.
-    public double startTime;
-
-    public MaimaiOperationMultNote(double _startTime, double _endTime, int _startArea,
-        int _endArea, int _ntype, string _noteContent, int _positionX,
-        int _positionY)
-    {
-        startTime = _startTime;
-        endTime = _endTime;
-        startArea = _startArea;
-        endArea = _endArea;
-        ntype = _ntype;
-        noteContent = _noteContent;
-        positionX = _positionX;
-        positionY = _positionY;
-    }
-}
-
-internal class MaimaiOperationSlide
-{
-    public int area;
-    public string noteContent;
-    public int ntype;
-    public int positionX;
-
-    public int positionY;
-
-    // Represents one operation for Slide-tail collision detection.
-    public double time;
-
-    public MaimaiOperationSlide(double _time, int _area, int _ntype,
-        string _noteContent, int _positionX, int _positionY)
-    {
-        time = _time;
-        area = _area;
-        ntype = _ntype;
-        noteContent = _noteContent;
-        positionX = _positionX;
-        positionY = _positionY;
-    }
-}
-
 public partial class MuriCheck : Window
 {
     private MuriCheckResult? mcr;
-    public JObject? SLIDE_TIME; // SLIDE_TIME data used for muri detection
+    private MuriSlideTimeTable? slideTimeTable; // Measurements used for muri detection
 
     public MuriCheck()
     {
@@ -80,20 +23,14 @@ public partial class MuriCheck : Window
 
     private void ReadMuriCheckSlideTime()
     {
-        using var r = new StreamReader("./slide_time.json");
-        var json = r.ReadToEnd();
-        SLIDE_TIME = JsonConvert.DeserializeObject<JObject>(json)!;
-    }
+        var json = File.ReadAllText("./slide_time.json");
+        if (MuriSlideTimeTable.TryLoad(json, out var table, out var error))
+        {
+            slideTimeTable = table;
+            return;
+        }
 
-    private int notePos(int pos, bool relative)
-    {
-        if (pos <= 0) pos += 8;
-
-        if (relative)
-            pos %= 8;
-        else
-            pos = (pos - 1) % 8 + 1;
-        return pos;
+        MessageBox.Show(error, MainWindow.GetLocalizedString("Error"));
     }
 
     private void StartCheck_Button_Click(object sender, RoutedEventArgs e)
@@ -130,346 +67,6 @@ public partial class MuriCheck : Window
         }
     }
 
-    private int multNoteDetect()
-    {
-        var TIME_EPS = 5;
-
-        // See comments in MaiMuriDetector.multNoteDetect(self, eps=5): https://github.com/Moying-moe/maimaiMuriDetector
-
-        var prog = @"(\d)(.+?)(\d{1,2})\[.+?\]";
-        var errorCnt = 0;
-
-        var opSequence = new List<MaimaiOperationMultNote>();
-
-        foreach (var noteGroup in SimaiProcess.notelist)
-        {
-            var baseTime = noteGroup.time;
-            var positionX = noteGroup.rawTextPositionX;
-            var positionY = noteGroup.rawTextPositionY;
-
-            foreach (var note in noteGroup.getNotes())
-                if (note.noteType == SimaiNoteType.Tap)
-                {
-                    opSequence.Add(new MaimaiOperationMultNote(
-                        Math.Round(baseTime, TIME_EPS),
-                        Math.Round(baseTime, TIME_EPS),
-                        note.startPosition,
-                        note.startPosition,
-                        0,
-                        note.noteContent!,
-                        positionX,
-                        positionY
-                    ));
-                }
-                else if (note.noteType == SimaiNoteType.Slide)
-                {
-                    if (note.isTouchSlide)
-                        continue;
-                    opSequence.Add(new MaimaiOperationMultNote(
-                        Math.Round(baseTime, TIME_EPS),
-                        Math.Round(baseTime, TIME_EPS),
-                        note.startPosition,
-                        note.startPosition,
-                        1,
-                        note.noteContent!,
-                        positionX,
-                        positionY
-                    ));
-                    int endPosition;
-                    try
-                    {
-                        var temp = Regex.Match(note.noteContent!, prog);
-                        endPosition = int.Parse(
-                            temp.Groups[3].Value.Substring(temp.Groups[3].Value.Length - 1, 1)
-                        );
-                    }
-                    catch
-                    {
-                        addWarning(string.Format(
-                            MainWindow.GetLocalizedString("SyntaxError"),
-                            note.noteContent,
-                            positionY + 1,
-                            positionX + 1
-                        ), positionX, positionY);
-                        continue;
-                    }
-
-                    opSequence.Add(new MaimaiOperationMultNote(
-                        Math.Round(note.slideStartTime, TIME_EPS),
-                        Math.Round(note.slideStartTime + note.slideTime, TIME_EPS),
-                        note.startPosition,
-                        endPosition,
-                        3,
-                        note.noteContent!,
-                        positionX,
-                        positionY
-                    ));
-                }
-                else if (note.noteType == SimaiNoteType.Hold)
-                {
-                    opSequence.Add(new MaimaiOperationMultNote(
-                        Math.Round(baseTime, TIME_EPS),
-                        Math.Round(baseTime + note.holdTime, TIME_EPS),
-                        note.startPosition,
-                        note.startPosition,
-                        2,
-                        note.noteContent!,
-                        positionX,
-                        positionY
-                    ));
-                }
-                else
-                {
-                    // TODO: Support DX charts.
-                    MessageBox.Show(
-                        MainWindow.GetLocalizedString("MuriDxUnsupported"),
-                        MainWindow.GetLocalizedString("Warning"));
-                    return -1;
-                }
-        }
-
-        opSequence.Sort(delegate(MaimaiOperationMultNote x, MaimaiOperationMultNote y)
-        {
-            if (x.startTime == y.startTime)
-            {
-                if (x.ntype == y.ntype)
-                    return 0;
-                return x.ntype < y.ntype ? -1 : 1;
-            }
-
-            return x.startTime < y.startTime ? -1 : 1;
-        });
-
-        var inHandling = new List<MaimaiOperationMultNote>();
-
-        foreach (var op in opSequence)
-        {
-            for (var i = inHandling.Count - 1; i >= 0; i--)
-                if (inHandling[i].endTime < op.startTime)
-                    inHandling.RemoveAt(i);
-
-            if (op.ntype == 3)
-            {
-                for (var i = inHandling.Count - 1; i >= 0; i--)
-                    if (inHandling[i].endTime == op.startTime &&
-                        inHandling[i].endArea == op.startArea)
-                        inHandling.RemoveAt(i);
-            }
-            else if (op.ntype == 1)
-            {
-                for (var i = inHandling.Count - 1; i >= 0; i--)
-                    if (inHandling[i].ntype == 1 &&
-                        inHandling[i].startTime == op.startTime &&
-                        inHandling[i].startArea == op.startArea)
-                        inHandling.RemoveAt(i);
-            }
-
-            inHandling.Add(op);
-
-            if (inHandling.Count > 2)
-            {
-                var warningText = MainWindow.GetLocalizedString("MultNoteError1");
-                foreach (var e in inHandling)
-                {
-                    if (e.ntype == 1) warningText += "*";
-                    warningText += string.Format(
-                        "\"{0}\"({1}L,{2}C) ",
-                        e.noteContent, e.positionY + 1, e.positionX + 1
-                    );
-                }
-
-                warningText += string.Format(MainWindow.GetLocalizedString("MultNoteError2"), inHandling.Count);
-                addWarning(warningText, inHandling[0].positionX, inHandling[0].positionY);
-                errorCnt++;
-            }
-        }
-
-        return errorCnt;
-    }
-
-    private int slideDetect(double judgementLength)
-    {
-        // See comments in MaiMuriDetector.slideDetect(self, judgementLength = 0.15): https://github.com/Moying-moe/maimaiMuriDetector
-
-        var prog = @"(\d)(.+?)(\d{1,2})\[.+?\]";
-
-        var opSequence = new List<MaimaiOperationSlide>();
-
-        foreach (var noteGroup in SimaiProcess.notelist)
-        {
-            var baseTime = noteGroup.time;
-            var positionX = noteGroup.rawTextPositionX;
-            var positionY = noteGroup.rawTextPositionY;
-
-            foreach (var note in noteGroup.getNotes())
-                if (note.noteType == SimaiNoteType.Tap ||
-                    note.noteType == SimaiNoteType.Hold)
-                {
-                    opSequence.Add(new MaimaiOperationSlide(
-                        baseTime,
-                        note.startPosition,
-                        0,
-                        note.noteContent!,
-                        positionX,
-                        positionY
-                    ));
-                }
-                else if (note.noteType == SimaiNoteType.Slide)
-                {
-                    if (note.isTouchSlide)
-                        continue;
-                    // Add the star head to the queue.
-                    opSequence.Add(new MaimaiOperationSlide(
-                        baseTime,
-                        note.startPosition,
-                        0,
-                        note.noteContent!,
-                        positionX,
-                        positionY
-                    ));
-                    string sStart;
-                    string sType;
-                    string sEnd;
-
-                    try
-                    {
-                        var temp = Regex.Match(note.noteContent!, prog);
-                        sStart = temp.Groups[1].Value;
-                        sType = temp.Groups[2].Value;
-                        sEnd = temp.Groups[3].Value;
-                    }
-                    catch
-                    {
-                        addWarning(string.Format(
-                            MainWindow.GetLocalizedString("SyntaxError"),
-                            note.noteContent,
-                            positionY + 1,
-                            positionX + 1
-                        ), positionX, positionY);
-                        continue;
-                    }
-
-                    if (sType == "V")
-                    {
-                        // Turning type
-                        var sEnd0 = notePos(
-                            int.Parse(sEnd.Substring(0, 1)) - int.Parse(sStart),
-                            true
-                        );
-                        var sEnd1 = notePos(
-                            int.Parse(sEnd.Substring(1, 1)) - int.Parse(sStart),
-                            true
-                        );
-                        sEnd = sEnd0 + "," + sEnd1;
-                    }
-                    else
-                    {
-                        sEnd = notePos(int.Parse(sEnd) - int.Parse(sStart), true).ToString();
-                    }
-
-                    if (sType == ">" &&
-                        int.Parse(sStart) >= 3 && int.Parse(sStart) <= 6)
-                        /*
-                         * WARNING:
-                         * This is a legacy issue in the measurement data.
-                         * Each Slide type was measured from position 1 and stored using relative positions.
-                         * Runtime judgment computes absolute positions from the actual start and relative positions, effectively rotating the measurements.
-                         * However, the direction of > and < Slides depends on their starting position.
-                         * For example, > is clockwise from starts 7, 8, 1, or 2, but counterclockwise from starts 3, 4, 5, or 6.
-                         * Because measurements always start at 1, > is always clockwise there and < is always counterclockwise.
-                         * Therefore, in SLIDE_TIME, > means an always-clockwise curved Slide, not one that initially curves right.
-                         * Handle > and < specially by reversing the operator when runtime direction differs from measurement direction.
-                         *
-                         * This is a temporary workaround and may be corrected later.
-                         * **/
-                        // A > Slide starting at 3, 4, 5, or 6 runs opposite to the measured direction.
-                        sType = "<";
-                    else if (sType == "<" &&
-                             int.Parse(sStart) >= 3 && int.Parse(sStart) <= 6)
-                        sType = ">";
-
-                    JToken sTimeInfo;
-                    try
-                    {
-                        sTimeInfo = SLIDE_TIME![sType]![sEnd]!;
-                        foreach (var each in sTimeInfo!)
-                        {
-                            var timeRatio = each["time"]!.ToObject<double>();
-                            var passArea = each["area"]!.ToObject<int>();
-                            opSequence.Add(new MaimaiOperationSlide(
-                                timeRatio * note.slideTime + note.slideStartTime,
-                                notePos(passArea + int.Parse(sStart), false),
-                                1,
-                                note.noteContent!,
-                                positionX,
-                                positionY
-                            ));
-                        }
-                    }
-                    catch
-                    {
-                        addWarning(string.Format(
-                            MainWindow.GetLocalizedString("SyntaxError"),
-                            note.noteContent,
-                            positionY + 1,
-                            positionX + 1
-                        ), positionX, positionY);
-                    }
-                }
-                else
-                {
-                    // TODO: Support DX charts.
-                    MessageBox.Show(
-                        MainWindow.GetLocalizedString("MuriDxUnsupported"),
-                        MainWindow.GetLocalizedString("Warning"));
-                    return -1;
-                }
-        }
-
-        opSequence.Sort(delegate(MaimaiOperationSlide x, MaimaiOperationSlide y)
-        {
-            if (x.time == y.time)
-            {
-                if (x.ntype == y.ntype)
-                    return 0;
-                return x.ntype > y.ntype ? -1 : 1;
-            }
-
-            return x.time < y.time ? -1 : 1;
-        });
-        var errorCnt = 0;
-
-        var inJudgement = new List<MaimaiOperationSlide>();
-
-        foreach (var op in opSequence)
-        {
-            var curTime = op.time;
-
-            for (var i = inJudgement.Count - 1; i >= 0; i--)
-                if (inJudgement[i].time + judgementLength < curTime)
-                    inJudgement.RemoveAt(i);
-
-            if (op.ntype == 1)
-                inJudgement.Add(op);
-            else if (op.ntype == 0)
-                foreach (var e in inJudgement)
-                    if (e.area == op.area &&
-                        op.time - judgementLength < e.time &&
-                        e.time < op.time)
-                    {
-                        addWarning(string.Format(
-                            MainWindow.GetLocalizedString("SlideError"),
-                            e.noteContent, e.positionY + 1, e.positionX + 1,
-                            op.noteContent, op.positionY + 1, op.positionX + 1,
-                            Math.Floor((op.time - e.time) * 1000)
-                        ), e.positionX, e.positionY);
-                        errorCnt++;
-                    }
-        }
-
-        return errorCnt;
-    }
-
     private void BeatmapMuriCheck(bool multNoteEnable, double slideCheckAccuracy)
     {
         if (mcr != null) mcr.Close();
@@ -477,13 +74,26 @@ public partial class MuriCheck : Window
         mcr.Owner = Owner;
         mcr.CheckResult_Listbox.Items.Clear();
 
+        if (slideTimeTable == null)
+            ReadMuriCheckSlideTime();
+        var measurements = slideTimeTable;
+        if (measurements == null)
+            return;
+
+        var detector = new MuriDetector(SimaiProcess.notelist, measurements);
+
         int multNoteError;
         if (multNoteEnable)
         {
-            multNoteError = multNoteDetect();
+            multNoteError = detector.DetectMultNote();
             if (multNoteError == -1)
+            {
                 // Exit because DX charts are unsupported.
+                MessageBox.Show(
+                    MainWindow.GetLocalizedString("MuriDxUnsupported"),
+                    MainWindow.GetLocalizedString("Warning"));
                 return;
+            }
         }
         else
         {
@@ -491,10 +101,19 @@ public partial class MuriCheck : Window
                                      // This is really a MAGIC NUMBER, Do not touch Xp
         }
 
-        var slideError = slideDetect(slideCheckAccuracy);
+        var slideError = detector.DetectSlide(slideCheckAccuracy);
         if (slideError == -1)
+        {
             // Exit because DX charts are unsupported.
+            MessageBox.Show(
+                MainWindow.GetLocalizedString("MuriDxUnsupported"),
+                MainWindow.GetLocalizedString("Warning"));
             return;
+        }
+
+        foreach (var warning in detector.Warnings)
+            addWarning(warning.Content, warning.PositionX, warning.PositionY);
+
         mcr.Show();
         if (multNoteEnable)
             MessageBox.Show(

@@ -1,0 +1,50 @@
+name: Slide AST regression
+
+# The path list used to name every file individually. It went stale twice: it
+# still pointed at a file that had been deleted, and it never listed the editor
+# files under MajdataEdit/Editor, so changes there ran no checks at all. An
+# allowlist that has to be edited by hand stops protecting the thing it guards,
+# so these are deliberately broad.
+on:
+  push:
+    paths:
+      - "Assets/MajdataCore/**"
+      - "Assets/Scripts/**"
+      - "MajdataEdit/**"
+      - "Tests/**"
+      - ".github/workflows/slide-ast-regression.yml"
+  pull_request:
+    paths:
+      - "Assets/MajdataCore/**"
+      - "Assets/Scripts/**"
+      - "MajdataEdit/**"
+      - "Tests/**"
+      - ".github/workflows/slide-ast-regression.yml"
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Run Slide AST regressions
+        run: dotnet run --project Tests/SlideAstRegression/SlideAstRegression.csproj --configuration Release
+
+  # The regression suite deliberately excludes every WPF file, because WPF does
+  # not build off Windows. That left the editor unbuilt on any machine that is
+  # not the maintainer's, and a change that compiles nowhere still looked green.
+  build-editor:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          # The editor targets net6.0-windows; 8.0 builds the test project.
+          dotnet-version: |
+            6.0.x
+            8.0.x
+      - name: Build MajdataEdit
+        run: dotnet build MajdataEdit/MajdataEdit.csproj --configuration Release

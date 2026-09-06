@@ -107,6 +107,8 @@ public partial class EditorSettingPanel : Window
         ShowComboInfo.IsChecked = window.editorSetting.ShowComboInfo;
         ShowJudgeLine.IsChecked = window.editorSetting.ShowJudgeLine;
         ShowJudgeText.IsChecked = window.editorSetting.ShowJudgeText;
+        ShowMineHitFeedback.IsChecked = window.editorSetting.ShowMineHitFeedback;
+        ClipBackgroundToRing.IsChecked = window.editorSetting.ClipBackgroundToRing;
         ShowJudgeArea.IsChecked = window.editorSetting.ShowJudgeArea;
         UpdateJudgeAreaEnabled();
         ShowSongDetail.IsChecked = window.editorSetting.ShowSongDetail;
@@ -134,7 +136,9 @@ public partial class EditorSettingPanel : Window
     private void LanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         //LanguageComboBox.SelectedIndex
-        LocalizeDictionary.Instance.Culture = new CultureInfo(langList[LanguageComboBox.SelectedIndex]);
+        var language = langList[LanguageComboBox.SelectedIndex];
+        LocalizeDictionary.Instance.Culture = new CultureInfo(language);
+        MajdataCore.ParserMessageLocale.SetCulture(language);
     }
 
     private void RenderModeComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -206,6 +210,8 @@ public partial class EditorSettingPanel : Window
         var oldShowComboInfo = window.editorSetting.ShowComboInfo;
         var oldShowJudgeLine = window.editorSetting.ShowJudgeLine;
         var oldShowJudgeText = window.editorSetting.ShowJudgeText;
+        var oldShowMineHitFeedback = window.editorSetting.ShowMineHitFeedback;
+        var oldClipBackgroundToRing = window.editorSetting.ClipBackgroundToRing;
         var oldShowJudgeArea = window.editorSetting.ShowJudgeArea;
         var oldShowSongDetail = window.editorSetting.ShowSongDetail;
         var oldShowAllPerfect = window.editorSetting.ShowAllPerfect;
@@ -242,6 +248,8 @@ public partial class EditorSettingPanel : Window
         window.editorSetting!.ShowComboInfo = ShowComboInfo.IsChecked == true;
         window.editorSetting!.ShowJudgeLine = ShowJudgeLine.IsChecked == true;
         window.editorSetting!.ShowJudgeText = ShowJudgeText.IsChecked == true;
+        window.editorSetting!.ShowMineHitFeedback = ShowMineHitFeedback.IsChecked == true;
+        window.editorSetting!.ClipBackgroundToRing = ClipBackgroundToRing.IsChecked == true;
         // Hiding the judgment line always hides the judgment area.
         window.editorSetting!.ShowJudgeArea = ShowJudgeArea.IsChecked == true && ShowJudgeLine.IsChecked == true;
         window.editorSetting!.ShowSongDetail = ShowSongDetail.IsChecked == true;
@@ -288,6 +296,8 @@ public partial class EditorSettingPanel : Window
                              oldShowComboInfo != window.editorSetting.ShowComboInfo ||
                              oldShowJudgeLine != window.editorSetting.ShowJudgeLine ||
                              oldShowJudgeText != window.editorSetting.ShowJudgeText ||
+                             oldShowMineHitFeedback != window.editorSetting.ShowMineHitFeedback ||
+                             oldClipBackgroundToRing != window.editorSetting.ClipBackgroundToRing ||
                              oldShowJudgeArea != window.editorSetting.ShowJudgeArea ||
                              oldShowSongDetail != window.editorSetting.ShowSongDetail ||
                              oldShowAllPerfect != window.editorSetting.ShowAllPerfect ||
@@ -339,7 +349,17 @@ public partial class EditorSettingPanel : Window
 
     private List<string> GetSkinChoices(string key)
     {
-        return skinChoices;
+        var group = SkinGroups.FirstOrDefault(candidate =>
+            string.Equals(candidate.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (group == null)
+            return new List<string>(skinChoices);
+
+        var skinRoot = FindSkinRoot();
+        var choices = skinChoices
+            .Where(name => File.Exists(Path.Combine(
+                skinRoot, name, group.PreviewFile)))
+            .ToList();
+        return choices.Count > 0 ? choices : new List<string>(skinChoices);
     }
 
     private string ResolveSkinChoice(string key, string selected, string fallback)

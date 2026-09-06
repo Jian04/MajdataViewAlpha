@@ -148,13 +148,22 @@
     <value>显示右侧 Combo</value>
   </data>
   <data name="ShowJudgeLine" xml:space="preserve">
-    <value>播放时显示判定线</value>
+    <value>显示判定线</value>
   </data>
   <data name="ShowJudgeArea" xml:space="preserve">
     <value>显示判定区</value>
   </data>
   <data name="ShowAllPerfect" xml:space="preserve">
     <value>显示并播放 All Perfect</value>
+  </data>
+  <data name="ShowMineHitFeedback" xml:space="preserve">
+    <value>显示 Mine 打击特效与文字</value>
+  </data>
+  <data name="ClipBackgroundToRing" xml:space="preserve">
+    <value>背景裁剪到内圈</value>
+  </data>
+  <data name="DisplaySection" xml:space="preserve">
+    <value>显示选项</value>
   </data>
   <data name="ShowJudgeText" xml:space="preserve">
     <value>显示判定文字</value>
@@ -546,6 +555,7 @@
   <data name="NoteDensity" xml:space="preserve"><value>物量密度图</value></data>
   <data name="FormatBrush12" xml:space="preserve"><value>格式刷（12分）</value></data>
   <data name="FormatBrush24" xml:space="preserve"><value>格式刷（24分）</value></data>
+  <data name="FormatBrush384" xml:space="preserve"><value>格式刷（384分）</value></data>
   <data name="AutoOrganize16" xml:space="preserve"><value>自动整理（全谱16分）</value></data>
   <data name="MuriCheckExternal" xml:space="preserve"><value>无理检测（MaiMuriDX）</value></data>
   <data name="ConvertAudio44100" xml:space="preserve"><value>音频转换为 44100Hz</value></data>
@@ -575,7 +585,9 @@
   <data name="Division16" xml:space="preserve"><value>16 分</value></data>
   <data name="Division24" xml:space="preserve"><value>24 分</value></data>
   <data name="Division32" xml:space="preserve"><value>32 分</value></data>
+  <data name="Division384" xml:space="preserve"><value>384 分</value></data>
   <data name="SearchSelectedInLibrary" xml:space="preserve"><value>在配置库中搜索选中内容</value></data>
+  <data name="MergeNoteStreams" xml:space="preserve"><value>合并音符流</value></data>
   <data name="SongTitleLabel" xml:space="preserve"><value>曲名</value></data>
   <data name="ArtistLabel" xml:space="preserve"><value>曲师</value></data>
   <data name="DesignerLabel" xml:space="preserve"><value>谱师</value></data>
@@ -747,10 +759,12 @@ Alpha 语法帮助
 
 字幕
 ----
-<TEXT*你好>          保持到下一条 TEXT
-<TEXT*(你好,2)>      显示 2 秒
-<TEXT*(你好,16:1)>   按当前位置 BPM 显示一个 16 分时长
-<TEXT*>              清除字幕
+<TEXT*("你好")>          保持到下一条 TEXT
+<TEXT*("你好",2)>      显示 2 秒
+<TEXT*("你好",16:1)>   按当前位置 BPM 显示一个 16 分时长
+<TEXT*("你好",2,0.25,0.1,40)>  显示 2 秒，并设置屏幕位置和字号
+<TEXT*("逐字字幕",3,font=Allerta,index=1,style=Typewriter,transition=1)>  使用独立字体和通道，在 1 秒内逐字显示
+<TEXT*("")>              清除字幕
 
 媒体
 ----
@@ -763,7 +777,7 @@ MP4 播放完会自动恢复；静态图片保持到 False 或谱面停止。
 
 画面特效
 --------
-共同规则：True 开启并保持，False 关闭；最后的 [过渡时间] 可省略。
+共同规则：True 开启并保持，False 关闭；最后的过渡时间可省略。
 过渡时间省略时立即切换，可写秒数或 8:1、16:1 等当前位置 BPM 拍长。
 不同名字的特效可以叠加；再次写同名 True 会从当前实际状态渐变到新目标。
 Gaussian  <Gaussian*(True,强度[,过渡时间])>  高斯模糊
@@ -829,6 +843,7 @@ Shake     <Shake*(True,强度,频率[,角度,过渡时间])> 画面抖动（Hz�
   <data name="TransitionLabel" xml:space="preserve"><value>转场</value></data>
   <data name="ValidationIssueAtLine" xml:space="preserve"><value>在第 {0} 行发现问题：{1}</value></data>
   <data name="ChartStatementInvalid" xml:space="preserve"><value>谱面语句无法解析</value></data>
+  <data name="ViewCouldNotBuildBeat" xml:space="preserve"><value>这一拍语法正确，但 View 生成不出音符，已跳过：{0}</value></data>
   <data name="ChartKeyRange" xml:space="preserve"><value>键位必须在 1 到 8 之间</value></data>
   <data name="SlideDurationInvalid" xml:space="preserve"><value>Slide 时长必须大于 0，不能使用 [1:0]</value></data>
   <data name="SlideTargetMissing" xml:space="preserve"><value>Slide 缺少目标键</value></data>
@@ -854,8 +869,10 @@ Shake     <Shake*(True,强度,频率[,角度,过渡时间])> 画面抖动（Hz�
   <data name="SoundExTip" xml:space="preserve"><value>影响 EX Note 的判定音效。</value></data>
   <data name="SoundTouchTip" xml:space="preserve"><value>影响 Touch 的判定音效。</value></data>
   <data name="SoundHanabiTip" xml:space="preserve"><value>影响烟花音效与 Touch-Hold 按住音效。</value></data>
+  <data name="SoundMineTip" xml:space="preserve"><value>Mine 打击音量倍率；最终音量为 Mine 音量乘原本音量。</value></data>
   <data name="FfmpegNotFound" xml:space="preserve"><value>找不到 ffmpeg.exe。请将它放在程序目录或 PATH 中。</value></data>
   <data name="MuriDxUnsupported" xml:space="preserve"><value>无理检测暂时不支持 DX 谱面。</value></data>
+  <data name="MuriUnmeasuredSlide" xml:space="preserve"><value>[未测量] "{0}"({1}L,{2}C) 这种星星没有实测数据，本次撞尾检测跳过它。</value></data>
   <data name="UnhandledError" xml:space="preserve"><value>发生错误</value></data>
   <data name="ChartReadErrorBody" xml:space="preserve"><value>读取 maidata.txt 第 {0} 行时出错：{1}</value></data>
   <data name="ChartReadErrorTitle" xml:space="preserve"><value>读取谱面时出现错误</value></data>
@@ -863,8 +880,10 @@ Shake     <Shake*(True,强度,频率[,角度,过渡时间])> 画面抖动（Hz�
   <data name="NewChartHint" xml:space="preserve"><value>使用右键添加小节，点击 View 添加音符</value></data>
   <data name="AlphaMissingClose" xml:space="preserve"><value>Alpha 语法缺少右尖括号 &gt;</value></data>
   <data name="AlphaFormatError" xml:space="preserve"><value>Alpha 语法格式错误</value></data>
+  <data name="AlphaArgumentError" xml:space="preserve"><value>Alpha 命令 {0} 的参数无法解析：{1}</value></data>
   <data name="AlphaMissingAsterisk" xml:space="preserve"><value>Alpha 语法缺少 *</value></data>
   <data name="AlphaUnknownCommand" xml:space="preserve"><value>未知的 Alpha 语法：{0}</value></data>
+  <data name="AlphaCommandAfterNote" xml:space="preserve"><value>&lt;{0}&gt; 写在了本拍的音符之后，播放时不会生效。请把它移到这一拍的音符前面。</value></data>
   <data name="MediaFileMissing" xml:space="preserve"><value>找不到媒体文件：{0}&#10;路径必须相对于谱面文件夹。</value></data>
   <data name="SoundSettings" xml:space="preserve"><value>音量设置</value></data>
   <data name="AutoOnset" xml:space="preserve"><value>自动踩音</value></data>
@@ -906,12 +925,13 @@ Shake     <Shake*(True,强度,频率[,角度,过渡时间])> 画面抖动（Hz�
 ## 1  基本规则
 - Alpha 命令写成 <命令*参数>，命令名不区分大小写，建议使用补全显示的大写名称。
 - 命令放在时间格中但不消耗逗号；它从所在时间点开始影响后续内容。
+- 命令必须写在本拍音符之前；写在音符后会报错且不会执行。
 - True / False 控制开关；NULL 用于清除支持重置的音符属性。
 - 时间参数可写秒数（0.5、2）或拍长（8:1、16:3）。拍长使用命令前最近一次 BPM。
-- 可分类型设置的键：tap、each、hold、slide、star、break、touch、touchhold。分类型值覆盖全局值。
+- 可分类型设置的键：tap、each、hold、slide、star、break、touch、touchhold。视觉类 COLOR / SIZE / ALPHA 还支持控制运动星的 slidestar。分类型值覆盖全局值。
 - 输入“<”可打开分类补全；参数为空时按 Tab 填推荐值，已有值时按 Tab 跳到下一参数。
-! 方括号只用于本页表示“可选参数”，实际输入时不要写外层方括号。例如 [,时间] 表示可以省略最后一个逗号和时间。
-E (120){4}<SV*1.5>1,2,<TEXT*(副歌开始,2)>3,4,
+! 灰色斜体的参数表示可以省略，例如灰色斜体的 ,时间 表示最后的逗号和时间都可以不写。正常显示的方括号属于语法本身，例如 h[时长] 就要照着写。
+E (120){4}<SV*1.5>1,2,<TEXT*("副歌开始",2)>3,4,
 ## 2  编辑器扩展与注释
 ### 单行与块注释
 S || 注释文字
@@ -931,7 +951,13 @@ E @7/8
 S @{分拍}音符流,
 E @{4}1h,2h,3h,
 E {8}1,2,3,4,5,6,
+E @{2}1h,2h,
+E @{4}3,4,5,6,
+E {8}1,2,3,4,5,6,7,8,
 - “@”后紧跟“{”时建立一条独立音符流；它从当前时间开始按自己的分拍前进，不推进主谱时间。
+- 可以连续写多条“@{分拍}”流；它们都从下一条主谱流的当前时间开始，各自独立推进。
+- 使用“@*”和“*@”包住多行时，块内所有行属于同一条音符流；分拍和 Alpha 状态会跨行延续。
+- 光标位于音符流内时可右键选择“合并音符流”。编辑器会使用共同分拍无损合并下一条主音符流，并把 Alpha 指令保留在原时间点。
 - 相同时间的音符会按 Each 合并。以上示例等价于 {8}1h/1,2,2h/3,4,3h/5,6,。
 - 建议独占一行并写在要叠加的主谱行之前。@4/4、@RRGGBB 等其他 @ 标记不受影响。
 ### 编辑区背景色
@@ -944,17 +970,55 @@ S @NULL
 S A/B/D/E 区键位 + h[时长]
 E B1h[4:1] / E3hf[8:1]
 - A、B、D、E 区均可写 TouchHold；区域字母后必须带 1–8 的位置编号。
+### Touch 自定义距离
+S 区域键位~[距离]
+E E1~[4.8] / B3~[1.5] / A5~[4.8]b
+- ~[距离] 让 Touch 保持所在区域的方向，只改变绘制距离；判定仍在该区域原来的感应区。
+- 距离与 SPAWN / DESTROY 使用同一单位：判定圈为 4.8，B 区默认 2.3，E 区默认 3.0，A/D 区默认 4.1，取值范围 0 到 10。
+- 目前只支持 Touch：C 区没有方向、TouchHold 的扇形与距离绑定、星星内部也不能写，都会报错。
 ### Break Touch / TouchHold
 S 区域键位 + b
 S 区域键位 + h + b[时长]
 E B1b / E3b / Chb[4:1] / B1hb[8:1]
 - b 将 Touch 或 TouchHold 设为 Break；h 与 b 的先后顺序均可。
-### Touch Slide
-S 起点[-|<|>|^]终点[时长]
+### 无头 Slide 修饰
+S 起点?-终点[时长] / 起点!-终点[时长]
+E 1?-5[8:1] / 1!-5[8:1] / A1?-A2[8:1] / A1!-A2[8:1]
+- ? 和 ! 都会移除普通 Slide 与 Touch Slide 的头。? 保留运动星淡入，! 则让运动星在 Slide 开始移动前保持隐藏。
+### 烟花修饰
+S 键位f / 键位hf[时长] / 键位f-Slide[时长]
+E 1f / 1hf[8:1] / 1f-5[8:1] / Cf / Chf[8:1]
+- f 为 Tap、Hold、Touch、TouchHold 或 Slide 头增加击打烟花。Slide 中应写在头键位后，不能写在轨迹终点后。
+### 星形 TAP
+S 键位$ / 键位$$
+E 1$ / 2$$
+- $ 将普通 TAP 改为不旋转的星形 TAP；$$ 使用相同星形并按固定速度旋转。
+### Touch Slide（兼容 AstroDX 圆弧方向）
+S 起点[-|<|>|<<|>>|^|v|p|q|pp|qq]终点[时长]
+S 起点V转折点终点[时长]
+S 起点P绕行编号终点[时长] / 起点Q绕行编号终点[时长]
 E A1-A3[8:1] / A1<A3<A5[8:1] / 1d-E5[8:1]
+E A1VCE2[8:1]
+E A1pE5[8:1] / B1ppB5[8:1]
+E A1-E5[8:1] / 1P3E5Q0A5[8:1]
 E A1b-A2b[8:1] / A1!-A2[8:1] / A1?-A2[8:1]
+E A1<<E5[8:1] / A1<<<E5[8:1] / A1>>>E5[8:1]
+- > 向绝对右侧绕行，< 向绝对左侧绕行。起点 1/2/7/8 的 > 为顺时针，3/4/5/6 的 > 为逆时针；< 相反。正右侧 E3/D3 沿用键位 3 的方向。
+- 起终点同方向也会完整绕一圈，例如 E5>E5[8:1] 逆时针一圈，E5<D5[8:1] 顺时针一圈并改变半径。多圈螺旋是 Alpha 扩展。
 - 起点或终点只要包含 A/B/C/D/E Touch 区，就按 Touch Slide 处理；普通键和 D 键也可以作为另一端。
-- 起点 b 是绝赞头，轨迹终点后的 b 是绝赞轨迹；! 或 ? 表示无头。Touch Slide 的时长不可省略。
+- 起点 b 是绝赞头，轨迹终点后的 b 是绝赞轨迹。? 和 ! 都表示无头：? 保留等待期移动星淡入，! 则让移动星在 Slide 开始运动时才直接出现。Touch Slide 的时长不可省略。
+- 连接 Touch Slide 只能填写一个总时长。View 暂时无法保持逐段时长边界，因此逐段时长会直接报错，不再静默按整条匀速处理。
+- 连续同向的 < 或 > 生成一条连续的等距螺旋线：两个符号绕一圈后进入终点，三个符号绕两圈后进入终点，以此类推。多圈仅用于 Touch Slide，不支持普通数字 Slide 或混合方向符号。
+- 大 P / Q 可自由选择绕行圆并以切线进入和离开：0 是中央圈，1-8 是侧边圈，9 是最外圈；P 逆时针、Q 顺时针，可继续连接下一段。
+### SlideCode（兼容 MajdataPlay 判定区与结束特效）
+S 起点 + A/B/C/P/Q 指令 + K终点[时长]
+E 5Q9A1P98CQ49K5[8:1] / 1A3571P0K1[4:1]
+E 2B4K6[4:1] / 1Q8K5[8:1] / 1P99K1[4:1]
+- 根据实际路径生成 A/B/C 判定区队列，包含可二选一的判定区；末段直线或圆弧决定结束判定文字的位置与朝向。预览、FAKE 与切谱清理不会播放判定特效。
+- 首位 1-8 是起点；A 前往外键，B 前往内侧交点，C 前往中心；P/Q 分别逆/顺时针绕圈；K1-K8 结束整条轨迹。
+- 同一指令可连续写参数，例如 A357 等于依次经过 A3、A5、A7，P98 等于从 9 号圈切换到 8 号圈。
+- P 与 Q 不能直接互接；0 号中央圈与 9 号最外圈不能直接互转，中间需经过 A、B 或 C 节点。
+- 不带 K 的 1Q85 是普通可选 PQ，并保留普通 pp/qq 的额外绕圈；带 K 的 1Q8K5 才是 SlideCode，按最短切线和圆弧连接。两套语法互相独立。
 ### Mine、D 区与修饰位置
 S m = 灰色 Mine；d = D 区位置
 E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
@@ -964,6 +1028,14 @@ E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
 S 起点rp终点[时长] / 起点rq终点[时长]
 E 1rp3[8:1] / 1rq7[8:1]
 - rp / rq 分别沿 pp / qq 的相反方向绕行。
+### 继承星星轨迹 ~[]
+S 音符~[完整的星星]
+E 1~[5-7[8:1]] / 1b~[5-7[8:1]] / 1$~[5-7[8:1]] / 1~[C1-A5[8:1]] / 1~[2P35[8:1]]
+- 音符不落在自己写的位置上，而是按方括号里那条星星的轨迹走：从那条星星自己的起点出发，用它自己的时长。
+- 只画这一个移动的音符：不画弧线，不落星星头，写它的位置上什么都不出现，全程不判定、不计数。
+- 移动的是 ~[] 前面的音符本身：1~[...] 是 Tap 沿轨迹走；只有写 1$~[...] 才是星星沿轨迹走。
+- 方括号里要写一条完整的星星（含时长），键位星星和 Touch 星星都可以；Wifi 星星是三颗星，不能借。
+- 借来的轨迹后面不能再接 slide；修饰（b、h、$、f 等）写在 ~[] 前后都可以。
 ## 4  音符类 Alpha 命令
 ### SV — 真实滚动速度
 S <SV*倍率>
@@ -971,12 +1043,15 @@ S <SV*类型=倍率,类型=倍率>
 S <SV*类型=NULL>
 E <SV*1.5> / <SV*tap=2,hold=0.75> / <SV*tap=NULL>
 - 全局写法接受正数、0 和负数；类型 NULL 让该类型重新跟随全局 SV。
+- 全局 SV 影响 Tap、Hold、Star 头、Touch 与 TouchHold；`slide=` 在谱面标记时长内控制 Slide / Wifi / TouchSlide 轨迹：净积分为正时归一化到准时结束，0 或负数可暂停、倒退，但到标记结束时间会直接截断。未写 `slide=` 时 Slide 轨迹保持原时间进度。
 ### HS — 传统下落速度
 S <HS*倍率>
 S <HS*类型=倍率,类型=倍率>
 S <HS*类型=NULL>
-E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*hold=NULL>
+E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*slide=999> / <HS*hold=NULL>
 - HS 改变传统出现/下落倍率；类型 NULL 清除该类型的额外倍率。
+- Touch / TouchHold 使用 touchSpeed × HS：负数反向播放视觉动画，0 固定在判定状态；判定与音效仍使用音频时间。
+- `HS*slide=倍率` 按原版 HS 逻辑改变 Slide 显现速度，例如 `HS*slide=999` 基本瞬间出现，但不改变轨迹时长；全局 HS 不影响 Slide。轨迹运动仍由 `SV*slide` 控制，`HS*slide=NULL` 恢复 1 倍。
 ### SPAWN — 环形音符视觉出生半径
 S <SPAWN*半径>
 S <SPAWN*类型=半径,类型=半径>
@@ -986,40 +1061,75 @@ E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
 - 半径范围为 -4.8～4.8：1.225 是原始位置，0 是中心，4.8 是本侧判定线，-4.8 是对面判定线。
 - 改变半径会自动改变首次显示和移动开始时间，实际速度仍完全由 SV × HS 决定，最终判定键位不会改变；引导线保留最终判定键参考。
 - 作用于 Tap、Hold、Star 头、Each 与 Break 环形音符，不改变 Touch、TouchHold 和 Slide 轨迹本体。
+### SPAWNMODE — SV 回退时的出生状态
+S <SPAWNMODE*Rewind> / <SPAWNMODE*Once>
+S <SPAWNMODE*类型=Rewind,类型=Once>
+S <SPAWNMODE*NULL> / <SPAWNMODE*类型=NULL>
+E <SPAWNMODE*Once> / <SPAWNMODE*tap=Once,hold=Rewind>
+- 默认 Rewind：SV 积分退回 SPAWN 前时，音符会重新缩小并隐藏；再次越过 SPAWN 后重新显示。
+- Once：第一次越过 SPAWN 后保持激活，不再被后续 SV 回退隐藏。NULL 恢复 Rewind。
+- 作用类型与 SPAWN 一致；Touch、TouchHold 和 Slide 轨迹本体不支持 SPAWNMODE。
+### DESTROY — 环形音符视觉终点
+S <DESTROY*半径>
+S <DESTROY*类型=半径,类型=半径>
+S <DESTROY*NULL> / <DESTROY*类型=NULL>
+E <DESTROY*4.8> / <DESTROY*tap=1.225,hold=-4.8>
+- 仅修改 Tap、Star、Each、Hold 与 Break 环形音符的视觉终点，不改变判定时刻或判定键位。
+- 始终使用所写半径，包括小于 SPAWN、负数或外圈数值；NULL 恢复 4.8。
 ### BOUNCE — 判定线往返运动
 S <BOUNCE*时长>
 S <BOUNCE*类型=时长,类型=时长>
 S <BOUNCE*NULL> / <BOUNCE*类型=NULL>
 E <BOUNCE*8:1> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>
 - 默认作用于 Tap、Star、Each 和 Hold：音符从判定线出发，到 SPAWN 半径处速度降为零，再回落到判定线完成判定。
-- 时长可写秒或拍长；分类型值覆盖全局值。BOUNCE 只改变显示轨迹，不提前激活判定。
+- 时长可写秒或拍长；分类型值覆盖全局值。SV / HS 会重算起跳时间和轨迹播放速度，负速度会沿轨迹反向运动，SV=0 区间会暂停，但不会提前激活判定。
+- BOUNCE 服从 SPAWNMODE：Rewind 会在 SV 退回首次起跳交点前时再次隐藏，并在重新越过后显示；Once 从第一次越过起保持激活。波形灰色预览始终画第一次出现点。
+### FAKE — 仅显示音符
+S <FAKE*True> / <FAKE*False>
+S <FAKE*类型=True,类型=False>
+E <FAKE*True> / <FAKE*tap=True,slide=True> / <FAKE*False>
+- 让当前音符流后续音符仅用于显示：不计物量、不判定、不播放击打音效，也不产生击打或判定特效。False 关闭状态。
 ### COLOR — 音符颜色
 S <COLOR*RRGGBB>
 S <COLOR*类型=颜色,类型=颜色>
 S <COLOR*NULL> / <COLOR*类型=NULL>
-E <COLOR*FF6699> / <COLOR*tap=FF77AA,slide=66DDFF> / <COLOR*tap=NULL> / <COLOR*NULL>
-- 全局颜色影响后续音符；分类型颜色优先。颜色必须为 6 位 RGB。
+E <COLOR*FF6699> / <COLOR*star=FF77AA,slidestar=FFFFFF,slide=66DDFF> / <COLOR*slidestar=NULL> / <COLOR*NULL>
+- 全局颜色影响后续音符；分类型颜色优先。star 控制星形音符和 Slide 头，slidestar 控制运动星，slide 控制轨迹。颜色必须为 6 位 RGB。
+### COLORV — 已加载音符颜色
+S <COLORV*RRGGBB> / <COLORV*类型=RRGGBB>
+E <COLORV*FFFFFF> / <COLORV*star=FF77AA,slidestar=FFFFFF,slide=66DDFF>
+- 立即作用于已经加载的音符；可分别指定普通类型及 star、slidestar、slide。
 ### SIZE — 音符尺寸
 S <SIZE*倍率> / <SIZE*(X倍率,Y倍率)>
 S <SIZE*类型=倍率> / <SIZE*类型=(X倍率,Y倍率)>
 S <SIZE*NULL> / <SIZE*类型=NULL>
-E <SIZE*1.2> / <SIZE*(1.2,0.8)> / <SIZE*tap=(1,1.5),star=0.9>
+E <SIZE*1.2> / <SIZE*(1.2,0.8)> / <SIZE*star=0.9,slidestar=1.1>
 E <SIZE*slide=1.25> / <SIZE*slide=NULL> / <SIZE*NULL>
-- 全局 SIZE 缩放普通音符和星星头，不缩放 Slide 轨迹；轨迹必须用 slide= 单独设置。
+- 全局 SIZE 缩放普通音符、Slide 头和运动星，不缩放 Slide 轨迹；star=、slidestar=、slide= 可以分别设置。
+### SIZEV — 已加载音符尺寸
+S <SIZEV*倍率> / <SIZEV*(X倍率,Y倍率)> / <SIZEV*类型=倍率>
+E <SIZEV*1.2> / <SIZEV*slidestar=0.8,slide=1.25>
+- 立即缩放已经加载的音符，可分别指定 star、slidestar、slide。
 ### ALPHA — 音符透明度
 S <ALPHA*0..1>
 S <ALPHA*类型=0..1,类型=0..1>
 S <ALPHA*NULL> / <ALPHA*类型=NULL>
-E <ALPHA*0.5> / <ALPHA*tap=0.4,slide=0.8> / <ALPHA*tap=NULL>
+E <ALPHA*0.5> / <ALPHA*star=0.4,slidestar=0.6,slide=0.8> / <ALPHA*slidestar=NULL>
+### ALPHAV — 已加载音符透明度
+S <ALPHAV*0..1> / <ALPHAV*类型=0..1>
+E <ALPHAV*0.5> / <ALPHAV*star=0.4,slidestar=0.6,slide=0.8>
+- 立即修改已经加载的音符透明度，可分别指定 star、slidestar、slide。
 ## 5  显示类 Alpha 命令
 ### JLINE — 判定线颜色
 S <JLINE*RRGGBB> / <JLINE*(RRGGBB[,过渡时间])> / <JLINE*NULL>
 E <JLINE*00FF00> / <JLINE*(FF6699,0.3)> / <JLINE*(FFFFFF,8:1)> / <JLINE*NULL>
 - NULL 恢复皮肤默认判定线色；颜色变化只影响播放中的显示。
-### TEXT — 左上字幕
-S <TEXT*内容> / <TEXT*(内容[,持续时间])>
-E <TEXT*副歌开始> / <TEXT*(注意双押,2)> / <TEXT*(最后一段,16:3)>
-- 不写持续时间时保持到下一条 TEXT；写持续时间后自动消失。内容可包含逗号，解析器把最后一个可识别时间当作时长。
+### TEXT — 字幕
+S <TEXT*("内容"[,持续时间][,x=0][,y=0][,size=32][,font=Default][,index=0][,style=Fade][,transition=0.3])>
+E <TEXT*("副歌开始")> / <TEXT*("注意双押",2,index=1)> / <TEXT*("逐字字幕",3,font=Allerta,index=2,style=Typewriter,transition=1)>
+- 内容必须写在双引号内；不写持续时间时保持到同 index 的下一条 TEXT。index 可写 0～4，不同 index 可同时显示。
+- font 可选 Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta。Default 使用原始字幕字体，不跟随播放器字体。
+- style=Fade 时 transition 是渐入时间；style=Typewriter 时 transition 是逐字显示完成时间。时长均可写秒数或 8:1。
 ### 显示开关
 S <ShowJudgeLine*(True|False[,过渡时间])>
 S <ShowJudgeArea*(True|False[,过渡时间])>
@@ -1038,11 +1148,15 @@ E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,
 S <OuterBrightness*(0..1[,过渡时间])>
 S <InnerBrightness*(0..1[,过渡时间])>
 E <OuterBrightness*(0.8,8:1)> / <InnerBrightness*(0.45,1)>
-- 输入值会限制到 0–1：0 为全暗，1 为完整亮度。
+- 输入值会限制到 0–1：0 为全亮，1 为最暗。
 ## 6  滤镜类 Alpha 命令
-> 统一规则：True 开启并保持，False 关闭；最后的过渡时间可省略。不同滤镜可叠加，同名 True 会从当前实际值过渡到新目标。
+> 统一规则：True 开启并保持，False 关闭；最后的过渡时间可省略。Instant 会立即达到目标值，保持指定持续时间后立即恢复。不同滤镜可叠加，同名 True 会从当前实际值过渡到新目标。
 S <效果*(False[,过渡时间])>
+S <效果*(Instant,强度,持续时间)>
+S <Tint*(Instant,RRGGBB,强度,持续时间)> / <Move*(Instant,dx,dy,持续时间)>
+S <Shake*(Instant,强度,频率[,角度],持续时间)>
 E <Gaussian*(False,8:1)> / <Move*(False,0.5)> / <Tint*(False)>
+E <Zoom*(Instant,1.5,8:1)> / <Hue*(Instant,180,1)> / <Move*(Instant,0.08,-0.04,2)>
 ### Gaussian / Neon / Trail
 S <Gaussian*(True,强度[,过渡时间])>
 S <Neon*(True,强度[,过渡时间])>
@@ -1069,7 +1183,7 @@ S <Glitch*(True,强度[,过渡时间])>
 S <TVNoise*(True,强度[,过渡时间])>
 E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
 E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
-- Vignette 收缩圆形可视区；Zoom 最大参数为 8；Glitch 横向分段错位；TVNoise 加入扫描线和噪声。
+- Vignette 收缩圆形可视区；Zoom 直接使用倍率（0.6=60%，1=原大小，1.5=150%，范围 0.1～8）；Glitch 横向分段错位；TVNoise 加入扫描线和噪声。
 ### Hue / Tint
 S <Hue*(True,角度[,过渡时间])>
 S <Tint*(True,RRGGBB,强度[,过渡时间])>
@@ -1095,15 +1209,18 @@ E <PVOVERLAY*(True,media/cutin.png,8:1)> / <PVOVERLAY*(True,media/movie.mp4,0.5)
 ! 路径相对于谱面文件夹，可含子文件夹，但不能是绝对路径、不能包含“..”，文件名不要含逗号。媒体事件会显示在波形图。
 ## 8  编辑器处理说明
 - 时长补全会为 Hold、TouchHold 和 Slide 提供 [8:1]、[4:1]、[2:1]、[16:3]；[1:0] 只用于无时长 Hold，不提供给 Slide。
-- Touch Slide 支持 A/B/C/D/E 区、连段 `A1<A3<A5[8:1]`、绝赞 `A1b-A2b[8:1]` 和无头 `A1!-A2[8:1]` / `A1?-A2[8:1]`。
+- Touch Slide 支持 A/B/C/D/E 区、连段 `A1<A3<A5[8:1]`、多圈等距螺旋 `A1<<<E5[8:1]`、绝赞 `A1b-A2b[8:1]` 和无头 `A1!-A2[8:1]` / `A1?-A2[8:1]`。
 - “导出无特效谱面”会移除 <> 命令、|| 后缀及整行 @ 标记，因此导出的副本也不会保留编辑器拍号和背景色。
 ## 9  组合示例
 E (160){16}<COLOR*star=FF66CC><SIZE*star=1.15>1-5[8:1],2,3,4,
-E <TEXT*(间奏,2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
+E <TEXT*("间奏",2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
 E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
 - 同一时间点可连续写多个 Alpha 命令；它们不消耗额外逗号。建议按“音符 → 显示 → 滤镜 → 媒体”的顺序排列，便于阅读和补全。
 ]]></value></data>
   <data name="BackgroundFitMode" xml:space="preserve"><value>背景 / PV 缩放</value></data>
   <data name="BackgroundFitHeight" xml:space="preserve"><value>按高度等比缩放</value></data>
   <data name="BackgroundFitWidth" xml:space="preserve"><value>按宽度等比缩放</value></data>
+  <data name="UtageLabel" xml:space="preserve"><value>左上角文字</value></data>
+  <data name="UtageCoop" xml:space="preserve"><value>协谱</value></data>
+  <data name="RefreshPreview" xml:space="preserve"><value>刷新预览</value></data>
 </root>

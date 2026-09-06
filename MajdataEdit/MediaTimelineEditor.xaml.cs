@@ -82,6 +82,7 @@ public partial class MediaTimelineEditor : UserControl
     internal event EventHandler<MediaMarkerRequest>? MarkerRequested;
     internal event EventHandler<MediaPlayheadRequest>? PlayheadChanged;
     internal bool HasPendingChanges => hasPendingChanges;
+    internal double CurrentPlayhead => playhead;
 
     public async Task ConfigureAsync(
         string directory,
@@ -101,7 +102,8 @@ public partial class MediaTimelineEditor : UserControl
         fallbackBeatDuration = double.IsFinite(beatDuration) && beatDuration > 0d ? beatDuration : 0.5d;
         startMarker = trimStart;
         endMarker = trimEnd;
-        playhead = 0d;
+        if (!sameChart)
+            playhead = 0d;
         selectedClip = null;
         if (sameChart)
         {
@@ -825,10 +827,6 @@ public partial class MediaTimelineEditor : UserControl
         Keyboard.Focus(this);
         var position = e.GetPosition(TimelineCanvas);
         var positionInClip = e.GetPosition(border).X;
-        SetPlayhead(
-            clip.TimelineStart + Math.Clamp(positionInClip / pixelsPerSecond, 0d, clip.Duration),
-            false,
-            false);
         if (e.ClickCount >= 2)
         {
             SplitSelectedClip();
@@ -919,9 +917,6 @@ public partial class MediaTimelineEditor : UserControl
                 Canvas.SetTop(element, GetLaneTop(draggedClip.Track, draggedClip.TrackIndex) + 5d);
                 element.Width = Math.Max(12d, draggedClip.Duration * pixelsPerSecond);
             }
-            SetPlayhead(clipDragMode == ClipDragMode.TrimRight
-                ? draggedClip.TimelineEnd
-                : draggedClip.TimelineStart, false, false, false);
             return;
         }
         if (playheadDragging)

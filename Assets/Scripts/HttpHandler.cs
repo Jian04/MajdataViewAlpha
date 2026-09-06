@@ -1,7 +1,9 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.IO;
+using System.Linq;
 using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using Assets.Scripts.Types;
 using Newtonsoft.Json;
@@ -10,20 +12,28 @@ using UnityEngine.SceneManagement;
 
 public class HttpHandler : MonoBehaviour
 {
+    private const int ProtocolVersion = 1;
     public static bool IsReloding { get; set; } = false;
 
     // True while a real (non-preview) chart is loaded for playback. A live chart
     // must never be disturbed by a note-preview request that arrives late — for
     // example the editor's debounced caret preview racing a play command. If a
-    // preview slips through, its inert (previewOnly) notes occupy the judge queue
-    // and never advance it, so every real note misses. The flag lets the Preview
-    // command reject itself instead of relying on cross-thread timing in the editor.
+    // preview slips through, the shared loader and clock are cleared for preview
+    // content, so the live DJAuto chart can no longer advance correctly. The flag
+    // rejects Preview instead of relying on cross-thread timing in the editor.
     private bool liveChartActive;
+    private bool pausedTimelinePreviewActive;
+    private bool playbackStartDeferred;
 
     private readonly HttpListener http = new();
+    private readonly ManualResetEventSlim requestCompleted = new(true);
     private Task listen;
-    private string request = "";
+    private volatile string request = "";
+    private volatile int responseStatusCode = 500;
+    private string responseBody =
+        "{\"ok\":false,\"protocolVersion\":1,\"error\":\"Request was not processed.\"}";
     private bool deferredStartCompletion;
+    private int playbackActivationGeneration;
     private GameObject generatedMark;
     private GameObject currentTimeText;
     private bool showGeneratedMark;
@@ -60,15 +70,27 @@ public class HttpHandler : MonoBehaviour
         catch (JsonException exception)
         {
             Debug.LogWarning("[MajdataView] Ignored an invalid Edit request: " + exception.Message);
-            request = string.Empty;
+            CompleteRequest(
+                false,
+                "Invalid request JSON: " + exception.Message,
+                400);
             return;
         }
         if (data == null)
         {
             Debug.LogError("[MajdataView] Ignored an empty or invalid Edit request.");
-            request = string.Empty;
+            CompleteRequest(false, "Request body is empty.", 400);
             return;
         }
+        if (data.protocolVersion is not (0 or ProtocolVersion))
+        {
+            CompleteRequest(
+                false,
+                $"Unsupported protocol version {data.protocolVersion}; expected {ProtocolVersion}.",
+                409);
+            return;
+        }
+        NoteEffectManager.ShowMineHitFeedback = data.showMineHitFeedback;
 
         var loader = FindSceneComponent<JsonDataLoader>("DataLoader");
         var timeProvider = FindSceneComponent<AudioTimeProvider>("AudioTimeProvider");
@@ -83,7 +105,8 @@ public class HttpHandler : MonoBehaviour
         var noteEffects = FindSceneComponent<NoteEffectManager>("NoteEffects");
         if (data.control is EditorControlMethod.Start or EditorControlMethod.OpStart or
             EditorControlMethod.Record or EditorControlMethod.Continue or
-            EditorControlMethod.SetDisplay or EditorControlMethod.Preview)
+            EditorControlMethod.SetDisplay or EditorControlMethod.Preview or
+            EditorControlMethod.TimelinePreview)
         {
             ViewLocalization.SetLanguage(data.language);
             showGeneratedMark = data.showGeneratedMark;
@@ -114,30 +137,52 @@ public class HttpHandler : MonoBehaviour
 
         if (data.control is EditorControlMethod.Start or EditorControlMethod.OpStart or
             EditorControlMethod.Record or EditorControlMethod.Continue or
-            EditorControlMethod.SetDisplay or EditorControlMethod.Preview)
+            EditorControlMethod.SetDisplay or EditorControlMethod.Preview or
+            EditorControlMethod.TimelinePreview)
         {
             bgManager.LoadStandbyTheme(data.standbyTheme);
             bgManager.SetIntroBgTheme(data.introBgTheme);
+            bgManager.SetBackgroundClip(data.clipBackgroundToRing);
         }
 
         var deferResponse = false;
+        string commandError = null;
         try
         {
         // A preview is allowed to arrive after Start when the editor is scrubbed and
         // Play is pressed immediately. Dropping that stale preview below is not enough:
         // changing the global mode first would silently disable DJAuto for the live chart.
-        if (data.control != EditorControlMethod.Preview || !liveChartActive)
+        if (data.control != EditorControlMethod.Continue &&
+            (data.control != EditorControlMethod.Preview || !liveChartActive))
             InputManager.Mode = (AutoPlayMode)(int)data.editorPlayMethod;
 
         switch(data.control)
         {
             case EditorControlMethod.Start:
                 {
+                    playbackActivationGeneration++;
+                    playbackStartDeferred = data.deferPlaybackStart;
+                    var replacePausedPreview = pausedTimelinePreviewActive;
                     MajdataPetClient.Trigger("running", "Playing chart...");
                     Debug.Log($"[MajdataView] Start request: t={data.startTime:F3}, mode={data.editorPlayMethod}");
                     liveChartActive = true;
+                    pausedTimelinePreviewActive = false;
                     ApplyGeneratedMarkVisibility();
-                    loader.ClearLoadedNotes(true);
+                    if (replacePausedPreview)
+                    {
+                        loader.CancelPendingLoad();
+                        // pausedTimelinePreviewActive just went false, so the notes
+                        // the paused preview built stop taking the preview branch
+                        // and start animating against the playback clock. Retiring
+                        // them once the new chart finished binding was too late:
+                        // they fly in first as extra notes nothing in the chart
+                        // asked for.
+                        loader.ClearPreviewNotes();
+                    }
+                    else
+                    {
+                        loader.ClearLoadedNotes(true);
+                    }
                     customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
                     loader.noteSpeed = (float)(107.25 / (71.4184491 * Mathf.Pow(data.noteSpeed + 0.9975f, -0.985558604f)));
                     loader.touchSpeed = data.touchSpeed;
@@ -153,11 +198,17 @@ public class HttpHandler : MonoBehaviour
                     var requestedMode = (AutoPlayMode)(int)data.editorPlayMethod;
                     InputManager.Mode = AutoPlayMode.Disable;
                     timeProvider.SetStartTime(DateTime.MaxValue.Ticks, data.startTime, data.audioSpeed);
-                    loader.LoadJson(jsonText, data.startTime);
+                    loader.LoadJson(
+                        jsonText,
+                        data.startTime,
+                        previewOnly: false,
+                        preserveTintCache: replacePausedPreview);
                     allPerfect.Configure(data.showAllPerfect);
                     allPerfect.enabled = true;
                     GameObject.Find("MultTouchHandler").GetComponent<MultTouchHandler>().clearSlots();
 
+                    NoteSkinLibrary.SetChartFolder(
+                        new FileInfo(data.jsonPath).DirectoryName);
                     bgManager.LoadBGFromPath(new FileInfo(data.jsonPath).DirectoryName, data.audioSpeed,
                         data.innerBackgroundCover, data.outerBackgroundCover, data.showSongDetail,
                         data.backgroundFitMode, !HasTimelineVideo(jsonText));
@@ -166,17 +217,21 @@ public class HttpHandler : MonoBehaviour
                     if (data.previewFlow && data.startTime >= getChartLength(jsonText))
                         allPerfect.PreviewNow();
                     deferredStartCompletion = true;
-                    deferResponse = true;
                     StartCoroutine(CompleteAsyncStartWhenPlayable(
                         loader, timeProvider, sensors, multTouchHandler, requestedMode,
-                        bgManager, mediaTimeline, data.startTime, data.audioSpeed));
+                        bgManager, mediaTimeline, data.startTime, data.audioSpeed,
+                        data.deferPlaybackStart, replacePausedPreview));
+                    deferResponse = true;
                     //GameObject.Find("Notes").GetComponent<NoteManager>().Refresh();
                 }
                 break;
             case EditorControlMethod.OpStart:
                 {
+                    playbackActivationGeneration++;
+                    playbackStartDeferred = false;
                     MajdataPetClient.Trigger("running", "Playing chart...");
                     liveChartActive = true;
+                    pausedTimelinePreviewActive = false;
                     ApplyGeneratedMarkVisibility();
                     loader.ClearLoadedNotes(true);
                     customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
@@ -192,6 +247,8 @@ public class HttpHandler : MonoBehaviour
                     allPerfect.enabled = true;
                     multTouchHandler.clearSlots();
 
+                    NoteSkinLibrary.SetChartFolder(
+                        new FileInfo(data.jsonPath).DirectoryName);
                     bgManager.LoadBGFromPath(new FileInfo(data.jsonPath).DirectoryName, data.audioSpeed,
                         data.innerBackgroundCover, data.outerBackgroundCover, data.showSongDetail,
                         data.backgroundFitMode, !HasTimelineVideo(jsonText));
@@ -208,11 +265,11 @@ public class HttpHandler : MonoBehaviour
                             data.previewTimelineTime, data.audioSpeed);
                         loader.LoadJson(jsonText, data.startTime);
                         deferredStartCompletion = true;
-                        deferResponse = true;
                         StartCoroutine(CompleteAsyncIntroWhenPlayable(
                             loader, timeProvider, sensors, multTouchHandler, requestedMode,
                             bgManager, mediaTimeline, data.previewTimelineTime, data.audioSpeed,
                             data.showSongDetail));
+                        deferResponse = true;
                     }
                     else
                     {
@@ -230,14 +287,21 @@ public class HttpHandler : MonoBehaviour
                 break;
             case EditorControlMethod.Record:
                 {
+                    playbackActivationGeneration++;
+                    playbackStartDeferred = false;
                     MajdataPetClient.Trigger("running", "Recording chart...");
                     // Reserve the encoder before resize/configuration so duplicate Record or
                     // Stop requests cannot race the named-pipe startup.
                     if (!screenRecorder.PrepareRecording())
+                    {
+                        commandError =
+                            "A recording is already starting, active, or finalizing.";
                         break;
+                    }
                     try
                     {
                     liveChartActive = true;
+                    pausedTimelinePreviewActive = false;
                     ApplyGeneratedMarkVisibility();
                     loader.ClearLoadedNotes(true);
                     customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
@@ -274,6 +338,7 @@ public class HttpHandler : MonoBehaviour
                     screenRecorder.OutputFileName = "out.mp4";
                     // Mark PV and post effects unprepared before the recorder can observe
                     // their readiness, including the no-resize fast path.
+                    NoteSkinLibrary.SetChartFolder(maidataPath);
                     bgManager.LoadBGFromPath(maidataPath, data.audioSpeed,
                         data.innerBackgroundCover, data.outerBackgroundCover, data.showSongDetail,
                         data.backgroundFitMode, !HasTimelineVideo(jsonText));
@@ -309,6 +374,9 @@ public class HttpHandler : MonoBehaviour
                 }
                 break;
             case EditorControlMethod.Pause:
+                playbackActivationGeneration++;
+                playbackStartDeferred = false;
+                pausedTimelinePreviewActive = false;
                 MajdataPetClient.Trigger("waiting", "Playback paused");
                 timeProvider.PausePlayback();
                 displayTimeline.PausePlayback();
@@ -318,9 +386,12 @@ public class HttpHandler : MonoBehaviour
                 break;
             case EditorControlMethod.Stop:
                 {
+                    playbackActivationGeneration++;
                     MajdataPetClient.Trigger("idle", "Ready");
                     Debug.Log("[MajdataView] Stop request: clearing chart and input bindings.");
                     liveChartActive = false;
+                    pausedTimelinePreviewActive = false;
+                    playbackStartDeferred = false;
                     HideStandbyDisplays(objectCounter);
                     ApplyGeneratedMarkVisibility();
                     // Let an active capture close its pipe before any scene reload.
@@ -339,20 +410,173 @@ public class HttpHandler : MonoBehaviour
                         deferredStartCompletion = true;
                         deferResponse = true;
                         var previousSceneHandle = SceneManager.GetActiveScene().handle;
-                        request = string.Empty;
+                        CompleteRequest();
                         SceneManager.LoadScene(1);
                         StartCoroutine(CompleteStopAfterSceneReload(previousSceneHandle));
                     }
                 }
                 break;
             case EditorControlMethod.Continue:
-                MajdataPetClient.Trigger("running", "Continuing chart...");
-                timeProvider.SetStartTime(DateTime.Now.Ticks, data.startTime, data.audioSpeed);
-                bgManager.ContinueVideo(data.audioSpeed);
-                displayTimeline.SetPlaybackActive(true);
-                mediaTimeline.ContinuePlayback();
-                foreach (var wifi in FindObjectsByType<WifiDrop>(FindObjectsSortMode.None))
-                    wifi.RefreshAfterResume();
+                {
+                    var resumedTimelinePreview = pausedTimelinePreviewActive;
+                    var startsDeferredChart = playbackStartDeferred;
+                    playbackStartDeferred = false;
+                    // Resuming a paused timeline preview only needs the preview's
+                    // unjudgeable notes swapped for playable ones. Falling back to a
+                    // full Start reloaded the skin, background and display timelines
+                    // as well, which is the hitch and the cover flash seen when
+                    // leaving a paused preview.
+                    if (pausedTimelinePreviewActive)
+                    {
+                        if (string.IsNullOrWhiteSpace(data.jsonPath))
+                        {
+                            commandError =
+                                "Continue from a timeline preview requires jsonPath.";
+                            break;
+                        }
+                        loader.ClearLoadedNotes(true);
+                        loader.noteSpeed = (float)(107.25 /
+                            (71.4184491 * Mathf.Pow(
+                                data.noteSpeed + 0.9975f,
+                                -0.985558604f)));
+                        loader.touchSpeed = data.touchSpeed;
+                        loader.starSpeed = data.starSpeed;
+                        loader.smoothSlideAnime = data.smoothSlideAnime;
+                        loader.LoadJsonImmediate(
+                            File.ReadAllText(data.jsonPath),
+                            data.startTime,
+                            previewOnly: false,
+                            preserveTintCache: true,
+                            includeActiveSustains: true);
+                        loader.WarmupRenderingMaterials();
+                        sensors?.ResetAllSensors();
+                        multTouchHandler?.clearSlots();
+                        noteEffects?.ResetAllEffects();
+                        if (allPerfect != null)
+                        {
+                            allPerfect.Configure(data.showAllPerfect);
+                            allPerfect.enabled = true;
+                        }
+                        pausedTimelinePreviewActive = false;
+                    }
+
+                    // Ordinary pause/resume keeps the live note graph intact. Match
+                    // v0.4.2 here: changing input mode or scheduling a second visual
+                    // activation makes held notes and already revealed slides cross
+                    // their lifecycle boundary again and disappear for a frame.
+                    if (!resumedTimelinePreview && !startsDeferredChart)
+                    {
+                        MajdataPetClient.Trigger(
+                            "running", "Continuing chart...");
+                        timeProvider.SetStartTime(
+                            DateTime.Now.Ticks,
+                            data.startTime,
+                            data.audioSpeed);
+                        bgManager.ContinueVideo(data.audioSpeed);
+                        displayTimeline.SetPlaybackActive(true);
+                        mediaTimeline.ContinuePlayback();
+                        foreach (var wifi in
+                                 FindObjectsByType<WifiDrop>(FindObjectsSortMode.None))
+                            wifi.RefreshAfterResume();
+                        break;
+                    }
+
+                    var activationGeneration =
+                        ++playbackActivationGeneration;
+                    var activationMode =
+                        (AutoPlayMode)(int)data.editorPlayMethod;
+                    var activationTicks =
+                        data.startAt > 0
+                            ? data.startAt
+                            : DateTime.Now.Ticks;
+                    MajdataPetClient.Trigger(
+                        "running", "Continuing chart...");
+                    timeProvider.SetStartTime(
+                        activationTicks,
+                        data.startTime,
+                        data.audioSpeed,
+                        keepVisibleWhileScheduled: true);
+                    InputManager.Mode = AutoPlayMode.Disable;
+                    StartCoroutine(CompleteContinueAt(
+                        activationGeneration,
+                        activationTicks,
+                        activationMode,
+                        bgManager,
+                        displayTimeline,
+                        mediaTimeline,
+                        data.audioSpeed));
+                }
+                break;
+            case EditorControlMethod.TimelinePreview:
+                {
+                    playbackActivationGeneration++;
+                    MajdataPetClient.Trigger("review", "Previewing paused timeline");
+                    liveChartActive = true;
+                    pausedTimelinePreviewActive = true;
+                    ApplyGeneratedMarkVisibility();
+                    InputManager.Mode = AutoPlayMode.Disable;
+                    timeProvider.SetPausedTimelineTime(data.startTime);
+                    var previousPreview = loader.BeginPreviewReplacement();
+                    try
+                    {
+                        customSkin.LoadSkin(
+                            data.skin,
+                            data.tapSkin,
+                            data.holdSkin,
+                            data.starSkin,
+                            data.pinkStar);
+                        loader.noteSpeed = (float)(107.25 /
+                            (71.4184491 * Mathf.Pow(
+                                data.noteSpeed + 0.9975f,
+                                -0.985558604f)));
+                        loader.touchSpeed = data.touchSpeed;
+                        loader.starSpeed = data.starSpeed;
+                        loader.smoothSlideAnime = data.smoothSlideAnime;
+                        allPerfect.enabled = false;
+                        multTouchHandler.clearSlots();
+                        if (!string.IsNullOrWhiteSpace(data.jsonPath))
+                        {
+                            var jsonText = File.ReadAllText(data.jsonPath);
+                            NoteSkinLibrary.SetChartFolder(
+                                Path.GetDirectoryName(data.jsonPath));
+                            // Keep the old rendered frame until the replacement notes
+                            // have completed their first update.
+                            loader.LoadJsonImmediate(
+                                jsonText, -999f, true, preserveTintCache: true);
+                            ConfigureDisplayTimeline(
+                                displayTimeline,
+                                screenEffects,
+                                mediaTimeline,
+                                timeProvider,
+                                jsonText,
+                                data);
+                        }
+                    }
+                    finally
+                    {
+                        loader.CompletePreviewReplacement(previousPreview);
+                    }
+                    displayTimeline.SetPausedTimelineTime(data.startTime);
+                    mediaTimeline.SetPausedTimelineTime(data.startTime);
+                    noteEffects.ResetAllEffects();
+                    bgManager.SetPausedTimelineTime(data.startTime);
+                    deferredStartCompletion = true;
+                    deferResponse = true;
+                    StartCoroutine(CompleteTimelinePreviewWhenCommitted(loader));
+                }
+                break;
+            case EditorControlMethod.Seek:
+                {
+                    if (!pausedTimelinePreviewActive)
+                        break;
+                    playbackActivationGeneration++;
+                    InputManager.Mode = AutoPlayMode.Disable;
+                    timeProvider.SetPausedTimelineTime(data.startTime);
+                    displayTimeline.SetPausedTimelineTime(data.startTime);
+                    mediaTimeline.SetPausedTimelineTime(data.startTime);
+                    noteEffects.ResetAllEffects();
+                    bgManager.SetPausedTimelineTime(data.startTime);
+                }
                 break;
             case EditorControlMethod.SetDisplay:
                 MajdataPetClient.Trigger("review", "Refreshing display");
@@ -385,37 +609,106 @@ public class HttpHandler : MonoBehaviour
                 Debug.Log("[MajdataView] Preview request: loading isolated preview notes.");
                 customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
                 allPerfect.enabled = false;
-                loader.ClearLoadedNotes(true);
-                if (!string.IsNullOrWhiteSpace(data.previewJson))
+                var previewNotesRoot = GameObject.Find("Notes");
+                if (previewNotesRoot != null)
+                    previewNotesRoot.SetActive(false);
+                try
                 {
-                    InputManager.Mode = AutoPlayMode.Disable;
-                    timeProvider.SetPreviewTime(0f);
-                    loader.noteSpeed = (float)(107.25 /
-                        (71.4184491 * Mathf.Pow(data.noteSpeed + 0.9975f, -0.985558604f)));
-                    loader.touchSpeed = data.touchSpeed;
-                    loader.starSpeed = data.starSpeed;
-                    loader.smoothSlideAnime = data.smoothSlideAnime;
-                    // The preview contains only the caret group. Keeping it synchronous
-                    // prevents a stale async preview from finishing during a real Start.
-                    loader.LoadJsonImmediate(data.previewJson, -999f, true);
-                    displayTimeline.SetPlaybackActive(false);
-                    mediaTimeline.SetPlaybackActive(false);
-                    screenEffects?.Configure(null, timeProvider);
+                    loader.ClearLoadedNotes(true);
+                    if (!string.IsNullOrWhiteSpace(data.previewJson))
+                    {
+                        if (!string.IsNullOrWhiteSpace(data.jsonPath))
+                            NoteSkinLibrary.SetChartFolder(
+                                Path.GetDirectoryName(data.jsonPath));
+                        InputManager.Mode = AutoPlayMode.Disable;
+                        timeProvider.SetPreviewTime(0f);
+                        loader.noteSpeed = (float)(107.25 /
+                            (71.4184491 * Mathf.Pow(data.noteSpeed + 0.9975f, -0.985558604f)));
+                        loader.touchSpeed = data.touchSpeed;
+                        loader.starSpeed = data.starSpeed;
+                        loader.smoothSlideAnime = data.smoothSlideAnime;
+                        loader.LoadJsonImmediate(
+                            data.previewJson, -999f, true, preserveTintCache: true);
+                        displayTimeline.SetPlaybackActive(false);
+                        mediaTimeline.SetPlaybackActive(false);
+                        screenEffects?.Configure(null, timeProvider);
+                    }
+                    else
+                    {
+                        timeProvider.ResetStartTime();
+                    }
                 }
-                else
+                finally
                 {
-                    timeProvider.ResetStartTime();
+                    if (previewNotesRoot != null)
+                        previewNotesRoot.SetActive(true);
                 }
                 break;
         }
+        }
+        catch (Exception exception)
+        {
+            commandError = exception.Message;
+            Debug.LogException(exception);
+            playbackActivationGeneration++;
+            liveChartActive = false;
+            pausedTimelinePreviewActive = false;
+            playbackStartDeferred = false;
+            InputManager.Mode = AutoPlayMode.Disable;
+            timeProvider.ResetStartTime();
+            displayTimeline.SetPlaybackActive(false);
+            mediaTimeline.SetPlaybackActive(false);
+            if (screenRecorder.IsRecording)
+                screenRecorder.StopRecording();
+            ApplyGeneratedMarkVisibility();
         }
         finally
         {
             // Edit treats the HTTP response as completion of this command. Clearing
             // here also guarantees a malformed chart cannot wedge the HTTP listener.
             if (!deferResponse)
-                request = string.Empty;
+                CompleteRequest(
+                    commandError == null,
+                    commandError,
+                    commandError == null ? 200 : 500);
         }
+    }
+
+    private IEnumerator CompleteContinueAt(
+        int generation,
+        long startAt,
+        AutoPlayMode requestedMode,
+        BGManager bgManager,
+        DisplayTimelineController displayTimeline,
+        MediaTimelineController mediaTimeline,
+        float audioSpeed)
+    {
+        while (DateTime.Now.Ticks < startAt)
+        {
+            if (generation != playbackActivationGeneration ||
+                !liveChartActive)
+                yield break;
+            yield return null;
+        }
+        if (generation != playbackActivationGeneration ||
+            !liveChartActive)
+            yield break;
+
+        InputManager.Mode = requestedMode;
+        bgManager?.ContinueVideo(audioSpeed);
+        displayTimeline?.SetPlaybackActive(true);
+        mediaTimeline?.ContinuePlayback();
+        foreach (var wifi in
+                 FindObjectsByType<WifiDrop>(FindObjectsSortMode.None))
+            wifi.RefreshAfterResume();
+    }
+
+    private IEnumerator CompleteTimelinePreviewWhenCommitted(JsonDataLoader loader)
+    {
+        while (loader != null && loader.PreviewReplacementInProgress)
+            yield return null;
+        deferredStartCompletion = false;
+        CompleteRequest();
     }
 
     private IEnumerator StartRecordingAfterResize(
@@ -476,12 +769,16 @@ public class HttpHandler : MonoBehaviour
         BGManager bgManager,
         MediaTimelineController mediaTimeline,
         float startTime,
-        float audioSpeed)
+        float audioSpeed,
+        bool deferPlaybackStart,
+        bool replacePausedPreview)
     {
         while (loader != null && !loader.RuntimeBindingsReady)
             yield return null;
 
         loader?.WarmupRenderingMaterials();
+        if (replacePausedPreview)
+            loader?.ClearPreviewNotes();
         var videoWarmupDeadline = Time.realtimeSinceStartup + 15f;
         while (bgManager != null && !bgManager.IsPreparedForRecording &&
                Time.realtimeSinceStartup < videoWarmupDeadline)
@@ -493,11 +790,20 @@ public class HttpHandler : MonoBehaviour
 
         sensorManager?.ResetAllSensors();
         multTouchHandler?.clearSlots();
-        InputManager.Mode = requestedMode;
-        timeProvider.SetStartTime(DateTime.Now.Ticks, startTime, audioSpeed);
-        mediaTimeline?.SetPlaybackActive(true);
+        if (deferPlaybackStart)
+        {
+            InputManager.Mode = AutoPlayMode.Disable;
+            bgManager?.PauseVideo();
+            mediaTimeline?.SetPlaybackActive(false);
+        }
+        else
+        {
+            InputManager.Mode = requestedMode;
+            timeProvider.SetStartTime(DateTime.Now.Ticks, startTime, audioSpeed);
+            mediaTimeline?.SetPlaybackActive(true);
+        }
         deferredStartCompletion = false;
-        request = string.Empty;
+        CompleteRequest();
     }
 
     private IEnumerator CompleteAsyncIntroWhenPlayable(
@@ -535,7 +841,7 @@ public class HttpHandler : MonoBehaviour
         else
             bgManager?.HideSongDetail();
         deferredStartCompletion = false;
-        request = string.Empty;
+        CompleteRequest();
     }
 
     private void ApplyGeneratedMarkVisibility()
@@ -583,7 +889,15 @@ public class HttpHandler : MonoBehaviour
             chart?.colorTable,
             request.showJudgeArea,
             request.showSongDetail);
-        screenEffects?.Configure(chart?.effectTable, timeProvider);
+        screenEffects?.Configure(chart?.effectTable, timeProvider, mediaTimeline);
+        var liveNoteVisuals = controller.GetComponent<LiveNoteVisualController>() ??
+                              controller.gameObject.AddComponent<LiveNoteVisualController>();
+        liveNoteVisuals.Configure(
+            chart?.colorTable,
+            chart?.sizeTable,
+            chart?.alphaTable,
+            controller.GetComponent<JsonDataLoader>(),
+            timeProvider);
         mediaTimeline?.Configure(
             chart?.mediaTable,
             Path.GetDirectoryName(request.jsonPath),
@@ -602,6 +916,7 @@ public class HttpHandler : MonoBehaviour
 
     private void OnDestroy()
     {
+        requestCompleted.Set();
         http.Stop();
         print("server stoped");
     }
@@ -610,19 +925,107 @@ public class HttpHandler : MonoBehaviour
     {
         while (http.IsListening)
         {
-            var context = http.GetContext();
-            var reader = new StreamReader(context.Request.InputStream);
-            var data = reader.ReadToEnd();
-            request = data;
-            while (request != "") ;
-            context.Response.StatusCode = 200;
-            var stream = new StreamWriter(context.Response.OutputStream);
-            stream.WriteLine("Hello!!!");
-            stream.Close();
-            context.Response.Close();
+            HttpListenerContext context;
+            try
+            {
+                context = http.GetContext();
+            }
+            catch (HttpListenerException) when (!http.IsListening)
+            {
+                break;
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
+            try
+            {
+                using var reader =
+                    new StreamReader(context.Request.InputStream);
+                var data = reader.ReadToEnd();
+                if (string.IsNullOrWhiteSpace(data))
+                {
+                    responseStatusCode = 400;
+                    responseBody = JsonConvert.SerializeObject(new
+                    {
+                        ok = false,
+                        protocolVersion = ProtocolVersion,
+                        error = "Request body is empty."
+                    });
+                }
+                else
+                {
+                    requestCompleted.Reset();
+                    responseStatusCode = 500;
+                    responseBody = JsonConvert.SerializeObject(new
+                    {
+                        ok = false,
+                        protocolVersion = ProtocolVersion,
+                        error = "Request was not processed."
+                    });
+                    request = data;
+                    requestCompleted.Wait();
+                }
+                context.Response.StatusCode = responseStatusCode;
+                context.Response.ContentType =
+                    "application/json; charset=utf-8";
+                using var stream =
+                    new StreamWriter(context.Response.OutputStream);
+                stream.Write(responseBody);
+            }
+            catch (Exception exception) when (
+                exception is IOException or HttpListenerException or
+                ObjectDisposedException)
+            {
+                Debug.LogWarning(
+                    "[MajdataView] HTTP client disconnected: " +
+                    exception.Message);
+            }
+            finally
+            {
+                try
+                {
+                    context.Response.Close();
+                }
+                catch
+                {
+                    // A disconnected client must not terminate the listener.
+                }
+            }
         }
 
         print("exit listen");
+    }
+
+    private void CompleteRequest(
+        bool success = true,
+        string error = null,
+        int statusCode = 200)
+    {
+        responseStatusCode = statusCode;
+        // Beats the loader could not build travel back on every response. The
+        // chart text was legal or it would have been stopped in the editor, so
+        // without this the note is just absent and there is nothing to look for.
+        var loader = FindSceneComponent<JsonDataLoader>("DataLoader");
+        var drops = loader == null
+            ? Array.Empty<object>()
+            : loader.DroppedBeats.Select(drop => (object)new
+            {
+                line = drop.Line,
+                column = drop.Column,
+                time = drop.Time,
+                content = drop.Content,
+                reason = drop.Reason
+            }).ToArray();
+        responseBody = JsonConvert.SerializeObject(new
+        {
+            ok = success,
+            protocolVersion = ProtocolVersion,
+            error,
+            droppedBeats = drops
+        });
+        request = string.Empty;
+        requestCompleted.Set();
     }
 
     private float getChartLength(string jsonText)

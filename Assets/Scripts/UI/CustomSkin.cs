@@ -57,6 +57,7 @@ public class CustomSkin : MonoBehaviour
     public Texture2D test;
     private SpriteRenderer Outline;
     private string loadedSkinKey;
+    public bool PinkStarEnabled { get; private set; }
 
     // Start is called before the first frame update
     private void Start()
@@ -82,6 +83,7 @@ public class CustomSkin : MonoBehaviour
         var holdPath = ResolvePartPath(root, holdSkinName, path);
         var legacyPinkStar = TryGetPinkStarBase(starSkinName, out var starBaseSkinName);
         pinkStar |= legacyPinkStar;
+        PinkStarEnabled = pinkStar;
         var starPath = ResolvePartPath(root, starBaseSkinName, path);
         var skinKey = string.Join("|", path, tapPath, holdPath, starPath, pinkStar);
         if (string.Equals(loadedSkinKey, skinKey, System.StringComparison.OrdinalIgnoreCase))

@@ -64,7 +64,7 @@ internal sealed class ColorSectionBackgroundRenderer : IBackgroundRenderer
         var sectionStart = 0;
         for (var i = 0; i < text.Length;)
         {
-            if (text[i] is not ('@' or '&') || !TryReadMarker(text, i, out var color, out var length))
+            if (!TryReadTint(text, i, out var color, out var length))
             {
                 i++;
                 continue;
@@ -95,7 +95,9 @@ internal sealed class ColorSectionBackgroundRenderer : IBackgroundRenderer
         return brush;
     }
 
-    private static bool TryReadMarker(
+    // An empty color ends the current section; the grammar lives in MajdataCore so
+    // the tint and the syntax colors agree on where a marker starts and stops.
+    private static bool TryReadTint(
         string text,
         int start,
         out string color,
@@ -103,21 +105,21 @@ internal sealed class ColorSectionBackgroundRenderer : IBackgroundRenderer
     {
         color = "";
         length = 0;
-        if (start + 5 <= text.Length &&
-            string.Equals(text.Substring(start + 1, 4), "NULL", StringComparison.OrdinalIgnoreCase))
-        {
-            length = 5;
-            return true;
-        }
-        if (start + 7 > text.Length)
+        if (!MajdataCore.EditorDirectiveScanner.TryRead(text, start, out var directive))
             return false;
 
-        var candidate = text.Substring(start + 1, 6);
-        if (!candidate.All(Uri.IsHexDigit))
-            return false;
-        color = candidate;
-        length = 7;
-        return true;
+        switch (directive.kind)
+        {
+            case MajdataCore.EditorDirectiveKind.SectionReset:
+                length = directive.length;
+                return true;
+            case MajdataCore.EditorDirectiveKind.SectionColor:
+                color = directive.color;
+                length = directive.length;
+                return true;
+            default:
+                return false;
+        }
     }
 
     private readonly record struct ColorSection(int Start, int Length, string Color);

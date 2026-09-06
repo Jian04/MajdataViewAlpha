@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Notes;
+using Assets.Scripts.Notes;
 using Assets.Scripts.Types;
 using UnityEngine;
 #nullable enable
@@ -15,14 +15,16 @@ public class TapDrop : TapBase
         if (isEach)
         {
             spriteRenderer.sprite = eachSpr;
-            lineSpriteRender.sprite = eachLine;
+            if (!isMine)
+                lineSpriteRender.sprite = eachLine;
             if (isEX) exSpriteRender.color = exEffectEach;
         }
 
         if (isBreak)
         {
             spriteRenderer.sprite = breakSpr;
-            lineSpriteRender.sprite = breakLine;
+            if (!isMine)
+                lineSpriteRender.sprite = breakLine;
             if (isEX) exSpriteRender.color = exEffectBreak;
             spriteRenderer.sharedMaterial = breakMaterial;
         }
@@ -52,7 +54,7 @@ public class TapDrop : TapBase
         inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
         sensorPos = (SensorType)SensorChildIndex;
-        if (!previewOnly)
+        if (!JudgmentDisabled)
             BindJudgeInput(Check);
         State = NoteStatus.Initialized;
     }

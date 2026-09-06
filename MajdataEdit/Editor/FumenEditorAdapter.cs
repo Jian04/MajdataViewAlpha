@@ -80,7 +80,10 @@ internal sealed class FumenEditorAdapter
         var rawEnd = NormalizedToRawOffset(start + length);
         editor.Select(rawStart, rawEnd - rawStart);
         editor.CaretOffset = rawEnd;
-        editor.ScrollToLine(editor.Document.GetLineByOffset(rawStart).LineNumber);
+        var caretLine = editor.Document.GetLineByOffset(rawEnd);
+        var caretColumn = rawEnd - caretLine.Offset + 1;
+        editor.ScrollTo(caretLine.LineNumber, caretColumn);
+        editor.TextArea.Caret.BringCaretToView();
     }
 
     public void SelectLineColumn(int line, int column)

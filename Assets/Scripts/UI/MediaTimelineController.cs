@@ -25,6 +25,7 @@ public class MediaTimelineController : MonoBehaviour
     private bool recording;
     private bool playbackActive;
     private bool prepared = true;
+    private float? pendingPausedTimelineTime;
     private int prepareGeneration;
     private int cursor;
     private float lastTime = float.MinValue;
@@ -112,6 +113,7 @@ public class MediaTimelineController : MonoBehaviour
         cursor = 0;
         lastTime = float.MinValue;
         playbackActive = false;
+        pendingPausedTimelineTime = null;
         prepared = events.Count == 0;
         if (prepared)
             return;
@@ -121,6 +123,8 @@ public class MediaTimelineController : MonoBehaviour
 
     public void SetPlaybackActive(bool active)
     {
+        if (active)
+            pendingPausedTimelineTime = null;
         playbackActive = active;
         if (!active)
         {
@@ -159,6 +163,24 @@ public class MediaTimelineController : MonoBehaviour
             controller.SetAudioVolume(volume);
     }
 
+    public void CollectVisualTransforms(List<Transform> target)
+    {
+        if (target == null)
+            return;
+        AddVisualTransform(target, imageRenderer != null ? imageRenderer.transform : null);
+        AddVisualTransform(target, outgoingImageRenderer != null ? outgoingImageRenderer.transform : null);
+        foreach (var player in videoPlayers.Values)
+            AddVisualTransform(target, player != null ? player.transform : null);
+        foreach (var controller in timelineControllers)
+            controller.CollectVisualTransforms(target);
+    }
+
+    private static void AddVisualTransform(List<Transform> target, Transform transform)
+    {
+        if (transform != null && !target.Contains(transform))
+            target.Add(transform);
+    }
+
     public void PausePlayback()
     {
         playbackActive = false;
@@ -170,6 +192,19 @@ public class MediaTimelineController : MonoBehaviour
             outgoingVideo.Pause();
         foreach (var controller in timelineControllers)
             controller.PausePlayback();
+    }
+
+    public void SetPausedTimelineTime(float time)
+    {
+        pendingPausedTimelineTime = time;
+        foreach (var controller in timelineControllers)
+            controller.SetPausedTimelineTime(time);
+        if (!prepared)
+            return;
+        pendingPausedTimelineTime = null;
+        playbackActive = true;
+        ApplyAt(time, true);
+        PausePlayback();
     }
 
     public void ContinuePlayback()
@@ -323,7 +358,15 @@ public class MediaTimelineController : MonoBehaviour
         }
 
         prepared = true;
-        if (playbackActive)
+        if (pendingPausedTimelineTime.HasValue)
+        {
+            var pausedTime = pendingPausedTimelineTime.Value;
+            pendingPausedTimelineTime = null;
+            playbackActive = true;
+            ApplyAt(pausedTime, true);
+            PausePlayback();
+        }
+        else if (playbackActive)
             ApplyAt(timeProvider != null ? timeProvider.AudioTime : 0f, true);
     }
 

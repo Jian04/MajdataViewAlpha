@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -35,6 +35,9 @@ public partial class MainWindow
     public int slideStream = -114514;
     public int touchStream = -114514;
     public int trackStartStream = -114514;
+    private readonly Dictionary<int, int> mineSoundStreams = new();
+    public float MineVolume { get; private set; } = 0.7f;
+    public IEnumerable<int> MineSoundStreams => mineSoundStreams.Values;
 
     private List<SoundEffectTiming>? waitToBePlayed;
     //private Stopwatch sw = new Stopwatch();
@@ -66,6 +69,39 @@ public partial class MainWindow
         breakSlideStream = Bass.BASS_StreamCreateFile(path + "break_slide.wav", 0L, 0L, BASSFlag.BASS_SAMPLE_FLOAT);
         judgeBreakSlideStream =
             Bass.BASS_StreamCreateFile(path + "judge_break_slide.wav", 0L, 0L, BASSFlag.BASS_SAMPLE_FLOAT);
+
+        RegisterMineSound(answerStream, path + "answer.wav");
+        RegisterMineSound(judgeStream, path + "judge.wav");
+        RegisterMineSound(judgeBreakStream, path + "judge_break.wav");
+        RegisterMineSound(judgeExStream, path + "judge_ex.wav");
+        RegisterMineSound(breakStream, path + "break.wav");
+        RegisterMineSound(slideStream, path + "slide.wav");
+        RegisterMineSound(touchStream, path + "touch.wav");
+        RegisterMineSound(breakSlideStartStream, path + "break_slide_start.wav");
+        RegisterMineSound(breakSlideStream, path + "break_slide.wav");
+        RegisterMineSound(judgeBreakSlideStream, path + "judge_break_slide.wav");
+    }
+
+    private void RegisterMineSound(int originalStream, string path)
+    {
+        var stream = Bass.BASS_StreamCreateFile(
+            path, 0L, 0L, BASSFlag.BASS_SAMPLE_FLOAT);
+        if (originalStream != 0 && stream != 0)
+            mineSoundStreams[originalStream] = stream;
+    }
+
+    public void SetMineVolume(float volume)
+    {
+        MineVolume = Math.Clamp(volume, 0f, 1f);
+        foreach (var pair in mineSoundStreams)
+        {
+            var originalVolume = 1f;
+            Bass.BASS_ChannelGetAttribute(
+                pair.Key, BASSAttribute.BASS_ATTRIB_VOL, ref originalVolume);
+            Bass.BASS_ChannelSetAttribute(
+                pair.Value, BASSAttribute.BASS_ATTRIB_VOL,
+                originalVolume * MineVolume);
+        }
     }
 
     [DllImport("winmm")]
@@ -113,28 +149,17 @@ public partial class MainWindow
                 var se = waitToBePlayed[0];
                 waitToBePlayed.RemoveAt(0);
 
-                if (se.hasAnswer) Bass.BASS_ChannelPlay(answerStream, true);
-                if (se.hasJudge) Bass.BASS_ChannelPlay(judgeStream, true);
-                if (se.hasJudgeBreak) Bass.BASS_ChannelPlay(judgeBreakStream, true);
-                if (se.hasJudgeEx) Bass.BASS_ChannelPlay(judgeExStream, true);
-                if (se.hasBreak) Bass.BASS_ChannelPlay(breakStream, true);
-                if (se.hasTouch) Bass.BASS_ChannelPlay(touchStream, true);
-                if (se.hasHanabi) //may cause delay
-                    Bass.BASS_ChannelPlay(hanabiStream, true);
-                if (se.hasTouchHold) Bass.BASS_ChannelPlay(holdRiserStream, true);
-                if (se.hasTouchHoldEnd) Bass.BASS_ChannelStop(holdRiserStream);
-                if (se.hasSlide) Bass.BASS_ChannelPlay(slideStream, true);
-                if (se.hasBreakSlideStart) Bass.BASS_ChannelPlay(breakSlideStartStream, true);
-                if (se.hasBreakSlide) Bass.BASS_ChannelPlay(breakSlideStream, true);
-                if (se.hasJudgeBreakSlide) Bass.BASS_ChannelPlay(judgeBreakSlideStream, true);
-                if (se.hasAllPerfect)
+                foreach (var type in se.NormalSounds)
+                    PlayScheduledSound(type, isMine: false);
+                foreach (var type in se.MineSounds)
+                    PlayScheduledSound(type, isMine: true);
+                if (se.hasTouchHoldEnd)
                 {
-                    Bass.BASS_ChannelPlay(allperfectStream, true);
-                    Bass.BASS_ChannelPlay(fanfareStream, true);
+                    Bass.BASS_ChannelStop(holdRiserStream);
+                    if (mineSoundStreams.TryGetValue(
+                            holdRiserStream, out var mineHoldRiser))
+                        Bass.BASS_ChannelStop(mineHoldRiser);
                 }
-
-                if (se.hasClock)
-                    Bass.BASS_ChannelPlay(clockStream, true);
                 //
                 Dispatcher.Invoke(() =>
                 {
@@ -149,6 +174,46 @@ public partial class MainWindow
         catch
         {
         }
+    }
+
+    private void PlayScheduledSound(SoundDataType type, bool isMine)
+    {
+        var originalStream = type switch
+        {
+            SoundDataType.Answer => answerStream,
+            SoundDataType.Judge => judgeStream,
+            SoundDataType.JudgeBreak => judgeBreakStream,
+            SoundDataType.JudgeEX => judgeExStream,
+            SoundDataType.Break => breakStream,
+            SoundDataType.Hanabi => hanabiStream,
+            SoundDataType.TouchHold => holdRiserStream,
+            SoundDataType.Slide => slideStream,
+            SoundDataType.Touch => touchStream,
+            SoundDataType.AllPerfect => allperfectStream,
+            SoundDataType.FullComboFanfare => fanfareStream,
+            SoundDataType.Clock => clockStream,
+            SoundDataType.BreakSlideStart => breakSlideStartStream,
+            SoundDataType.BreakSlide => breakSlideStream,
+            SoundDataType.JudgeBreakSlide => judgeBreakSlideStream,
+            _ => 0
+        };
+        if (originalStream == 0)
+            return;
+
+        if (isMine && mineSoundStreams.TryGetValue(
+                originalStream, out var mineStream))
+        {
+            var originalVolume = 1f;
+            Bass.BASS_ChannelGetAttribute(
+                originalStream, BASSAttribute.BASS_ATTRIB_VOL,
+                ref originalVolume);
+            Bass.BASS_ChannelSetAttribute(
+                mineStream, BASSAttribute.BASS_ATTRIB_VOL,
+                originalVolume * MineVolume);
+            Bass.BASS_ChannelPlay(mineStream, true);
+            return;
+        }
+        Bass.BASS_ChannelPlay(originalStream, true);
     }
 
     private double GetAllPerfectStartTime()
@@ -212,7 +277,11 @@ public partial class MainWindow
         for (var i = 0; i < SimaiProcess.notelist.Count; i++)
         {
             var noteGroup = SimaiProcess.notelist[i];
-            if (noteGroup.time < startTime) continue;
+            if (noteGroup.time < startTime)
+            {
+                ScheduleTouchHoldTailsAfter(noteGroup, i, startTime);
+                continue;
+            }
 
             SoundEffectTiming stobj;
 
@@ -227,42 +296,48 @@ public partial class MainWindow
 
             var notes = noteGroup.getNotes();
             foreach (var note in notes)
+            {
+                if (note.noteType != SimaiNoteType.Slide && note.isFake)
+                    continue;
                 switch (note.noteType)
                 {
                     case SimaiNoteType.Tap:
                     {
-                        stobj.hasAnswer = true;
+                        var mine = note.isMineHead;
+                        stobj.AddSound(SoundDataType.Answer, mine);
                         // ALPHA: 1f is a firework Tap that cheers on hit, like Cf.
-                        if (note.isHanabi) stobj.hasHanabi = true;
+                        if (note.isHanabi) stobj.AddSound(SoundDataType.Hanabi, false);
                         if (note.isBreak)
                         {
                             // Break notes use both the Break judgment sound and Break cheer (2600).
-                            stobj.hasBreak = true;
-                            stobj.hasJudgeBreak = true;
+                            stobj.AddSound(SoundDataType.Break, mine);
+                            stobj.AddSound(SoundDataType.JudgeBreak, mine);
                         }
 
                         if (note.isEx)
                             // Ex notes use the Ex judgment sound.
-                            stobj.hasJudgeEx = true;
+                            stobj.AddSound(SoundDataType.JudgeEX, mine);
                         if (!note.isBreak && !note.isEx)
                             // Otherwise this is a normal note and uses the normal judgment sound.
-                            stobj.hasJudge = true;
+                            stobj.AddSound(SoundDataType.Judge, mine);
                         break;
                     }
                     case SimaiNoteType.Hold:
                     {
-                        stobj.hasAnswer = true;
+                        var mine = note.isMineHead;
+                        stobj.AddSound(SoundDataType.Answer, mine);
                         // ALPHA: 1hf is a firework Hold that cheers when its head is hit, like Cf.
-                        if (note.isHanabi) stobj.hasHanabi = true;
+                        if (note.isHanabi) stobj.AddSound(SoundDataType.Hanabi, false);
                         // As with Tap, select Break or Ex sounds; otherwise use the normal sound.
                         if (note.isBreak)
                         {
-                            stobj.hasBreak = true;
-                            stobj.hasJudgeBreak = true;
+                            stobj.AddSound(SoundDataType.Break, mine);
+                            stobj.AddSound(SoundDataType.JudgeBreak, mine);
                         }
 
-                        if (note.isEx) stobj.hasJudgeEx = true;
-                        if (!note.isBreak && !note.isEx) stobj.hasJudge = true;
+                        if (note.isEx) stobj.AddSound(SoundDataType.JudgeEX, mine);
+                        if (!note.isBreak && !note.isEx)
+                            stobj.AddSound(SoundDataType.Judge, mine);
 
                         // Calculate the Hold-tail sound effect.
                         if (!(note.holdTime <= 0.00f))
@@ -272,13 +347,17 @@ public partial class MainWindow
                             var nearIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - targetTime) < 0.001f);
                             if (nearIndex != -1)
                             {
-                                waitToBePlayed[nearIndex].hasAnswer = true;
-                                if (!note.isBreak && !note.isEx) waitToBePlayed[nearIndex].hasJudge = true;
+                                waitToBePlayed[nearIndex].AddSound(SoundDataType.Answer, mine);
+                                if (!note.isBreak && !note.isEx)
+                                    waitToBePlayed[nearIndex].AddSound(SoundDataType.Judge, mine);
                             }
                             else
                             {
                                 // Only normal Holds have an ending judgment sound; Break and Ex variants do not (inferred for Break).
-                                var holdRelease = new SoundEffectTiming(targetTime, true, !note.isBreak && !note.isEx);
+                                var holdRelease = new SoundEffectTiming(targetTime);
+                                holdRelease.AddSound(SoundDataType.Answer, mine);
+                                if (!note.isBreak && !note.isEx)
+                                    holdRelease.AddSound(SoundDataType.Judge, mine);
                                 waitToBePlayed.Add(holdRelease);
                             }
                         }
@@ -287,23 +366,29 @@ public partial class MainWindow
                     }
                     case SimaiNoteType.Slide:
                     {
-                        if (!note.isSlideNoHead)
+                        var headMine = note.isMineHead;
+                        var slideMine = note.isMineSlide;
+                        if (!note.isSlideNoHead && !note.isFakeHead)
                         {
                             // Only headed Slides have answer and judgment sounds.
-                            stobj.hasAnswer = true;
+                            stobj.AddSound(SoundDataType.Answer, headMine);
                             if (note.isTouchSlide && note.touchArea != 'K')
-                                stobj.hasTouch = true;
+                                stobj.AddSound(SoundDataType.Touch, headMine);
                             // ALPHA: 1f-5 is a firework star head that cheers on hit, like Cf.
-                            if (note.isHanabi) stobj.hasHanabi = true;
+                            if (note.isHanabi) stobj.AddSound(SoundDataType.Hanabi, false);
                             if (note.isBreak)
                             {
-                                stobj.hasBreak = true;
-                                stobj.hasJudgeBreak = true;
+                                stobj.AddSound(SoundDataType.Break, headMine);
+                                stobj.AddSound(SoundDataType.JudgeBreak, headMine);
                             }
 
-                            if (note.isEx) stobj.hasJudgeEx = true;
-                            if (!note.isBreak && !note.isEx) stobj.hasJudge = true;
+                            if (note.isEx) stobj.AddSound(SoundDataType.JudgeEX, headMine);
+                            if (!note.isBreak && !note.isEx)
+                                stobj.AddSound(SoundDataType.Judge, headMine);
                         }
+
+                        if (note.isFakeSlide)
+                            break;
 
                         // Slide start sound effect
                         var targetTime = note.slideStartTime;
@@ -312,18 +397,21 @@ public partial class MainWindow
                         {
                             if (note.isSlideBreak)
                                 // Use the Break Slide start sound for Break Slides.
-                                waitToBePlayed[nearIndex].hasBreakSlideStart = true;
+                                waitToBePlayed[nearIndex].AddSound(
+                                    SoundDataType.BreakSlideStart, slideMine);
                             else
                                 // Otherwise use the normal Slide start sound.
-                                waitToBePlayed[nearIndex].hasSlide = true;
+                                waitToBePlayed[nearIndex].AddSound(
+                                    SoundDataType.Slide, slideMine);
                         }
                         else
                         {
-                            SoundEffectTiming slide;
-                            if (note.isSlideBreak)
-                                slide = new SoundEffectTiming(targetTime, _hasBreakSlideStart: true);
-                            else
-                                slide = new SoundEffectTiming(targetTime, _hasSlide: true);
+                            var slide = new SoundEffectTiming(targetTime);
+                            slide.AddSound(
+                                note.isSlideBreak
+                                    ? SoundDataType.BreakSlideStart
+                                    : SoundDataType.Slide,
+                                slideMine);
                             waitToBePlayed.Add(slide);
                         }
 
@@ -334,13 +422,16 @@ public partial class MainWindow
                             nearIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - targetTime) < 0.001f);
                             if (nearIndex != -1)
                             {
-                                waitToBePlayed[nearIndex].hasBreakSlide = true;
-                                waitToBePlayed[nearIndex].hasJudgeBreakSlide = true;
+                                waitToBePlayed[nearIndex].AddSound(
+                                    SoundDataType.BreakSlide, slideMine);
+                                waitToBePlayed[nearIndex].AddSound(
+                                    SoundDataType.JudgeBreakSlide, slideMine);
                             }
                             else
                             {
-                                var slide = new SoundEffectTiming(targetTime, _hasBreakSlide: true,
-                                    _hasJudgeBreakSlide: true);
+                                var slide = new SoundEffectTiming(targetTime);
+                                slide.AddSound(SoundDataType.BreakSlide, slideMine);
+                                slide.AddSound(SoundDataType.JudgeBreakSlide, slideMine);
                                 waitToBePlayed.Add(slide);
                             }
                         }
@@ -349,58 +440,64 @@ public partial class MainWindow
                     }
                     case SimaiNoteType.Touch:
                     {
-                        stobj.hasAnswer = true;
-                        stobj.hasTouch = true;
-                        if (note.isHanabi) stobj.hasHanabi = true;
+                        var mine = note.isMineHead;
+                        stobj.AddSound(SoundDataType.Answer, mine);
+                        stobj.AddSound(SoundDataType.Touch, mine);
+                        if (note.isHanabi) stobj.AddSound(SoundDataType.Hanabi, false);
                         // ALPHA: Break Touch (Cxb) emits the Break judgment sound and cheer, like Break Tap/Hold.
                         if (note.isBreak)
                         {
-                            stobj.hasBreak = true;
-                            stobj.hasJudgeBreak = true;
+                            stobj.AddSound(SoundDataType.Break, mine);
+                            stobj.AddSound(SoundDataType.JudgeBreak, mine);
                         }
                         break;
                     }
                     case SimaiNoteType.TouchHold:
                     {
-                        stobj.hasAnswer = true;
-                        stobj.hasTouch = true;
+                        var mine = note.isMineHead;
+                        stobj.AddSound(SoundDataType.Answer, mine);
+                        stobj.AddSound(SoundDataType.Touch, mine);
                         // ALPHA: Break TouchHold (Chb) emits the Break judgment sound and cheer at the head, like Break Hold.
                         if (note.isBreak)
                         {
-                            stobj.hasBreak = true;
-                            stobj.hasJudgeBreak = true;
+                            stobj.AddSound(SoundDataType.Break, mine);
+                            stobj.AddSound(SoundDataType.JudgeBreak, mine);
                         }
                         // Play the riser and calculate the tail only for TouchHolds with a positive duration.
                         // A zero-duration form such as [1:0] parses holdTime as zero, placing riser start and end
                         // at the same time. Sorting may put Stop before Play, leaving the 12.68-second riser running forever.
                         if (note.holdTime > 0.00f)
                         {
-                            stobj.hasTouchHold = true;
+                            stobj.AddSound(SoundDataType.TouchHold, false);
                             // Calculate the TouchHold tail.
                             var targetTime = noteGroup.time + note.holdTime;
                             var nearIndex = waitToBePlayed.FindIndex(o => Math.Abs(o.time - targetTime) < 0.001f);
                             if (nearIndex != -1)
                             {
-                                if (note.isHanabi) waitToBePlayed[nearIndex].hasHanabi = true;
-                                waitToBePlayed[nearIndex].hasAnswer = true;
+                                if (note.isHanabi)
+                                    waitToBePlayed[nearIndex].AddSound(SoundDataType.Hanabi, false);
+                                waitToBePlayed[nearIndex].AddSound(SoundDataType.Answer, mine);
                                 waitToBePlayed[nearIndex].hasTouchHoldEnd = true;
                             }
                             else
                             {
-                                var tHoldRelease = new SoundEffectTiming(targetTime, true, _hasHanabi: note.isHanabi,
+                                var tHoldRelease = new SoundEffectTiming(
+                                    targetTime, _hasHanabi: note.isHanabi,
                                     _hasTouchHoldEnd: true);
+                                tHoldRelease.AddSound(SoundDataType.Answer, mine);
                                 waitToBePlayed.Add(tHoldRelease);
                             }
                         }
                         else if (note.isHanabi)
                         {
                             // Treat a zero-duration TouchHold as a normal Touch while preserving its firework.
-                            stobj.hasHanabi = true;
+                            stobj.AddSound(SoundDataType.Hanabi, false);
                         }
 
                         break;
                     }
                 }
+            }
 
             if (combIndex != -1)
                 waitToBePlayed[combIndex] = stobj;
@@ -422,6 +519,40 @@ public partial class MainWindow
             extraTime4AllPerfect = -1;
 
         //Console.WriteLine(JsonConvert.SerializeObject(waitToBePlayed));
+    }
+
+    private void ScheduleTouchHoldTailsAfter(
+        SimaiTimingPoint noteGroup, int noteGroupIndex, double startTime)
+    {
+        var schedule = waitToBePlayed!;
+        foreach (var note in noteGroup.getNotes())
+        {
+            if (note.noteType != SimaiNoteType.TouchHold ||
+                note.isFake || note.holdTime <= 0f)
+                continue;
+
+            var targetTime = noteGroup.time + note.holdTime;
+            if (targetTime < startTime - 0.001d)
+                continue;
+
+            var mine = note.isMineHead;
+            var releaseIndex = schedule.FindIndex(
+                item => Math.Abs(item.time - targetTime) < 0.001d);
+            SoundEffectTiming release;
+            if (releaseIndex >= 0)
+                release = schedule[releaseIndex];
+            else
+            {
+                release = new SoundEffectTiming(targetTime);
+                schedule.Add(release);
+            }
+
+            release.noteGroupIndex = noteGroupIndex;
+            release.AddSound(SoundDataType.Answer, mine);
+            if (note.isHanabi)
+                release.AddSound(SoundDataType.Hanabi, false);
+            release.hasTouchHoldEnd = true;
+        }
     }
 
     private void renderSoundEffect(double delaySeconds)
@@ -556,6 +687,49 @@ public partial class MainWindow
         // Use a silent lead-in if track_start.wav is missing or undecodable instead of crashing the recording.
         var trackStartRaw = trackStartBank.Raw ?? Array.Empty<short>();
 
+        // Capture the same channel volumes used by real-time playback before
+        // rendering. Mine samples can then be mixed into two shared tracks
+        // instead of allocating a full-song buffer for every sound type.
+        float bgmVol = 1f,
+            answerVol = 1f,
+            judgeVol = 1f,
+            judgeExVol = 1f,
+            hanabiVol = 1f,
+            touchVol = 1f,
+            slideVol = 1f,
+            breakVol = 1f,
+            breakSlideVol = 1f,
+            mineVol = MineVolume;
+        Bass.BASS_ChannelGetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, ref bgmVol);
+        Bass.BASS_ChannelGetAttribute(answerStream, BASSAttribute.BASS_ATTRIB_VOL, ref answerVol);
+        Bass.BASS_ChannelGetAttribute(judgeStream, BASSAttribute.BASS_ATTRIB_VOL, ref judgeVol);
+        Bass.BASS_ChannelGetAttribute(breakStream, BASSAttribute.BASS_ATTRIB_VOL, ref breakVol);
+        Bass.BASS_ChannelGetAttribute(breakSlideStream, BASSAttribute.BASS_ATTRIB_VOL, ref breakSlideVol);
+        Bass.BASS_ChannelGetAttribute(slideStream, BASSAttribute.BASS_ATTRIB_VOL, ref slideVol);
+        Bass.BASS_ChannelGetAttribute(judgeExStream, BASSAttribute.BASS_ATTRIB_VOL, ref judgeExVol);
+        Bass.BASS_ChannelGetAttribute(touchStream, BASSAttribute.BASS_ATTRIB_VOL, ref touchVol);
+        Bass.BASS_ChannelGetAttribute(hanabiStream, BASSAttribute.BASS_ATTRIB_VOL, ref hanabiVol);
+
+        float GetSoundVolume(SoundDataType type)
+        {
+            return type switch
+            {
+                SoundDataType.Answer => answerVol,
+                SoundDataType.Judge => judgeVol,
+                SoundDataType.JudgeBreak => breakVol,
+                SoundDataType.JudgeEX => judgeExVol,
+                SoundDataType.Break => breakVol * 0.75f,
+                SoundDataType.BreakSlide or SoundDataType.JudgeBreakSlide => breakSlideVol,
+                SoundDataType.Hanabi or SoundDataType.TouchHold => hanabiVol,
+                SoundDataType.Slide or SoundDataType.BreakSlideStart => slideVol,
+                SoundDataType.Touch => touchVol,
+                SoundDataType.AllPerfect or
+                    SoundDataType.FullComboFanfare or
+                    SoundDataType.Clock => bgmVol,
+                _ => 1f
+            };
+        }
+
         var trackOps = new List<SoundDataRange>();
         var typeSamples = new Dictionary<SoundDataType, short[]>();
         foreach (SoundDataType sType in Enum.GetValues(SoundDataType.None.GetType()))
@@ -563,6 +737,8 @@ public partial class MainWindow
             if (sType == 0) continue;
             typeSamples[sType] = new short[sampleCount];
         }
+        var mineSamples = new short[sampleCount];
+        var mineTouchHoldSamples = new short[sampleCount];
         var mediaSamples = new short[sampleCount];
         var timelineAudioReplacesBgm = GetEffectiveMediaTable().Any(item =>
             item.timelineClip && item.kind == "audio" && item.enabled);
@@ -590,38 +766,52 @@ public partial class MainWindow
             };
         }
 
-        void sampleWrite(int time, SoundDataType type)
+        void sampleWrite(int time, SoundDataType type, bool isMine)
         {
             var sample = getSampleFromType(type);
             if (sample == null) return;
             if (sample.Raw == null) return;
             if (sample.Frequency <= 0) return;
-            for (var t = 0; t < sample.RawSize && time + t < typeSamples[type].Length; t++)
-                typeSamples[type][time + t] = sample.Raw[t];
+            var destination = isMine
+                ? type == SoundDataType.TouchHold
+                    ? mineTouchHoldSamples
+                    : mineSamples
+                : typeSamples[type];
+            var volume = isMine ? GetSoundVolume(type) * mineVol : 1f;
+            for (var t = 0; t < sample.RawSize && time + t < destination.Length; t++)
+            {
+                if (!isMine)
+                {
+                    destination[time + t] = sample.Raw[t];
+                    continue;
+                }
+                var mixed = destination[time + t] + sample.Raw[t] * volume;
+                destination[time + t] =
+                    (short)Math.Clamp(mixed, short.MinValue, short.MaxValue);
+            }
         }
 
         void sampleWipe(int timeFrom, int timeTo, SoundDataType type)
         {
             for (var t = timeFrom; t < timeTo && t < typeSamples[type].Length; t++)
+            {
                 typeSamples[type][t] = 0;
+                if (type == SoundDataType.TouchHold)
+                    mineTouchHoldSamples[t] = 0;
+            }
         }
 
         // Generate the track for each sound effect.
         foreach (var soundTiming in waitToBePlayed!)
         {
             var startIndex = (int)(soundTiming.time * freq) * 2; // Multiply by two for the two channels.
-            if (soundTiming.hasAnswer) sampleWrite(startIndex, SoundDataType.Answer);
-            if (soundTiming.hasJudge) sampleWrite(startIndex, SoundDataType.Judge);
-            if (soundTiming.hasJudgeBreak) sampleWrite(startIndex, SoundDataType.JudgeBreak);
-            if (soundTiming.hasJudgeEx) sampleWrite(startIndex, SoundDataType.JudgeEX);
-            if (soundTiming.hasBreak)
-                // Reach for the Stars.ogg
-                sampleWrite(startIndex, SoundDataType.Break);
-            if (soundTiming.hasHanabi) sampleWrite(startIndex, SoundDataType.Hanabi);
-            if (soundTiming.hasTouchHold)
+            foreach (var type in soundTiming.NormalSounds)
+                sampleWrite(startIndex, type, isMine: false);
+            foreach (var type in soundTiming.MineSounds)
+                sampleWrite(startIndex, type, isMine: true);
+            if (soundTiming.NormalSounds.Contains(SoundDataType.TouchHold) ||
+                soundTiming.MineSounds.Contains(SoundDataType.TouchHold))
             {
-                // no need to "CutNow" as HoldEnd did the work.
-                sampleWrite(startIndex, SoundDataType.TouchHold);
                 trackOps.Add(new SoundDataRange(SoundDataType.TouchHold, startIndex, holdRiserBank.RawSize));
             }
 
@@ -633,18 +823,6 @@ public partial class MainWindow
                 continue;
             }
 
-            if (soundTiming.hasSlide) sampleWrite(startIndex, SoundDataType.Slide);
-            if (soundTiming.hasTouch) sampleWrite(startIndex, SoundDataType.Touch);
-            if (soundTiming.hasBreakSlideStart) sampleWrite(startIndex, SoundDataType.BreakSlideStart);
-            if (soundTiming.hasBreakSlide) sampleWrite(startIndex, SoundDataType.BreakSlide);
-            if (soundTiming.hasJudgeBreakSlide) sampleWrite(startIndex, SoundDataType.JudgeBreakSlide);
-            if (soundTiming.hasAllPerfect)
-            {
-                sampleWrite(startIndex, SoundDataType.AllPerfect);
-                sampleWrite(startIndex, SoundDataType.FullComboFanfare);
-            }
-
-            if (soundTiming.hasClock) sampleWrite(startIndex, SoundDataType.Clock);
         }
 
         void WriteMediaClip(MediaChange media, double? stopTime)
@@ -695,27 +873,6 @@ public partial class MainWindow
                 WriteMediaClip(activeMedia, null);
         }
 
-        // Get the volume used during real-time playback.
-
-        float bgmVol = 1f,
-            answerVol = 1f,
-            judgeVol = 1f,
-            judgeExVol = 1f,
-            hanabiVol = 1f,
-            touchVol = 1f,
-            slideVol = 1f,
-            breakVol = 1f,
-            breakSlideVol = 1f;
-        Bass.BASS_ChannelGetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, ref bgmVol);
-        Bass.BASS_ChannelGetAttribute(answerStream, BASSAttribute.BASS_ATTRIB_VOL, ref answerVol);
-        Bass.BASS_ChannelGetAttribute(judgeStream, BASSAttribute.BASS_ATTRIB_VOL, ref judgeVol);
-        Bass.BASS_ChannelGetAttribute(breakStream, BASSAttribute.BASS_ATTRIB_VOL, ref breakVol);
-        Bass.BASS_ChannelGetAttribute(breakSlideStream, BASSAttribute.BASS_ATTRIB_VOL, ref breakSlideVol);
-        Bass.BASS_ChannelGetAttribute(slideStream, BASSAttribute.BASS_ATTRIB_VOL, ref slideVol);
-        Bass.BASS_ChannelGetAttribute(judgeExStream, BASSAttribute.BASS_ATTRIB_VOL, ref judgeExVol);
-        Bass.BASS_ChannelGetAttribute(touchStream, BASSAttribute.BASS_ATTRIB_VOL, ref touchVol);
-        Bass.BASS_ChannelGetAttribute(hanabiStream, BASSAttribute.BASS_ATTRIB_VOL, ref hanabiVol);
-
         var filedata = new List<byte>();
         var delayEmpty = new short[(int)(delaySeconds * freq * 2)];
         var filehead = CreateWaveFileHeader(bgmRaw.Length * 2 + delayEmpty.Length * 2, 2, freq, 16).ToList();
@@ -741,46 +898,10 @@ public partial class MainWindow
             {
                 var type = sampleTuple.Key;
                 var track = sampleTuple.Value;
-
-                switch (type)
-                {
-                    case SoundDataType.Answer:
-                        sampleValue += track[i] * answerVol;
-                        break;
-                    case SoundDataType.Judge:
-                        sampleValue += track[i] * judgeVol;
-                        break;
-                    case SoundDataType.JudgeBreak:
-                        sampleValue += track[i] * breakVol;
-                        break;
-                    case SoundDataType.JudgeEX:
-                        sampleValue += track[i] * judgeExVol;
-                        break;
-                    case SoundDataType.Break:
-                        sampleValue += track[i] * breakVol * 0.75f;
-                        break;
-                    case SoundDataType.BreakSlide:
-                    case SoundDataType.JudgeBreakSlide:
-                        sampleValue += track[i] * breakSlideVol;
-                        break;
-                    case SoundDataType.Hanabi:
-                    case SoundDataType.TouchHold:
-                        sampleValue += track[i] * hanabiVol;
-                        break;
-                    case SoundDataType.Slide:
-                    case SoundDataType.BreakSlideStart:
-                        sampleValue += track[i] * slideVol;
-                        break;
-                    case SoundDataType.Touch:
-                        sampleValue += track[i] * touchVol;
-                        break;
-                    case SoundDataType.AllPerfect:
-                    case SoundDataType.FullComboFanfare:
-                    case SoundDataType.Clock:
-                        sampleValue += track[i] * bgmVol;
-                        break;
-                }
+                var volume = GetSoundVolume(type);
+                sampleValue += track[i] * volume;
             }
+            sampleValue += mineSamples[i] + mineTouchHoldSamples[i];
 
             var value = (long)sampleValue;
             if (value > short.MaxValue)
@@ -794,6 +915,8 @@ public partial class MainWindow
         File.WriteAllBytes(maidataDir + "/out.wav", filehead.ToArray());
 
         typeSamples.Clear();
+        Array.Clear(mineSamples);
+        Array.Clear(mineTouchHoldSamples);
         Array.Clear(mediaSamples);
         bgmBank.Free();
         comparableBanks.Values.ToList().ForEach(otherBank =>
@@ -876,23 +999,11 @@ public partial class MainWindow
 
     private class SoundEffectTiming
     {
-        public readonly bool hasAllPerfect;
-        public readonly bool hasClock;
         public readonly double time;
-        public bool hasAnswer;
-        public bool hasBreak;
-        public bool hasBreakSlide;
-        public bool hasBreakSlideStart;
-        public bool hasHanabi;
-        public bool hasJudge;
-        public bool hasJudgeBreak;
-        public bool hasJudgeBreakSlide;
-        public bool hasJudgeEx;
-        public bool hasSlide;
-        public bool hasTouch;
-        public bool hasTouchHold;
         public bool hasTouchHoldEnd;
         public int noteGroupIndex = -1;
+        public HashSet<SoundDataType> NormalSounds { get; } = new();
+        public HashSet<SoundDataType> MineSounds { get; } = new();
 
         public SoundEffectTiming(double _time, bool _hasAnswer = false, bool _hasJudge = false,
             bool _hasJudgeBreak = false,
@@ -902,21 +1013,30 @@ public partial class MainWindow
             bool _hasBreakSlideStart = false, bool _hasBreakSlide = false, bool _hasJudgeBreakSlide = false)
         {
             time = _time;
-            hasAnswer = _hasAnswer;
-            hasJudge = _hasJudge;
-            hasJudgeBreak = _hasJudgeBreak; // Preserve the judgment-Break flag.
-            hasBreak = _hasBreak;
-            hasTouch = _hasTouch;
-            hasHanabi = _hasHanabi;
-            hasJudgeEx = _hasJudgeEx;
-            hasTouchHold = _hasTouchHold;
-            hasSlide = _hasSlide;
             hasTouchHoldEnd = _hasTouchHoldEnd;
-            hasAllPerfect = _hasAllPerfect;
-            hasClock = _hasClock;
-            hasBreakSlideStart = _hasBreakSlideStart;
-            hasBreakSlide = _hasBreakSlide;
-            hasJudgeBreakSlide = _hasJudgeBreakSlide;
+            if (_hasAnswer) AddSound(SoundDataType.Answer, false);
+            if (_hasJudge) AddSound(SoundDataType.Judge, false);
+            if (_hasJudgeBreak) AddSound(SoundDataType.JudgeBreak, false);
+            if (_hasBreak) AddSound(SoundDataType.Break, false);
+            if (_hasTouch) AddSound(SoundDataType.Touch, false);
+            if (_hasHanabi) AddSound(SoundDataType.Hanabi, false);
+            if (_hasJudgeEx) AddSound(SoundDataType.JudgeEX, false);
+            if (_hasTouchHold) AddSound(SoundDataType.TouchHold, false);
+            if (_hasSlide) AddSound(SoundDataType.Slide, false);
+            if (_hasAllPerfect)
+            {
+                AddSound(SoundDataType.AllPerfect, false);
+                AddSound(SoundDataType.FullComboFanfare, false);
+            }
+            if (_hasClock) AddSound(SoundDataType.Clock, false);
+            if (_hasBreakSlideStart) AddSound(SoundDataType.BreakSlideStart, false);
+            if (_hasBreakSlide) AddSound(SoundDataType.BreakSlide, false);
+            if (_hasJudgeBreakSlide) AddSound(SoundDataType.JudgeBreakSlide, false);
+        }
+
+        public void AddSound(SoundDataType type, bool isMine)
+        {
+            (isMine ? MineSounds : NormalSounds).Add(type);
         }
     }
 

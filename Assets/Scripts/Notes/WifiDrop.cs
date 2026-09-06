@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Interfaces;
+using Assets.Scripts.Interfaces;
 using Assets.Scripts.Types;
 using System;
 using System.Collections.Generic;
@@ -25,6 +25,8 @@ public class WifiDrop : NoteLongDrop,IFlasher
 
     public float timeStart;
     public bool isBreak;
+    public bool isMine;
+    public bool suppressGuideStarFadeIn;
     public bool isGroupPart;
     public bool isGroupPartEnd;
 
@@ -39,8 +41,66 @@ public class WifiDrop : NoteLongDrop,IFlasher
 
     public Material breakMaterial;
     public Material colorOverrideMaterial;
+    public Material guideStarMaterial;
     public float noteScaleX = 1f;
     public float noteScaleY = 1f;
+    public float guideStarScaleX = 1f;
+    public float guideStarScaleY = 1f;
+    private Vector2? liveScaleDefault;
+    private Vector2? liveGuideStarScaleDefault;
+
+    public override void ApplyLiveScale(Vector2? scale)
+    {
+        liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
+        var previous = new Vector2(noteScaleX, noteScaleY);
+        var value = scale ?? liveScaleDefault.Value;
+        noteScaleX = value.x;
+        noteScaleY = value.y;
+        if (previous.x == 0f || previous.y == 0f)
+            return;
+
+        var ratio = new Vector3(value.x / previous.x, value.y / previous.y, 1f);
+        foreach (var bar in slideBars)
+            if (bar != null)
+                bar.transform.localScale = Vector3.Scale(bar.transform.localScale, ratio);
+    }
+
+    // COLOR paints a slide's route and leaves the moving guide star to the "star"
+    // category. The live commands have to paint exactly the same thing, and the
+    // route is not a child of the note object, so nothing generic can reach it:
+    // this used to hand back only what the base class found, which is why COLORV
+    // left the arc untouched while COLOR coloured it.
+    protected override IEnumerable<SpriteRenderer> GetLiveVisualRenderers()
+    {
+        foreach (var renderer in base.GetLiveVisualRenderers())
+            if (renderer != null &&
+                System.Array.IndexOf(spriteRenderer_star, renderer) < 0)
+                yield return renderer;
+        foreach (var renderer in sbRender)
+            if (renderer != null)
+                yield return renderer;
+    }
+
+    public override void ApplyLiveGuideStarColor(Color? color)
+    {
+        foreach (var renderer in spriteRenderer_star)
+            ApplyLiveRendererColor(renderer, color);
+    }
+
+    public override void ApplyLiveGuideStarAlpha(float? alpha)
+    {
+        foreach (var renderer in spriteRenderer_star)
+            ApplyLiveRendererAlpha(renderer, alpha);
+    }
+
+    public override void ApplyLiveGuideStarScale(Vector2? scale)
+    {
+        liveGuideStarScaleDefault ??= new Vector2(
+            guideStarScaleX, guideStarScaleY);
+        var value = scale ?? liveGuideStarScaleDefault.Value;
+        guideStarScaleX = value.x;
+        guideStarScaleY = value.y;
+    }
 
     bool canShine = false;
 
@@ -77,8 +137,13 @@ public class WifiDrop : NoteLongDrop,IFlasher
     public float GetAppearanceStartOffset()
     {
         var fadeLeadScale = 1f - Mathf.Clamp(starSpeed, -1f, 1f);
-        return (-3f / speed) * fadeLeadScale;
+        var motionSpeed = Mathf.Abs(speed);
+        return motionSpeed <= 0.0001f
+            ? 0f
+            : (-3f / motionSpeed) * fadeLeadScale;
     }
+
+    private void Awake() => HideSlideBarsUntilInitialized(transform);
 
     private void Start()
     {
@@ -196,13 +261,15 @@ public class WifiDrop : NoteLongDrop,IFlasher
             .Select(queue => new List<JudgeArea>(queue))
             .ToList();
         ResetJudgeState();
-        // Match SlideDrop: color/alpha/grayscale override is applied last so
-        // neither the default nor break material can replace it.
+        if (guideStarMaterial != null)
+            foreach (var renderer in spriteRenderer_star)
+                renderer.sharedMaterial = guideStarMaterial;
+
+        // The slide override applies to the route only. The three moving
+        // guide stars follow the "star" visual category.
         if (colorOverrideMaterial != null)
         {
             foreach (var renderer in sbRender)
-                renderer.sharedMaterial = colorOverrideMaterial;
-            foreach (var renderer in spriteRenderer_star)
                 renderer.sharedMaterial = colorOverrideMaterial;
         }
         //for(int i =0; i< 4; i++)
@@ -220,10 +287,11 @@ public class WifiDrop : NoteLongDrop,IFlasher
                                     .Select(x => x.Key);
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
         boundSensors.AddRange(allSensors);
+        InvalidateLiveVisual();
     }
     private void BindJudgeInputWhenReady()
     {
-        if (previewOnly || isJudgeInputBound || !canCheck)
+        if (JudgmentDisabled || isJudgeInputBound || !canCheck)
             return;
 
         foreach (var sensor in boundSensors)
@@ -232,7 +300,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
     }
     private void FixedUpdate()
     {
-        if (previewOnly)
+        if (JudgmentDisabled || JudgmentSuspended)
             return;
         /// time      is when the Slide starts
         /// timeStart is when the Slide is fully visible but not yet moving
@@ -286,7 +354,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
     public void Check(object sender, InputEventArgs arg) => CheckAll();
     void CheckAll()
     {
-        if (previewOnly)
+        if (JudgmentDisabled || JudgmentSuspended)
             return;
         if (isFinished || !canCheck)
             return;
@@ -462,10 +530,26 @@ public class WifiDrop : NoteLongDrop,IFlasher
         }
         lastAudioTime = audioTime;
 
+        // Same reason as SlideDrop: a paused preview never judges, so without this
+        // every Wifi the caret has already crossed stays on screen.
+        if (IsPausedTimelinePreview &&
+            audioTime > time + Mathf.Max(0f, LastFor))
+        {
+            setSlideBarAlpha(0f);
+            foreach (var star in star_slide)
+                if (star != null)
+                    star.SetActive(false);
+            if (slideOK != null)
+                slideOK.SetActive(false);
+            return;
+        }
+
         var startiming = timeProvider.AudioTime - timeStart;
         if (startiming <= 0f)
         {
             RestoreBars();
+            foreach (var star in star_slide)
+                star.SetActive(false);
             var alpha = fadeInTime >= -0.0001f
                 ? (startiming >= 0f ? 1f : 0f)
                 : Mathf.InverseLerp(fadeInTime, 0f, startiming);
@@ -474,22 +558,30 @@ public class WifiDrop : NoteLongDrop,IFlasher
         }
 
         setSlideBarAlpha(1f);
+        var showGuideStars =
+            audioTime > timeStart &&
+            (!suppressGuideStarFadeIn || audioTime >= time);
         foreach (var star in star_slide)
-            star.SetActive(true);
+            star.SetActive(showGuideStars);
 
         var timing = timeProvider.AudioTime - time;
-        if (timing <= 0f)
+        if (timing < 0f)
         {
             canShine = true;
             float alpha;
-            alpha = 1f - -timing / (time - timeStart);
+            alpha = suppressGuideStarFadeIn
+                ? 0f
+                : 1f - -timing / (time - timeStart);
             alpha = alpha > 1f ? 1f : alpha;
             alpha = alpha < 0f ? 0f : alpha;
 
             for (var i = 0; i < star_slide.Length; i++)
             {
                 spriteRenderer_star[i].color = new Color(1, 1, 1, alpha);
-                star_slide[i].transform.localScale = new Vector3(alpha + 0.5f, alpha + 0.5f, alpha + 0.5f);
+                star_slide[i].transform.localScale = new Vector3(
+                    (alpha + 0.5f) * guideStarScaleX,
+                    (alpha + 0.5f) * guideStarScaleY,
+                    1f);
                 star_slide[i].transform.position = SlidePositionStart;
             }
         }
@@ -503,7 +595,21 @@ public class WifiDrop : NoteLongDrop,IFlasher
     void UpdateStar()
     {
         var process = SvController.GetTypedOnlyProgress(
-            time, LastFor, timeProvider.AudioTime, "slide");
+            time, LastFor, timeProvider.AudioTime,
+            SvController.ForSameStream(scrollType, "slide"));
+        if (JudgmentDisabled)
+        {
+            RestoreBars();
+            if (process > 0f && areaStep.Count > 0)
+            {
+                var barIndex = areaStep[
+                    Mathf.Clamp(
+                        (int)(process * (areaStep.Count - 1)),
+                        0,
+                        areaStep.Count - 1)];
+                HideBar(barIndex);
+            }
+        }
 
         if (process >= 1)
         {
@@ -511,7 +617,18 @@ public class WifiDrop : NoteLongDrop,IFlasher
             {
                 spriteRenderer_star[i].color = Color.white;
                 star_slide[i].transform.position = SlidePositionEnd[i];
-                star_slide[i].transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
+                star_slide[i].transform.localScale = new Vector3(
+                    1.5f * guideStarScaleX,
+                    1.5f * guideStarScaleY,
+                    1f);
+            }
+            if (timeProvider.AudioTime < time + LastFor)
+                return;
+            if (JudgmentDisabled)
+            {
+                foreach (var star in star_slide)
+                    star.SetActive(false);
+                return;
             }
             switch (InputManager.Mode)
             {
@@ -533,19 +650,23 @@ public class WifiDrop : NoteLongDrop,IFlasher
                 spriteRenderer_star[i].color = Color.white;
                 star_slide[i].transform.position =
                     (SlidePositionEnd[i] - SlidePositionStart) * process + SlidePositionStart; //TODO add some runhua
-                star_slide[i].transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
+                star_slide[i].transform.localScale = new Vector3(
+                    1.5f * guideStarScaleX,
+                    1.5f * guideStarScaleY,
+                    1f);
             }
         }
-        switch (InputManager.Mode)
+        // Auto-play wipes the trail as it traces, which a fake slide must not do:
+        // it is not there to be hit, so it has to end looking like a miss whether
+        // or not auto-play is on.
+        if (!isFake &&
+            InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
         {
-            case AutoPlayMode.Enable:
-            case AutoPlayMode.Random:
-                var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
-                var removeCount = (int)(process * (judgeQueues.Count - 1));
-                if (removeCount > 0)
-                    judgeQueues.RemoveRange(0, Math.Min(removeCount, judgeQueues.Count));
-                HideBar(barIndex);
-                break;
+            var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
+            var removeCount = (int)(process * (judgeQueues.Count - 1));
+            if (removeCount > 0)
+                judgeQueues.RemoveRange(0, Math.Min(removeCount, judgeQueues.Count));
+            HideBar(barIndex);
         }
     }
     void SetJust()
@@ -624,7 +745,9 @@ public class WifiDrop : NoteLongDrop,IFlasher
         }
         foreach (var star in star_slide)
             if (star != null)
-                star.SetActive(now > timeStart);
+                star.SetActive(
+                    now > timeStart &&
+                    (!suppressGuideStarFadeIn || now >= time));
     }
 
     private void RestoreBars()
@@ -634,13 +757,25 @@ public class WifiDrop : NoteLongDrop,IFlasher
                 bar.SetActive(true);
     }
 
+    private void OnDisable()
+    {
+        if (star_slide == null)
+            return;
+        foreach (var star in star_slide)
+            if (star != null)
+                star.SetActive(false);
+    }
+
     void DestroySelf()
     {
         foreach (GameObject obj in slideBars)
             obj.SetActive(false);
 
         for (var i = 0; i < star_slide.Length; i++)
+        {
             Destroy(star_slide[i]);
+            star_slide[i] = null;
+        }
         Destroy(gameObject);
     }
     void OnDestroy()
@@ -651,8 +786,15 @@ public class WifiDrop : NoteLongDrop,IFlasher
         if (isJudgeInputBound)
             foreach (var sensor in boundSensors)
                 inputManager?.UnbindSensor(Check, sensor);
+        for (var i = 0; i < star_slide.Length; i++)
+        {
+            if (star_slide[i] == null)
+                continue;
+            Destroy(star_slide[i]);
+            star_slide[i] = null;
+        }
 
-        if (previewOnly || HttpHandler.IsReloding)
+        if (JudgmentDisabled || HttpHandler.IsReloding)
             return;
         ClearTriggeredSensor();
 
@@ -673,7 +815,12 @@ public class WifiDrop : NoteLongDrop,IFlasher
         if (isBreak && judgeResult == JudgeType.Perfect && slideOK != null)
             slideOK.GetComponent<Animator>().runtimeAnimatorController = judgeBreakShine;
         if (slideOK != null)
-            slideOK.SetActive(true);
+        {
+            if (isMine && !NoteEffectManager.ShowMineHitFeedback)
+                Destroy(slideOK);
+            else
+                slideOK.SetActive(true);
+        }
     }
     void ClearTriggeredSensor()
     {

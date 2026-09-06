@@ -1,10 +1,12 @@
 using System.Collections.Generic;
 using System.Linq;
+using MajdataCore;
 
 /// <summary>
 /// Global Scroll Velocity controller.
 /// Stores the chart's SV table and provides cumulative scroll-distance queries.
-/// distance = 4.8 - speed * (noteScrollPos - GetCumulativeScroll(audioTime))
+/// radius = destroy - direction * speed *
+///          (noteScrollPos - GetCumulativeScroll(audioTime))
 /// </summary>
 public static class SvController
 {
@@ -12,23 +14,39 @@ public static class SvController
     {
         public double[] Times = System.Array.Empty<double>();
         public double[] Cumulatives = System.Array.Empty<double>();
-        public double[] MaxCumulatives = System.Array.Empty<double>();
         public float[] Multipliers = System.Array.Empty<float>();
+        public ScrollPoint[] Points = System.Array.Empty<ScrollPoint>();
     }
 
     // Breakpoint times in ascending order
     private static double[] _times      = System.Array.Empty<double>();
     // Cumulative value at each breakpoint: integral [0 to t_i] sv(tau) dtau
     private static double[] _cumulatives = System.Array.Empty<double>();
-    private static double[] _maxCumulatives = System.Array.Empty<double>();
     // SV multiplier from this breakpoint until the next
     private static float[]  _multipliers = System.Array.Empty<float>();
+    private static ScrollPoint[] _points = System.Array.Empty<ScrollPoint>();
     private static readonly Dictionary<string, Curve> TypedCurves = new();
     private static readonly Dictionary<string, Curve> TypedOnlyCurves = new();
+    private static readonly HashSet<string> TypedKeys = new();
+    private static Curve DefaultStreamCurve = BuildCurve(new[] { (0d, 1f) });
 
     public static bool IsEmpty => _times.Length == 0;
     public static bool HasTypedCurve(string noteType) =>
-        !string.IsNullOrWhiteSpace(noteType) && TypedCurves.ContainsKey(noteType.ToLowerInvariant());
+        !string.IsNullOrWhiteSpace(noteType) && TypedKeys.Contains(NormalizeCurveKey(noteType));
+
+    public static string MakeCurveKey(int streamIndex, string noteType)
+    {
+        var normalized = (noteType ?? string.Empty).Trim().ToLowerInvariant();
+        return streamIndex == 0 ? normalized : streamIndex + "|" + normalized;
+    }
+
+    public static string ForSameStream(string curveKey, string noteType)
+    {
+        var separator = curveKey?.IndexOf('|') ?? -1;
+        return separator > 0 && int.TryParse(curveKey.Substring(0, separator), out var streamIndex)
+            ? MakeCurveKey(streamIndex, noteType)
+            : MakeCurveKey(0, noteType);
+    }
 
     /// <summary>
     /// Initializes from the chart's SV points, sorted by time.
@@ -37,59 +55,43 @@ public static class SvController
     public static void Load(List<SvPoint> points, double chartStartTime = 0.0)
     {
         points ??= new List<SvPoint>();
-        var globalPoints = points.Where(point => string.IsNullOrWhiteSpace(point.noteType)).ToList();
-        // Like <HS*>: carry forward the last SV value set before the start point.
-        float effectiveSv = 1.0f;
-        foreach (var p in globalPoints.OrderBy(p => p.time))
-            if (p.time <= chartStartTime)
-                effectiveSv = p.multiplier;
-
-        var sorted = new List<SvPoint> { new SvPoint { time = chartStartTime, multiplier = effectiveSv } };
-        foreach (var p in globalPoints.OrderBy(p => p.time))
-            if (p.time > chartStartTime)
-                sorted.Add(p);
-
-        int n = sorted.Count;
-        _times       = new double[n];
-        _cumulatives = new double[n];
-        _maxCumulatives = new double[n];
-        _multipliers = new float[n];
-
-        _times[0]       = sorted[0].time;
-        _cumulatives[0] = 0.0;
-        _maxCumulatives[0] = 0.0;
-        _multipliers[0] = sorted[0].multiplier;
-
-        for (int i = 1; i < n; i++)
-        {
-            _times[i]       = sorted[i].time;
-            _multipliers[i] = sorted[i].multiplier;
-            // cumulative up to this breakpoint
-            _cumulatives[i] = _cumulatives[i - 1]
-                               + _multipliers[i - 1] * (_times[i] - _times[i - 1]);
-            _maxCumulatives[i] = System.Math.Max(
-                _maxCumulatives[i - 1],
-                _cumulatives[i]);
-        }
-
         TypedCurves.Clear();
         TypedOnlyCurves.Clear();
-        foreach (var noteType in points
+        TypedKeys.Clear();
+
+        var mainCurve = BuildEffectiveCurve(points, 0, string.Empty, chartStartTime);
+        DefaultStreamCurve = BuildCurve(new[] { (chartStartTime, 1f) });
+        _times = mainCurve.Times;
+        _cumulatives = mainCurve.Cumulatives;
+        _multipliers = mainCurve.Multipliers;
+        _points = mainCurve.Points;
+
+        foreach (var streamIndex in points.Select(point => point.streamIndex).Where(index => index != 0).Distinct())
+            TypedCurves[MakeCurveKey(streamIndex, string.Empty)] =
+                BuildEffectiveCurve(points, streamIndex, string.Empty, chartStartTime);
+
+        foreach (var group in points
                      .Where(point => !string.IsNullOrWhiteSpace(point.noteType))
-                     .Select(point => point.noteType.ToLowerInvariant())
-                     .Distinct())
+                     .GroupBy(point => (point.streamIndex, Type: point.noteType.ToLowerInvariant())))
         {
-            TypedCurves[noteType] = BuildTypedCurve(points, noteType, chartStartTime);
-            TypedOnlyCurves[noteType] = BuildTypedOnlyCurve(points, noteType, chartStartTime);
+            var key = MakeCurveKey(group.Key.streamIndex, group.Key.Type);
+            TypedKeys.Add(key);
+            TypedCurves[key] = BuildEffectiveCurve(
+                points, group.Key.streamIndex, group.Key.Type, chartStartTime);
+            TypedOnlyCurves[key] = BuildTypedOnlyCurve(
+                points, group.Key.streamIndex, group.Key.Type, chartStartTime);
         }
     }
 
-    private static Curve BuildTypedOnlyCurve(List<SvPoint> points, string noteType, double chartStartTime)
+    private static Curve BuildTypedOnlyCurve(
+        List<SvPoint> points, int streamIndex, string noteType, double chartStartTime)
     {
         var typedPoints = points
-            .Where(point => string.Equals(point.noteType, noteType,
+            .Where(point => point.streamIndex == streamIndex &&
+                            string.Equals(point.noteType, noteType,
                 System.StringComparison.OrdinalIgnoreCase))
             .OrderBy(point => point.time)
+            .ThenBy(point => point.sourcePosition)
             .ToList();
         var effective = 1f;
         foreach (var point in typedPoints)
@@ -108,99 +110,69 @@ public static class SvController
         return BuildCurve(entries);
     }
 
-    private static Curve BuildCurve(IReadOnlyList<(double Time, float Multiplier)> entries)
+    private static Curve BuildEffectiveCurve(
+        List<SvPoint> points, int streamIndex, string noteType, double chartStartTime)
     {
-        var curve = new Curve
-        {
-            Times = entries.Select(entry => entry.Time).ToArray(),
-            Multipliers = entries.Select(entry => entry.Multiplier).ToArray(),
-            Cumulatives = new double[entries.Count],
-            MaxCumulatives = new double[entries.Count]
-        };
-        for (var index = 1; index < entries.Count; index++)
-        {
-            curve.Cumulatives[index] = curve.Cumulatives[index - 1] +
-                curve.Multipliers[index - 1] * (curve.Times[index] - curve.Times[index - 1]);
-            curve.MaxCumulatives[index] = System.Math.Max(
-                curve.MaxCumulatives[index - 1], curve.Cumulatives[index]);
-        }
-        return curve;
-    }
-
-    private static Curve BuildTypedCurve(List<SvPoint> points, string noteType, double chartStartTime)
-    {
-        float? typeOverride = null;
-        foreach (var point in points.OrderBy(point => point.time))
-        {
-            if (point.time > chartStartTime ||
-                !string.Equals(point.noteType, noteType, System.StringComparison.OrdinalIgnoreCase))
-                continue;
-            typeOverride = point.reset ? null : point.multiplier;
-        }
-
-        var effective = typeOverride ?? GetCurrentSV(chartStartTime);
-        var entries = new List<(double Time, float Multiplier)> { (chartStartTime, effective) };
-        foreach (var point in points
-                     .Where(point => point.time > chartStartTime &&
-                                     (string.IsNullOrWhiteSpace(point.noteType) ||
-                                      string.Equals(point.noteType, noteType,
-                                          System.StringComparison.OrdinalIgnoreCase)))
-                     .OrderBy(point => point.time))
+        var relevant = points
+            .Where(point => point.streamIndex == streamIndex &&
+                            (string.IsNullOrWhiteSpace(point.noteType) ||
+                             (!string.IsNullOrWhiteSpace(noteType) &&
+                              string.Equals(point.noteType, noteType,
+                                  System.StringComparison.OrdinalIgnoreCase))))
+            .OrderBy(point => point.time)
+            .ThenBy(point => point.sourcePosition)
+            .ToList();
+        var global = 1f;
+        float? typed = null;
+        foreach (var point in relevant.Where(point => point.time <= chartStartTime))
         {
             if (string.IsNullOrWhiteSpace(point.noteType))
-            {
-                if (!typeOverride.HasValue)
-                    effective = point.multiplier;
-            }
+                global = point.reset ? 1f : point.multiplier;
             else
-            {
-                typeOverride = point.reset ? null : point.multiplier;
-                effective = typeOverride ?? GetCurrentSV(point.time);
-            }
+                typed = point.reset ? null : point.multiplier;
+        }
 
-            if (entries.Count > 0 && System.Math.Abs(entries[^1].Time - point.time) < 0.000001d)
+        var entries = new List<(double Time, float Multiplier)>
+            { (chartStartTime, typed ?? global) };
+        foreach (var point in relevant.Where(point => point.time > chartStartTime))
+        {
+            if (string.IsNullOrWhiteSpace(point.noteType))
+                global = point.reset ? 1f : point.multiplier;
+            else
+                typed = point.reset ? null : point.multiplier;
+            var effective = typed ?? global;
+            if (System.Math.Abs(entries[^1].Time - point.time) < 0.000001d)
                 entries[^1] = (point.time, effective);
             else
                 entries.Add((point.time, effective));
         }
-
-        var curve = new Curve
-        {
-            Times = entries.Select(entry => entry.Time).ToArray(),
-            Multipliers = entries.Select(entry => entry.Multiplier).ToArray(),
-            Cumulatives = new double[entries.Count],
-            MaxCumulatives = new double[entries.Count]
-        };
-        for (var index = 1; index < entries.Count; index++)
-        {
-            curve.Cumulatives[index] = curve.Cumulatives[index - 1] +
-                curve.Multipliers[index - 1] * (curve.Times[index] - curve.Times[index - 1]);
-            curve.MaxCumulatives[index] = System.Math.Max(
-                curve.MaxCumulatives[index - 1],
-                curve.Cumulatives[index]);
-        }
-        return curve;
+        return BuildCurve(entries);
     }
 
-    /// <summary>
-    /// Note scroll position that gives uniform visual spacing within any SV zone.
-    /// Before the SV event fires all notes appear with plain-time spacing (SV=1.0 rate).
-    /// Equivalent to GetCumulativeScroll when the note is in an SV=1.0 zone.
-    /// </summary>
-    public static double GetUniformScrollPos(double time, string noteType = null)
+    private static Curve BuildCurve(IReadOnlyList<(double Time, float Multiplier)> entries)
     {
-        var zoneStart = GetSvZoneStart(time, noteType);
-        return GetCumulativeScroll(zoneStart, noteType) + (time - zoneStart);
+        var points = AlphaVisualTiming.BuildScrollCurve(
+            entries.Select((entry, index) =>
+                new ScrollChange(entry.Time, entry.Multiplier, index)));
+        var curve = new Curve
+        {
+            Points = points,
+            Times = points.Select(point => point.Time).ToArray(),
+            Multipliers = points.Select(point => point.Multiplier).ToArray(),
+            Cumulatives = points.Select(point => point.Cumulative).ToArray(),
+        };
+        return curve;
     }
 
     public static void Clear()
     {
         _times       = System.Array.Empty<double>();
         _cumulatives = System.Array.Empty<double>();
-        _maxCumulatives = System.Array.Empty<double>();
         _multipliers = System.Array.Empty<float>();
+        _points = System.Array.Empty<ScrollPoint>();
         TypedCurves.Clear();
         TypedOnlyCurves.Clear();
+        TypedKeys.Clear();
     }
 
     /// <summary>Start time of the SV zone that contains the given time.</summary>
@@ -226,48 +198,53 @@ public static class SvController
     public static float GetCurrentSV(double time, string noteType = null)
     {
         var curve = GetCurve(noteType);
-        var times = curve?.Times ?? _times;
-        var multipliers = curve?.Multipliers ?? _multipliers;
-        if (times.Length == 0) return 1.0f;
-
-        int lo = 0, hi = times.Length - 1;
-        if (time <= times[0]) return multipliers[0];
-
-        while (lo < hi - 1)
-        {
-            int mid = (lo + hi) >> 1;
-            if (times[mid] <= time) lo = mid;
-            else hi = mid;
-        }
-        if (times[hi] <= time) lo = hi;
-        return multipliers[lo];
+        return AlphaVisualTiming.GetMultiplier(curve?.Points ?? _points, time);
     }
 
-    /// <summary>∫[0→time] sv(τ)dτ</summary>
+    /// <summary>Returns the integrated SV value from the curve origin to the requested time.</summary>
     public static double GetCumulativeScroll(double time, string noteType = null)
     {
         var curve = GetCurve(noteType);
-        var times = curve?.Times ?? _times;
-        var cumulatives = curve?.Cumulatives ?? _cumulatives;
-        var multipliers = curve?.Multipliers ?? _multipliers;
-        if (times.Length == 0)
-            return time; // fallback: sv=1.0, cumulative = time
-
-        // Binary-search the last breakpoint at or before time
-        int lo = 0, hi = times.Length - 1;
-        if (time <= times[0])
-            return cumulatives[0] + multipliers[0] * (time - times[0]);
-
-        while (lo < hi - 1)
-        {
-            int mid = (lo + hi) >> 1;
-            if (times[mid] <= time) lo = mid;
-            else hi = mid;
-        }
-        // The loop exits when hi == lo+1. Check if hi itself also qualifies.
-        if (times[hi] <= time) lo = hi;
-        return cumulatives[lo] + multipliers[lo] * (time - times[lo]);
+        return AlphaVisualTiming.GetCumulativeScroll(curve?.Points ?? _points, time);
     }
+
+    /// <summary>
+    /// Direction of the authored path. Positive HS travels from SPAWN to DESTROY
+    /// even when DESTROY is numerically smaller than SPAWN.
+    /// </summary>
+    public static float GetPathDirection(float spawnRadius, float destroyRadius)
+        => AlphaVisualTiming.GetPathDirection(spawnRadius, destroyRadius);
+
+    /// <summary>
+    /// Signed radial position obtained by integrating the effective SV curve
+    /// backwards from the required DESTROY position at judge time.
+    /// </summary>
+    public static float GetVisualRadius(
+        double noteScrollPos,
+        float speed,
+        double time,
+        float spawnRadius,
+        float destroyRadius,
+        string noteType = null)
+    {
+        return AlphaVisualTiming.GetVisualRadius(
+            noteScrollPos,
+            GetCumulativeScroll(time, noteType),
+            speed,
+            spawnRadius,
+            destroyRadius);
+    }
+
+    /// <summary>
+    /// Position along the authored SPAWN-to-DESTROY axis. Zero is SPAWN;
+    /// |DESTROY-SPAWN| is DESTROY; values beyond it are the 4.4-compatible
+    /// back-scroll side of the judgement radius.
+    /// </summary>
+    public static float GetPathPosition(
+        float radius,
+        float spawnRadius,
+        float destroyRadius) =>
+        AlphaVisualTiming.GetPathPosition(radius, spawnRadius, destroyRadius);
 
     public static double GetTypedOnlyCumulativeScroll(double time, string noteType)
     {
@@ -286,90 +263,191 @@ public static class SvController
         if (duration <= 0d)
             return 1f;
         var linear = UnityEngine.Mathf.Clamp01((float)((currentTime - startTime) / duration));
-        if (!HasTypedCurve(noteType))
+        if (string.IsNullOrWhiteSpace(noteType) ||
+            !TypedOnlyCurves.TryGetValue(noteType.ToLowerInvariant(), out var curve))
             return linear;
-        var start = GetTypedOnlyCumulativeScroll(startTime, noteType);
-        var end = GetTypedOnlyCumulativeScroll(startTime + duration, noteType);
-        var range = end - start;
-        if (System.Math.Abs(range) < 0.000001d)
-            return linear;
-        var current = GetTypedOnlyCumulativeScroll(
-            System.Math.Clamp(currentTime, startTime, startTime + duration), noteType);
-        return UnityEngine.Mathf.Clamp01((float)((current - start) / range));
+        return AlphaVisualTiming.GetScrollProgress(
+            curve.Points, startTime, duration, currentTime);
     }
 
     private static double GetCumulativeScroll(double time, Curve curve)
+        => AlphaVisualTiming.GetCumulativeScroll(curve.Points, time);
+
+    /// <summary>
+    /// Resolves the first BOUNCE takeoff crossing before judge time. Rewind mode
+    /// can hide again after this point; Once mode remains active.
+    /// </summary>
+    public static double GetBounceStartTime(
+        double judgeTime,
+        float baseDuration,
+        float hSpeedMultiplier,
+        string noteType = null)
     {
-        if (curve.Times.Length == 0)
-            return time;
-        var lo = 0;
-        var hi = curve.Times.Length - 1;
-        if (time <= curve.Times[0])
-            return curve.Cumulatives[0] + curve.Multipliers[0] * (time - curve.Times[0]);
-        while (lo < hi - 1)
-        {
-            var mid = (lo + hi) >> 1;
-            if (curve.Times[mid] <= time) lo = mid;
-            else hi = mid;
-        }
-        if (curve.Times[hi] <= time) lo = hi;
-        return curve.Cumulatives[lo] + curve.Multipliers[lo] * (time - curve.Times[lo]);
+        if (baseDuration <= 0f)
+            return judgeTime;
+
+        if (System.Math.Abs(hSpeedMultiplier) <= 0.000001d)
+            return judgeTime;
+
+        var direction = GetBounceDirection(
+            judgeTime, hSpeedMultiplier, noteType);
+        var judgeScroll = GetCumulativeScroll(judgeTime, noteType);
+        var targetScroll = judgeScroll -
+                           baseDuration / (hSpeedMultiplier * direction);
+        var curve = GetCurve(noteType);
+        var points = curve?.Points ?? _points;
+        var takeoff = AlphaVisualTiming.FindFirstTimeAtCumulativeScroll(
+            points,
+            points.Length > 0 ? points[0].Time : 0d,
+            judgeTime,
+            targetScroll,
+            hSpeedMultiplier * direction > 0f);
+        return double.IsNaN(takeoff)
+            ? judgeTime
+            : takeoff;
     }
 
-    public static double GetMaxCumulativeScroll(double time, string noteType = null)
+    /// <summary>
+    /// Chooses the BOUNCE path orientation from the last non-zero effective speed
+    /// before judgement. Zero SV does not change direction; it only pauses motion.
+    /// </summary>
+    public static float GetBounceDirection(
+        double judgeTime,
+        float hSpeedMultiplier,
+        string noteType = null)
+    {
+        if (System.Math.Abs(hSpeedMultiplier) <= 0.000001f)
+            return 1f;
+
+        var sv = GetLatestNonZeroSV(judgeTime, noteType);
+        var direction = System.Math.Sign(hSpeedMultiplier * sv);
+        return direction == 0 ? 1f : direction;
+    }
+
+    /// <summary>
+    /// Returns BOUNCE phase from the signed cumulative SV curve. Negative SV moves
+    /// backwards along the same path; returning to positive SV moves forwards again.
+    /// </summary>
+    public static float GetBounceProgress(
+        double judgeTime,
+        float baseDuration,
+        float hSpeedMultiplier,
+        float direction,
+        double currentTime,
+        string noteType = null)
+    {
+        if (baseDuration <= 0f)
+            return 1f;
+        var current = GetCumulativeScroll(
+            System.Math.Min(currentTime, judgeTime), noteType);
+        var judge = GetCumulativeScroll(judgeTime, noteType);
+        return 1f + direction * hSpeedMultiplier *
+            (float)(current - judge) / baseDuration;
+    }
+
+    private static float GetLatestNonZeroSV(double time, string noteType)
     {
         var curve = GetCurve(noteType);
         var times = curve?.Times ?? _times;
-        var cumulatives = curve?.Cumulatives ?? _cumulatives;
-        var maxCumulatives = curve?.MaxCumulatives ?? _maxCumulatives;
         var multipliers = curve?.Multipliers ?? _multipliers;
         if (times.Length == 0)
-            return time;
-        if (time <= times[0])
-            return cumulatives[0] + multipliers[0] * (time - times[0]);
+            return 1f;
 
-        var lo = 0;
-        var hi = times.Length - 1;
-        while (lo < hi - 1)
+        var index = times.Length - 1;
+        while (index > 0 && times[index] > time)
+            index--;
+        while (index >= 0)
         {
-            var mid = (lo + hi) >> 1;
-            if (times[mid] <= time)
-                lo = mid;
-            else
-                hi = mid;
+            if (System.Math.Abs(multipliers[index]) > 0.000001f)
+                return multipliers[index];
+            index--;
         }
-        if (times[hi] <= time)
-            lo = hi;
-
-        var current = cumulatives[lo] + multipliers[lo] * (time - times[lo]);
-        return System.Math.Max(maxCumulatives[lo], current);
+        return 1f;
     }
 
-    public static bool HasReachedSpawnRadius(
+    public static bool IsPastSpawnNow(
         double noteScrollPos,
         float speed,
         double time,
         float spawnRadius,
-        string noteType = null)
+        string noteType = null,
+        float destroyRadius = 4.8f) =>
+        AlphaVisualTiming.IsPastSpawnNow(
+            noteScrollPos,
+            GetCumulativeScroll(time, noteType),
+            speed,
+            spawnRadius,
+            destroyRadius);
+
+    public static bool HasEverCrossedSpawn(
+        double noteScrollPos,
+        float speed,
+        double time,
+        float spawnRadius,
+        string noteType = null,
+        float destroyRadius = 4.8f)
     {
-        if (speed <= 0.0001f)
-            return false;
-        var requiredScroll = noteScrollPos - (4.8f - spawnRadius) / speed;
-        return GetMaxCumulativeScroll(time, noteType) >= requiredScroll - 0.000001d;
+        var curve = GetCurve(noteType);
+        var points = curve?.Points ?? _points;
+        return AlphaVisualTiming.HasEverCrossedSpawn(
+            points,
+            points.Length > 0 ? points[0].Time : 0d,
+            time,
+            noteScrollPos,
+            speed,
+            spawnRadius,
+            destroyRadius);
+    }
+
+    /// <summary>
+    /// The same question asked by a note that keeps its own answer, which is what
+    /// every per-frame caller wants: the search covers the chart from its start, so
+    /// asking it fresh every frame costs the whole elapsed chart every frame.
+    /// </summary>
+    public static bool HasEverCrossedSpawn(
+        ref SpawnCrossingMemo memo,
+        double noteScrollPos,
+        float speed,
+        double time,
+        float spawnRadius,
+        string noteType = null,
+        float destroyRadius = 4.8f)
+    {
+        var curve = GetCurve(noteType);
+        var points = curve?.Points ?? _points;
+        return memo.HasEverCrossed(
+            points,
+            points.Length > 0 ? points[0].Time : 0d,
+            time,
+            noteScrollPos,
+            speed,
+            spawnRadius,
+            destroyRadius);
     }
 
     private static Curve GetCurve(string noteType)
     {
         if (string.IsNullOrWhiteSpace(noteType))
             return null;
-        return TypedCurves.TryGetValue(noteType.ToLowerInvariant(), out var curve) ? curve : null;
+        var key = NormalizeCurveKey(noteType);
+        if (TypedCurves.TryGetValue(key, out var curve))
+            return curve;
+        var separator = key.IndexOf('|');
+        if (separator > 0 && TypedCurves.TryGetValue(key.Substring(0, separator + 1), out curve))
+            return curve;
+        return separator > 0 ? DefaultStreamCurve : null;
     }
+
+    private static string NormalizeCurveKey(string key) =>
+        (key ?? string.Empty).Trim().ToLowerInvariant();
 }
 
 /// <summary>Chart SV change point serialized to Majson JSON.</summary>
 public class SvPoint
 {
     public double time;
+    public int sourcePosition;
+    public int streamIndex;
     public float multiplier;
     public string noteType;
     public bool reset;

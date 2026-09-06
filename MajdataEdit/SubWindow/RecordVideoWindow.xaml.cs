@@ -15,6 +15,8 @@ public class RecordVideoOptions
     public int Height;
     /// <summary>Whether View should reveal the output after recording.</summary>
     public bool RevealOutput = true;
+    public string UtageLabel = "\u5bb4";
+    public bool UtageCoop;
 }
 
 /// <summary>
@@ -26,6 +28,7 @@ public partial class RecordVideoWindow : Window
     private readonly MainWindow main;
     private bool running;
     private bool stopRequested;
+    private bool windowLoaded;
     private CancellationTokenSource? cancelSource;
 
     public RecordVideoWindow(MainWindow main)
@@ -37,11 +40,19 @@ public partial class RecordVideoWindow : Window
         SongDetailBox.IsChecked = showSongDetail;
         AllPerfectBox.IsChecked = showAllPerfect;
         ViewIntroStyleBox.SelectedIndex = StyleToIndex(introStyle);
+        UtageOptionsPanel.Visibility = main.IsOriginalDifficulty
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         // Show the adjacent resolution fields only when Custom is selected.
         ResolutionBox.SelectionChanged += (_, _) =>
         {
             var custom = ResolutionBox.SelectedIndex == ResolutionBox.Items.Count - 1;
             CustomResolutionBox.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
+        };
+        SongDetailStyleBox.SelectionChanged += (_, _) =>
+        {
+            if (windowLoaded)
+                LoadSelectedPreview();
         };
     }
 
@@ -66,23 +77,54 @@ public partial class RecordVideoWindow : Window
         LevelBox.Text = info.level;
         BpmBox.Text = info.bpm;
         ClockBox.Text = info.clock;
+        var utage = main.GetRecordUtageDefaults();
+        UtageLabelBox.Text = utage.label;
+        UtageCoopBox.IsChecked = utage.coop;
+        windowLoaded = true;
+        LoadSelectedPreview();
+    }
+
+    private void LoadSelectedPreview()
+    {
+        if (SongDetailStyleBox.SelectedIndex == 1)
+        {
+            var cachedPreview = main.GetSongDetailPreviewPath();
+            if (!string.IsNullOrWhiteSpace(cachedPreview))
+            {
+                LoadCoverPreview(cachedPreview, false);
+                return;
+            }
+
+            CoverPreview.Source = null;
+            return;
+        }
+
         LoadCoverPreview();
     }
 
-    private void LoadCoverPreview()
+    private void LoadCoverPreview(string? preferredPath = null, bool allowCoverFallback = true)
     {
         var png = Path.Combine(MainWindow.maidataDir, "bg.png");
         var jpg = Path.Combine(MainWindow.maidataDir, "bg.jpg");
-        var path = File.Exists(png) ? png : File.Exists(jpg) ? jpg : null;
+        var path = !string.IsNullOrWhiteSpace(preferredPath) && File.Exists(preferredPath)
+            ? preferredPath
+            : allowCoverFallback
+                ? File.Exists(png) ? png : File.Exists(jpg) ? jpg : null
+                : null;
         if (path == null)
             return;
 
         try
         {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
-            image.UriSource = new Uri(path, UriKind.Absolute);
+            image.StreamSource = stream;
             image.EndInit();
             image.Freeze();
             CoverPreview.Source = image;
@@ -133,7 +175,9 @@ public partial class RecordVideoWindow : Window
                 FrameRate = frameRate,
                 Width = width,
                 Height = height,
-                FileName = "out.mp4"
+                FileName = "out.mp4",
+                UtageLabel = NormalizeUtageLabel(),
+                UtageCoop = UtageCoopBox.IsChecked == true
             }
         };
 
@@ -299,11 +343,36 @@ public partial class RecordVideoWindow : Window
             LevelBox.Text,
             BpmBox.Text,
             ClockBox.Text);
+        main.ApplyRecordUtageInfo(NormalizeUtageLabel(), UtageCoopBox.IsChecked == true);
         main.ApplyRecordDisplaySettings(
             SongDetailStyleBox.SelectedIndex,
             SongDetailBox.IsChecked == true,
             AllPerfectBox.IsChecked == true,
             IndexToStyle(ViewIntroStyleBox.SelectedIndex));
+    }
+
+    private string NormalizeUtageLabel() =>
+        string.IsNullOrWhiteSpace(UtageLabelBox.Text) ? "\u5bb4" : UtageLabelBox.Text.Trim();
+
+    private void RefreshPreviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        main.ApplyRecordUtageInfo(NormalizeUtageLabel(), UtageCoopBox.IsChecked == true);
+        if (SongDetailStyleBox.SelectedIndex != 1)
+        {
+            LoadSelectedPreview();
+            return;
+        }
+
+        var path = main.PrepareSongDetailPreview(
+            TitleBox.Text,
+            ArtistBox.Text,
+            DesignerBox.Text,
+            LevelBox.Text,
+            BpmBox.Text,
+            NormalizeUtageLabel(),
+            UtageCoopBox.IsChecked == true);
+        if (!string.IsNullOrWhiteSpace(path))
+            LoadCoverPreview(path, false);
     }
 
     private static int StyleToIndex(string? style) => style?.ToLowerInvariant() switch

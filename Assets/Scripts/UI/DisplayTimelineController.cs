@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using UnityEngine;
 
 public class DisplayTimelineController : MonoBehaviour
@@ -19,15 +21,19 @@ public class DisplayTimelineController : MonoBehaviour
     private static readonly Dictionary<Transform, Vector3> originalJudgeLineScales = new();
     private bool playbackActive;
     private bool showSongDetailIntro;
-    private const float IntroGameplayRevealTime = -2f;
+    private const float IntroGameplayRevealTime =
+        MajdataCore.AlphaVisualTiming.GameplayRevealTime;
 
-    private float initialJudgeLine;
+    // Standby can run before the editor ever sends its display settings, and it
+    // pushes these values into the scene, so they must start at the same
+    // defaults the request carries (visible) instead of zero.
+    private float initialJudgeLine = 1f;
     private float initialJudgeArea;
-    private float initialJudgeInfo;
-    private float initialComboInfo;
+    private float initialJudgeInfo = 1f;
+    private float initialComboInfo = 1f;
     private float initialOuterBrightness;
     private float initialInnerBrightness;
-    private float initialJudgeText;
+    private float initialJudgeText = 1f;
     private int initialComboDisplay;
     private float lastJudgeLine = float.NaN;
     private float lastJudgeArea = float.NaN;
@@ -39,9 +45,17 @@ public class DisplayTimelineController : MonoBehaviour
     private int lastComboDisplay = int.MinValue;
     private GUIStyle subtitleStyle;
     private GUIStyle subtitleShadowStyle;
+    private Font subtitleFont;
+    private Font ownedSubtitleFont;
+    private readonly Dictionary<string, Font> subtitleFontCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<Font> ownedSubtitleFonts = new();
+    private static readonly HashSet<string> warmedSubtitleGlyphs = new();
     private bool hasDisplayEvents;
     private int subtitleCursor = -1;
+    private readonly SortedDictionary<int, SubtitleChange> activeSubtitles = new();
     private float lastSubtitleTime = float.MinValue;
+    private bool subtitleGuiWarmupPending;
 
     private readonly List<JudgeLineColorSegment> judgeLineColors = new();
     private bool hasJudgeLineColors;
@@ -168,6 +182,9 @@ public class DisplayTimelineController : MonoBehaviour
             subtitles.AddRange(subtitleEvents);
             subtitles.Sort((left, right) => left.time.CompareTo(right.time));
         }
+        EnsureSubtitleStyles();
+        WarmupSubtitleGlyphs();
+        subtitleGuiWarmupPending = subtitles.Count > 0;
         ResetSubtitleCursor();
 
         playbackActive = true;
@@ -199,6 +216,15 @@ public class DisplayTimelineController : MonoBehaviour
     public void PausePlayback()
     {
         playbackActive = false;
+        enabled = false;
+    }
+
+    public void SetPausedTimelineTime(float time)
+    {
+        playbackActive = false;
+        SetJudgeLinePlaybackScale();
+        InvalidateAppliedValues();
+        ApplyAt(time);
         enabled = false;
     }
 
@@ -252,18 +278,66 @@ public class DisplayTimelineController : MonoBehaviour
         if (!playbackActive || timeProvider == null)
             return;
 
-        var text = GetSubtitle(timeProvider.AudioTime);
-        if (string.IsNullOrEmpty(text))
-            return;
-
         EnsureSubtitleStyles();
-        var rect = new Rect(28f, 22f, Screen.width - 56f, Screen.height * 0.3f);
+        if (subtitleGuiWarmupPending)
+        {
+            WarmupSubtitleGui();
+            subtitleGuiWarmupPending = false;
+        }
+        var time = timeProvider.AudioTime;
+        AdvanceSubtitleCursor(time);
+        foreach (var subtitle in activeSubtitles.Values)
+        {
+            if (subtitle == null || string.IsNullOrEmpty(subtitle.text) ||
+                subtitle.duration >= 0f && time > subtitle.time + subtitle.duration)
+                continue;
+            DrawSubtitle(subtitle, time);
+        }
+    }
+
+    private void DrawSubtitle(SubtitleChange subtitle, float time)
+    {
+        // A caption asking for nothing keeps the corner and the size captions have
+        // always had; x and y move it by a fraction of the screen so the same
+        // chart lands in the same place whatever the window size is.
+        var size = subtitle.size > 0f ? Mathf.RoundToInt(subtitle.size) : 32;
+        var font = ResolveSubtitleFont(subtitle.font);
+        var fontStyle = UsesDefaultSubtitleFont(subtitle.font)
+            ? FontStyle.Bold
+            : FontStyle.Normal;
+        subtitleStyle.font = font;
+        subtitleShadowStyle.font = font;
+        subtitleStyle.fontSize = size;
+        subtitleShadowStyle.fontSize = size;
+        subtitleStyle.fontStyle = fontStyle;
+        subtitleShadowStyle.fontStyle = fontStyle;
+        var elapsed = Mathf.Max(0f, time - (float)subtitle.time);
+        var transition = Mathf.Max(0f, subtitle.transition);
+        var typewriter = string.Equals(
+            subtitle.style, "Typewriter", StringComparison.OrdinalIgnoreCase);
+        var alpha = !typewriter && transition > 0f
+            ? Mathf.Clamp01(elapsed / transition)
+            : 1f;
+        var text = typewriter
+            ? GetTypewriterText(subtitle.text, elapsed, transition)
+            : subtitle.text;
+        if (text.Length == 0)
+            return;
+        subtitleStyle.normal.textColor = new Color(1f, 1f, 1f, alpha);
+        subtitleShadowStyle.normal.textColor = new Color(0f, 0f, 0f, 0.85f * alpha);
+        var left = 28f + Mathf.Clamp01(subtitle.x) * Screen.width;
+        var top = 22f + Mathf.Clamp01(subtitle.y) * Screen.height;
+        var rect = new Rect(
+            left,
+            top,
+            Mathf.Max(size * 2f, Screen.width - 28f - left),
+            Mathf.Max(size * 2f, Screen.height - 22f - top));
         var shadowRect = new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height);
         GUI.Label(shadowRect, text, subtitleShadowStyle);
         GUI.Label(rect, text, subtitleStyle);
     }
 
-    private string GetSubtitle(float time)
+    private void AdvanceSubtitleCursor(float time)
     {
         if (time < lastSubtitleTime)
             ResetSubtitleCursor();
@@ -271,14 +345,30 @@ public class DisplayTimelineController : MonoBehaviour
 
         while (subtitleCursor + 1 < subtitles.Count &&
                subtitles[subtitleCursor + 1].time <= time)
+        {
             subtitleCursor++;
+            var subtitle = subtitles[subtitleCursor];
+            activeSubtitles[subtitle.index] = subtitle;
+        }
+    }
 
-        var active = subtitleCursor >= 0 ? subtitles[subtitleCursor] : null;
-        if (active == null)
-            return null;
-        if (active.duration >= 0f && time > active.time + active.duration)
-            return null;
-        return active.text;
+    private static string GetTypewriterText(
+        string text, float elapsed, float transition)
+    {
+        if (transition <= 0f || elapsed >= transition)
+            return text;
+        var elements = StringInfo.ParseCombiningCharacters(text);
+        if (elements.Length == 0)
+            return string.Empty;
+        var count = Mathf.Clamp(
+            Mathf.CeilToInt(elements.Length * elapsed / transition),
+            0,
+            elements.Length);
+        return count == 0
+            ? string.Empty
+            : text.Substring(
+                0,
+                count == elements.Length ? text.Length : elements[count]);
     }
 
     private void EnsureSubtitleStyles()
@@ -286,19 +376,132 @@ public class DisplayTimelineController : MonoBehaviour
         if (subtitleStyle != null)
             return;
 
-        var font = Font.CreateDynamicFontFromOSFont(
-            new[] { "Microsoft YaHei", "Microsoft JhengHei", "Arial" }, 32);
-        subtitleStyle = new GUIStyle(GUI.skin.label)
+        if (subtitleFont == null)
         {
-            font = font,
+            ownedSubtitleFont = Font.CreateDynamicFontFromOSFont(
+                new[] { "Microsoft YaHei", "Microsoft JhengHei", "Arial" }, 32);
+            subtitleFont = ownedSubtitleFont;
+        }
+        subtitleStyle = new GUIStyle
+        {
+            font = subtitleFont,
             fontSize = 32,
             fontStyle = FontStyle.Bold,
-            normal = { textColor = Color.white },
             wordWrap = true,
             alignment = TextAnchor.UpperLeft
         };
+        subtitleStyle.normal.textColor = Color.white;
         subtitleShadowStyle = new GUIStyle(subtitleStyle);
         subtitleShadowStyle.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
+    }
+
+    private Font ResolveSubtitleFont(string requested)
+    {
+        if (UsesDefaultSubtitleFont(requested))
+            return subtitleFont;
+
+        if (subtitleFontCache.TryGetValue(requested, out var cached) && cached != null)
+            return cached;
+
+        var font = requested switch
+        {
+            "CascadiaMono" => CreateSubtitleSystemFont(
+                "Cascadia Mono", "JetBrains Mono", "Cascadia Code", "Consolas"),
+            "CascadiaCode" => CreateSubtitleSystemFont("Cascadia Code", "Consolas"),
+            "MicrosoftYaHei" => CreateSubtitleSystemFont(
+                "Microsoft YaHei UI", "Microsoft YaHei"),
+            "NotoSansSC" => Resources.Load<Font>("Fonts/NotoSansSC-VF"),
+            "SimSun" => CreateSubtitleSystemFont("NSimSun", "SimSun"),
+            "DengXian" => CreateSubtitleSystemFont(
+                "DengXian", "Microsoft YaHei UI"),
+            "NotoSerifSC" => CreateSubtitleSystemFont("Noto Serif SC", "SimSun"),
+            "GlobalMonospace" => CreateSubtitleSystemFont(
+                "Global Monospace", "Consolas"),
+            "Aileron" => Resources.Load<Font>("Fonts/Aileron-Regular"),
+            "Allerta" => Resources.Load<Font>("Fonts/Allerta-Regular"),
+            _ => null
+        };
+        font ??= subtitleFont;
+        subtitleFontCache[requested] = font;
+        return font;
+    }
+
+    private static bool UsesDefaultSubtitleFont(string requested) =>
+        string.IsNullOrWhiteSpace(requested) ||
+        string.Equals(requested, "Default", StringComparison.OrdinalIgnoreCase);
+
+    private Font CreateSubtitleSystemFont(params string[] names)
+    {
+        var font = Font.CreateDynamicFontFromOSFont(names, 32);
+        if (font != null)
+            ownedSubtitleFonts.Add(font);
+        return font;
+    }
+
+    private void OnDestroy()
+    {
+        if (ownedSubtitleFont != null)
+            Destroy(ownedSubtitleFont);
+        foreach (var font in ownedSubtitleFonts)
+            if (font != null)
+                Destroy(font);
+        ownedSubtitleFonts.Clear();
+    }
+
+    private void WarmupSubtitleGlyphs()
+    {
+        EnsureSubtitleStyles();
+        if (subtitleFont == null || subtitles.Count == 0)
+            return;
+
+        foreach (var group in subtitles.GroupBy(item => new
+                 {
+                     Font = item.font ?? string.Empty,
+                     Size = item.size > 0f ? Mathf.RoundToInt(item.size) : 32,
+                     Style = UsesDefaultSubtitleFont(item.font)
+                         ? FontStyle.Bold
+                         : FontStyle.Normal
+                 }))
+        {
+            var font = ResolveSubtitleFont(group.Key.Font);
+            if (font == null)
+                continue;
+            var characters = string.Concat(group.Select(item => item.text));
+            var key = font.GetInstanceID() + ":" + group.Key.Size + ":" + characters;
+            if (!warmedSubtitleGlyphs.Add(key))
+                continue;
+            font.RequestCharactersInTexture(
+                characters,
+                group.Key.Size,
+                group.Key.Style);
+        }
+    }
+
+    private void WarmupSubtitleGui()
+    {
+        foreach (var group in subtitles.GroupBy(item => new
+                 {
+                     Font = item.font ?? string.Empty,
+                     Size = item.size > 0f ? Mathf.RoundToInt(item.size) : 32,
+                     Style = UsesDefaultSubtitleFont(item.font)
+                         ? FontStyle.Bold
+                         : FontStyle.Normal
+                 }))
+        {
+            var text = string.Concat(group.Select(item => item.text));
+            if (text.Length == 0)
+                continue;
+            var style = new GUIStyle(subtitleStyle)
+            {
+                font = ResolveSubtitleFont(group.Key.Font),
+                fontSize = group.Key.Size,
+                fontStyle = group.Key.Style,
+                wordWrap = false
+            };
+            style.normal.textColor = Color.clear;
+            style.CalcSize(new GUIContent(text));
+            GUI.Label(new Rect(-32768f, -32768f, 1f, 1f), text, style);
+        }
     }
 
     private void ApplyAt(float time)
@@ -489,7 +692,7 @@ public class DisplayTimelineController : MonoBehaviour
         if (outlineRenderer != null)
         {
             judgeArea.sortingLayerID = outlineRenderer.sortingLayerID;
-            judgeArea.sortingOrder = outlineRenderer.sortingOrder + 1;
+            judgeArea.sortingOrder = outlineRenderer.sortingOrder - 1;
         }
         judgeArea.sprite = sprite;
         var c = judgeArea.color;
@@ -595,6 +798,7 @@ public class DisplayTimelineController : MonoBehaviour
     {
         subtitleCursor = -1;
         lastSubtitleTime = float.MinValue;
+        activeSubtitles.Clear();
     }
 
     private sealed class DisplayTrack

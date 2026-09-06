@@ -1,15 +1,18 @@
-﻿using Assets.Scripts.Notes;
+using Assets.Scripts.Notes;
 using Assets.Scripts.Types;
 using UnityEngine;
 #nullable enable
 public class StarDrop : TapBase
 {
+    private static readonly Color PinkStarExColor = new(1f, 0.6745283f, 0.8829237f, 1f);
+
     public float rotateSpeed = 1f;
 
     public bool isDouble;
     public bool isNoHead;
     public bool isFakeStar = false;
     public bool isFakeStarRotate = false;
+    public bool usePinkStarExColor;
 
     public Sprite tapSpr_Double;
     public Sprite eachSpr_Double;
@@ -36,17 +39,19 @@ public class StarDrop : TapBase
         {
             exSpriteRender.sprite = exSpr_Double;
             spriteRenderer.sprite = tapSpr_Double;
-            if (isEX) exSpriteRender.color = exEffectTap;
+            if (isEX) exSpriteRender.color = usePinkStarExColor ? PinkStarExColor : exEffectTap;
             if (isEach)
             {
-                lineSpriteRender.sprite = eachLine;
+                if (!isMine)
+                    lineSpriteRender.sprite = eachLine;
                 spriteRenderer.sprite = eachSpr_Double;
                 if (isEX) exSpriteRender.color = exEffectEach;
             }
 
             if (isBreak)
             {
-                lineSpriteRender.sprite = breakLine;
+                if (!isMine)
+                    lineSpriteRender.sprite = breakLine;
                 spriteRenderer.sprite = breakSpr_Double;
                 if (isEX) exSpriteRender.color = exEffectBreak;
                 spriteRenderer.sharedMaterial = breakMaterial;
@@ -56,17 +61,19 @@ public class StarDrop : TapBase
         {
             exSpriteRender.sprite = exSpr;
             spriteRenderer.sprite = tapSpr;
-            if (isEX) exSpriteRender.color = exEffectTap;
+            if (isEX) exSpriteRender.color = usePinkStarExColor ? PinkStarExColor : exEffectTap;
             if (isEach)
             {
-                lineSpriteRender.sprite = eachLine;
+                if (!isMine)
+                    lineSpriteRender.sprite = eachLine;
                 spriteRenderer.sprite = eachSpr;
                 if (isEX) exSpriteRender.color = exEffectEach;
             }
 
             if (isBreak)
             {
-                lineSpriteRender.sprite = breakLine;
+                if (!isMine)
+                    lineSpriteRender.sprite = breakLine;
                 spriteRenderer.sprite = breakSpr;
                 if (isEX) exSpriteRender.color = exEffectBreak;
                 spriteRenderer.sharedMaterial = breakMaterial;
@@ -94,7 +101,7 @@ public class StarDrop : TapBase
             inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
             sensorPos = (SensorType)SensorChildIndex;
-            if (!previewOnly)
+            if (!JudgmentDisabled)
                 BindJudgeInput(Check);
         }
         State = NoteStatus.Initialized;
@@ -102,7 +109,13 @@ public class StarDrop : TapBase
     // Update is called once per frame
     protected override void Update()
     {
-        if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < 0f)
+        if (ClockMovedBackwards() &&
+            !isFakeStar &&
+            slide != null &&
+            timeProvider.AudioTime < time + slideAppearanceStartOffset)
+            slide.SetActive(false);
+
+        if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < GameplayRevealTime)
         {
             tapLine.SetActive(false);
             spriteRenderer.forceRenderingOff = true;
@@ -111,14 +124,20 @@ public class StarDrop : TapBase
                 slide.SetActive(false);
             return;
         }
+        if (IsPausedTimelinePreview && timeProvider.AudioTime > time)
+        {
+            tapLine.SetActive(false);
+            spriteRenderer.forceRenderingOff = true;
+            if (isEX) exSpriteRender.forceRenderingOff = true;
+            if (!isFakeStar && slide != null)
+                slide.SetActive(true);
+            return;
+        }
 
         var songSpeed = timeProvider.CurrentSpeed;
-        var judgeOffset = timeProvider.AudioTime - time;
-        if (!isFakeStar && slide != null && !slide.activeSelf &&
-            timeProvider.AudioTime >= time + slideAppearanceStartOffset)
-            slide.SetActive(true);
+        ActivateSlideWhenDue();
 
-        if (IsBeforeBounceWindow(judgeOffset))
+        if (IsBeforeBounceWindow())
         {
             tapLine.SetActive(false);
             spriteRenderer.forceRenderingOff = true;
@@ -126,10 +145,8 @@ public class StarDrop : TapBase
             return;
         }
 
-        var isBouncing = IsBounceActive(judgeOffset);
-        var distance = isBouncing ? GetBounceDistance(judgeOffset) : GetSvDistance();
-        var destScale = GetSpawnScale(distance);
-        var hasLeftSpawn = HasLeftSpawnAtCurrentTime(noteScrollPos);
+        var isBouncing = IsBounceActive();
+        var distance = isBouncing ? GetBounceDistance() : GetSvDistance();
 
         if (isBouncing)
         {
@@ -139,76 +156,75 @@ public class StarDrop : TapBase
                 noteScale * noteScaleX,
                 noteScale * noteScaleY,
                 1f);
-            var bounceLineScale = Mathf.Clamp01(distance / 4.8f);
+            var absoluteDistance = Mathf.Abs(distance);
+            var bounceLineScale = absoluteDistance / DefaultDestroyRadius;
             if (!isNoHead)
-                tapLine.SetActive(distance > 0.001f && distance <= 4.8f);
+                tapLine.SetActive(absoluteDistance > 0.001f);
             tapLine.transform.localScale = new Vector3(
                 bounceLineScale, bounceLineScale, 1f);
         }
-        else switch (State)
+        else
         {
-            case NoteStatus.Initialized:
-                if (hasLeftSpawn)
+            var presentation = GetSpawnPresentation(
+                distance, noteScrollPos, ref spawnCrossingMemo);
+            if (!presentation.Visible)
+            {
+                State = NoteStatus.Initialized;
+                transform.localScale = Vector3.zero;
+                tapLine.SetActive(false);
+                spriteRenderer.forceRenderingOff = true;
+                if (isEX)
+                    exSpriteRender.forceRenderingOff = true;
+                return;
+            }
+
+            if (!JudgmentDisabled &&
+                presentation.Running &&
+                isNoHead &&
+                !isFakeStar)
+            {
+                // This star is the only thing that switches the slide on, at
+                // "time + slideAppearanceStartOffset" above. A no-head star is
+                // already invisible, so it stays alive - silently - until that
+                // handover happens; leaving early took the whole slide with it.
+                if (slide == null || slide.activeSelf)
                 {
-                    State = NoteStatus.Running;
-                    goto case NoteStatus.Running;
-                }
-                if (destScale >= 0f)
-                {
-                    State = NoteStatus.Pending;
-                    goto case NoteStatus.Pending;
+                    Destroy(tapLine);
+                    Destroy(gameObject);
                 }
                 else
-                    transform.localScale = new Vector3(0, 0);
+                {
+                    transform.localScale = Vector3.zero;
+                    tapLine.SetActive(false);
+                    spriteRenderer.forceRenderingOff = true;
+                    if (isEX)
+                        exSpriteRender.forceRenderingOff = true;
+                }
                 return;
-            case NoteStatus.Pending:
-                {
-                    if (hasLeftSpawn)
-                    {
-                        if (!isFakeStar && !slide.activeSelf)
-                        {
-                            slide.SetActive(true);
-                            if (isNoHead)
-                            {
-                                Destroy(tapLine);
-                                Destroy(gameObject);
-                                return;
-                            }
-                        }
-                        State = NoteStatus.Running;
-                        goto case NoteStatus.Running;
-                    }
-                    var pendingScale = Mathf.Clamp01(destScale);
-                    if (!isNoHead)
-                        tapLine.SetActive(pendingScale > 0.3f);
-                    transform.localScale = new Vector3(
-                        pendingScale * noteScale * noteScaleX,
-                        pendingScale * noteScale * noteScaleY,
-                        1f);
-                    transform.position = getPositionFromDistance(spawnRadius);
-                    var lineScale = Mathf.Abs(spawnRadius / 4.8f);
-                    tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
-                }
-                break;
-            case NoteStatus.Running:
-                {
-                    transform.position = getPositionFromDistance(distance);
-                    transform.localScale = new Vector3(
-                        noteScale * noteScaleX,
-                        noteScale * noteScaleY,
-                        1f);
-                    if (!isNoHead)
-                    {
-                        var absoluteDistance = Mathf.Abs(distance);
-                        tapLine.SetActive(absoluteDistance > 0.001f && absoluteDistance <= 4.8f);
-                    }
-                    var lineScale = Mathf.Abs(distance / 4.8f);
-                    tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
-                }
-                break;
+            }
+
+            State = presentation.Running
+                ? NoteStatus.Running
+                : NoteStatus.Pending;
+            transform.position = getPositionFromDistance(presentation.Distance);
+            transform.localScale = new Vector3(
+                presentation.Scale * noteScale * noteScaleX,
+                presentation.Scale * noteScale * noteScaleY,
+                1f);
+            var absoluteDistance = Mathf.Abs(presentation.Distance);
+            if (!isNoHead)
+                tapLine.SetActive(
+                    presentation.Running
+                        ? absoluteDistance > 0.001f
+                        : presentation.Scale > 0.3f);
+            var lineScale = absoluteDistance / DefaultDestroyRadius;
+            tapLine.transform.localScale = new Vector3(
+                lineScale, lineScale, 1f);
         }
         if (!isNoHead)
-            UpdateTapLineRotation(State == NoteStatus.Pending ? spawnRadius : distance);
+            UpdateTapLineRotation(
+                isBouncing ? distance :
+                State == NoteStatus.Pending ? spawnRadius : distance);
 
         if (isNoHead)
         {
@@ -222,10 +238,25 @@ public class StarDrop : TapBase
         }
 
         if (timeProvider.isStart && !isFakeStar)
-            transform.Rotate(0f, 0f, -180f * Time.deltaTime * songSpeed / rotateSpeed);
+            transform.Rotate(
+                0f, 0f,
+                -180f * Time.deltaTime * songSpeed / Mathf.Max(0.01f, rotateSpeed));
         else if (isFakeStarRotate)
             transform.Rotate(0f, 0f, 400f * Time.deltaTime);  
     }
+
+    protected override void BeforeFixedJudgment() => ActivateSlideWhenDue();
+
+    private void ActivateSlideWhenDue()
+    {
+        if (isFakeStar || slide == null || slide.activeSelf ||
+            timeProvider == null || !timeProvider.isStart)
+            return;
+
+        if (timeProvider.AudioTime >= time + slideAppearanceStartOffset)
+            slide.SetActive(true);
+    }
+
     protected override void OnDestroy()
     {
         if (!isNoHead || isFakeStar)

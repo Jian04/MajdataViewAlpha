@@ -14,6 +14,17 @@ UserSettings/
 *.unityproj
 *.sln
 *.slnx
+
+# ...except the hand-written ones. Unity regenerates about seventy csproj files
+# at the repo root, which is what the wildcards above are for, but these are
+# maintained by hand and are the only way to build from a clone. The negations
+# have to sit after the wildcards to take effect. MajdataEdit.csproj was being
+# swallowed too, so the workflow that builds it was pointing at a file the repo
+# did not contain.
+!Tests/SlideAstRegression/SlideAstRegression.csproj
+!MajdataEdit/MajdataEdit.csproj
+!MajdataEdit/MajdataEdit.sln
+!MajdataLauncher/MajdataLauncher.csproj
 *.tmp
 *.user
 *.userprefs
@@ -56,3 +67,6 @@ EditorSetting.json
 
 # Python cache
 *.pyc
+
+# Regression test report, written only when a check fails
+alpha-command-mismatches.txt

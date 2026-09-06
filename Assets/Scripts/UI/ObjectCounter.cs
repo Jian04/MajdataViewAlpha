@@ -40,6 +40,35 @@ public class ObjectCounter : MonoBehaviour
     private Text judgeResultCount;
     private Text judgeResultText;
     private Font defaultDisplayFont;
+    private readonly Dictionary<int, Font> displayFontCache = new();
+    private readonly Dictionary<int, float> judgeCountOffsetCache = new();
+    private int selectedDisplayFontPreset;
+    private int appliedDisplayFontPreset = int.MinValue;
+    private bool displayInitializationPending = true;
+    private Text[] displayTexts;
+    private float[] displayPixelsPerUnit;
+    private Vector2 authoredJudgeTextPosition;
+    private Vector2 authoredJudgeCountPosition;
+    private Vector2 authoredJudgeTextSize;
+    private Vector2 authoredJudgeCountSize;
+    private float authoredJudgeTextWidth;
+    private float customJudgeCountOffset;
+    private Vector3 authoredJudgeTextScale;
+    private Vector3 authoredJudgeCountScale;
+    private int authoredJudgeTextFontSize;
+    private int authoredJudgeCountFontSize;
+    private float authoredJudgeTextLineSpacing;
+    private float authoredJudgeCountLineSpacing;
+    private string finaleRateLabel = "FiNALE  Rate:";
+    private string deluxeRateLabel = "DELUXE Rate:";
+    private const string DisplayGlyphs =
+        " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz:./%+-(),[]";
+    private const string JudgeCountWarmup = "0000\n0000\n0000\n0000\n0000\n\n0000\n0000";
+    private const string ObjectCountWarmup =
+        "TAP: 0000 / 0000\nHOD: 0000 / 0000\nSLD: 0000 / 0000\n" +
+        "TOH: 0000 / 0000\nBRK: 0000 / 0000\nALL: 0000 / 0000\nMOD: Default";
+    private const string RateWarmup =
+        "FiNALE  Rate:\n100.00   %\nDELUXE Rate:\n100.0000 % ";
 
     private EditorComboIndicator textMode = EditorComboIndicator.Combo;
 
@@ -83,7 +112,8 @@ public class ObjectCounter : MonoBehaviour
         judgeTextRect.sizeDelta = new Vector2(
             judgeTextRect.sizeDelta.x + extraJudgeTextWidth,
             judgeTextRect.sizeDelta.y);
-        judgeTextRect.anchoredPosition += Vector2.right * (extraJudgeTextWidth * 0.5f);
+        judgeTextRect.anchoredPosition += Vector2.right *
+            (extraJudgeTextWidth * 0.5f);
         table = GameObject.Find("ObjectCount").GetComponent<Text>();
         rate = GameObject.Find("ObjectRate").GetComponent<Text>();
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
@@ -93,6 +123,19 @@ public class ObjectCounter : MonoBehaviour
         statusAchievement = GameObject.Find("AchievementText").GetComponent<Text>();
         statusDXScore = GameObject.Find("DXScoreText").GetComponent<Text>();
         defaultDisplayFont = judgeResultText.font;
+        var judgeCountRect = judgeResultCount.rectTransform;
+        authoredJudgeTextPosition = judgeTextRect.anchoredPosition;
+        authoredJudgeCountPosition = judgeCountRect.anchoredPosition;
+        authoredJudgeTextSize = judgeTextRect.sizeDelta;
+        authoredJudgeCountSize = judgeCountRect.sizeDelta;
+        authoredJudgeTextWidth = judgeTextRect.sizeDelta.x;
+        authoredJudgeTextScale = judgeTextRect.localScale;
+        authoredJudgeCountScale = judgeCountRect.localScale;
+        authoredJudgeTextFontSize = judgeResultText.fontSize;
+        authoredJudgeCountFontSize = judgeResultCount.fontSize;
+        authoredJudgeTextLineSpacing = judgeResultText.lineSpacing;
+        authoredJudgeCountLineSpacing = judgeResultCount.lineSpacing;
+        ConfigureJudgeColumnOverflow();
 
         statusCombo.gameObject.SetActive(false);
         statusScore.gameObject.SetActive(false);
@@ -218,13 +261,130 @@ public class ObjectCounter : MonoBehaviour
             {JudgeType.LateGood, 0 },
             {JudgeType.Miss, 0 },
         };
+
+        // Build the initial number geometry before the first judgement changes it.
+        UpdateJudgeResult();
+        // A chart request can arrive before Start binds the scene texts.
+        SetDisplayFont(selectedDisplayFontPreset);
+        // Register after scene OnEnable calls, including CanvasScaler's render callback.
+        Canvas.preWillRenderCanvases -= PrepareDisplayTexts;
+        Canvas.preWillRenderCanvases += PrepareDisplayTexts;
     }
 
     public void SetDisplayFont(int preset)
     {
+        selectedDisplayFontPreset = preset;
+        if (judgeResultText == null || judgeResultCount == null)
+            return;
+        var font = ResolveDisplayFont(preset);
+        if (font == null)
+            font = defaultDisplayFont;
+        if (font == null)
+            return;
+
+        var displayTexts = GetDisplayTexts();
+        if (appliedDisplayFontPreset == preset &&
+            displayTexts.All(text => text == null || text.font == font))
+        {
+            if (!judgeCountOffsetCache.ContainsKey(preset))
+                ScheduleDisplayFontInitialization();
+            return;
+        }
+
+        foreach (var text in displayTexts)
+            if (text != null && text.font != font)
+                text.font = font;
+
+        ConfigureJudgeColumnOverflow();
+        AlignRateLabels(preset == 0);
+        foreach (var text in displayTexts)
+            if (text != null)
+                text.SetAllDirty();
+        Canvas.ForceUpdateCanvases();
+        appliedDisplayFontPreset = preset;
+        ScheduleDisplayFontInitialization();
+    }
+
+    private void UpdateJudgeCountOffset()
+    {
+        customJudgeCountOffset = judgeCountOffsetCache.TryGetValue(
+            selectedDisplayFontPreset, out var offset)
+            ? offset
+            : 0f;
+    }
+
+    private void OnEnable()
+    {
+        if (judgeResultCount != null)
+            Canvas.preWillRenderCanvases += PrepareDisplayTexts;
+        displayInitializationPending = true;
+    }
+
+    private void OnDisable()
+    {
+        Canvas.preWillRenderCanvases -= PrepareDisplayTexts;
+    }
+
+    private void ScheduleDisplayFontInitialization()
+    {
+        displayTexts = null;
+        displayInitializationPending = true;
+    }
+
+    private void PrepareDisplayTexts()
+    {
+        if (judgeResultCount == null || judgeResultText == null)
+            return;
+        if (displayTexts == null)
+        {
+            displayTexts = GetDisplayTexts();
+            displayPixelsPerUnit = new float[displayTexts.Length];
+        }
+
+        var needsRebuild = displayInitializationPending;
+        for (var index = 0; index < displayTexts.Length; index++)
+        {
+            var text = displayTexts[index];
+            if (text == null)
+                continue;
+            var pixelsPerUnit = text.pixelsPerUnit;
+            if (!Mathf.Approximately(displayPixelsPerUnit[index], pixelsPerUnit))
+                needsRebuild = true;
+            displayPixelsPerUnit[index] = pixelsPerUnit;
+        }
+        if (!needsRebuild)
+            return;
+        displayInitializationPending = false;
+
+        // CanvasScaler has updated the actual rasterization scale before mesh generation.
+        WarmActualDisplayTexts(displayTexts);
+        var preset = selectedDisplayFontPreset;
+        judgeCountOffsetCache[preset] = preset == 0
+            ? 0f
+            : Mathf.Max(
+                authoredJudgeCountFontSize * 0.6f,
+                MeasureText(judgeResultCount, "0"));
+        UpdateJudgeCountOffset();
+        AlignRateLabels(preset == 0);
+        ApplyJudgeColumnLayout();
+        UpdateOutput();
+        foreach (var text in displayTexts)
+        {
+            if (text == null)
+                continue;
+            text.cachedTextGenerator.Invalidate();
+            text.cachedTextGeneratorForLayout.Invalidate();
+            text.SetAllDirty();
+        }
+    }
+
+    private Font ResolveDisplayFont(int preset)
+    {
+        if (displayFontCache.TryGetValue(preset, out var cached) && cached != null)
+            return cached;
+
         var font = preset switch
         {
-            0 => defaultDisplayFont,
             1 => CreateSystemFont(new[] { "Cascadia Mono", "JetBrains Mono", "Cascadia Code", "Consolas" }),
             2 => CreateSystemFont(new[] { "Cascadia Code", "Consolas" }),
             3 => CreateSystemFont(new[] { "Microsoft YaHei UI", "Microsoft YaHei" }),
@@ -237,30 +397,147 @@ public class ObjectCounter : MonoBehaviour
             10 => Resources.Load<Font>("Fonts/Allerta-Regular"),
             _ => defaultDisplayFont
         };
-        if (font == null)
-            font = defaultDisplayFont;
-        if (font == null)
+        if (font != null)
+            displayFontCache[preset] = font;
+        return font;
+    }
+
+    private void LayoutJudgeColumns()
+    {
+        if (judgeResultText == null || judgeResultCount == null)
             return;
 
-        foreach (var text in GetDisplayTexts())
-            if (text != null)
-                text.font = font;
-
-        foreach (var objectName in new[] { "TimeText", "TimeText (1)" })
+        var labelRect = judgeResultText.rectTransform;
+        var countRect = judgeResultCount.rectTransform;
+        labelRect.anchoredPosition = authoredJudgeTextPosition;
+        countRect.anchoredPosition = authoredJudgeCountPosition;
+        if (selectedDisplayFontPreset != 0)
         {
-            var text = GameObject.Find(objectName)?.GetComponent<UnityEngine.UI.Text>();
-            if (text != null)
-                text.font = font;
+            var digitWidth = customJudgeCountOffset;
+            countRect.anchoredPosition = authoredJudgeCountPosition +
+                                         Vector2.right * digitWidth;
+        }
+        labelRect.sizeDelta = new Vector2(
+            authoredJudgeTextWidth, authoredJudgeTextSize.y);
+        countRect.sizeDelta = authoredJudgeCountSize;
+        labelRect.localScale = authoredJudgeTextScale;
+        countRect.localScale = authoredJudgeCountScale;
+        judgeResultText.fontSize = authoredJudgeTextFontSize;
+        judgeResultCount.fontSize = authoredJudgeCountFontSize;
+        judgeResultText.lineSpacing = authoredJudgeTextLineSpacing;
+        judgeResultCount.lineSpacing = authoredJudgeCountLineSpacing;
+    }
+
+    private void ApplyJudgeColumnLayout()
+    {
+        var screenEffects = FindAnyObjectByType<ScreenEffectController>();
+        screenEffects?.BeginCanvasLayoutChange();
+        LayoutJudgeColumns();
+        screenEffects?.EndCanvasLayoutChange();
+    }
+
+    private void ConfigureJudgeColumnOverflow()
+    {
+        judgeResultText.horizontalOverflow = HorizontalWrapMode.Overflow;
+        judgeResultText.verticalOverflow = VerticalWrapMode.Overflow;
+        judgeResultText.resizeTextForBestFit = false;
+        judgeResultCount.horizontalOverflow = HorizontalWrapMode.Overflow;
+        judgeResultCount.verticalOverflow = VerticalWrapMode.Overflow;
+        judgeResultCount.resizeTextForBestFit = false;
+    }
+
+    private void AlignRateLabels(bool useAuthoredSpacing)
+    {
+        finaleRateLabel = "FiNALE  Rate:";
+        deluxeRateLabel = "DELUXE Rate:";
+        if (useAuthoredSpacing || rate == null || rate.font == null)
+            return;
+
+        const string finale = "FiNALE";
+        const string deluxe = "DELUXE";
+        var finaleWidth = MeasureRateText(finale);
+        var deluxeWidth = MeasureRateText(deluxe);
+        var spaceWidth = Mathf.Max(0.01f, MeasureRateText(" "));
+        var targetPrefixWidth = Mathf.Max(finaleWidth, deluxeWidth) + spaceWidth;
+        finaleRateLabel = finale + new string(' ', Mathf.Max(1,
+            Mathf.RoundToInt((targetPrefixWidth - finaleWidth) / spaceWidth))) + "Rate:";
+        deluxeRateLabel = deluxe + new string(' ', Mathf.Max(1,
+            Mathf.RoundToInt((targetPrefixWidth - deluxeWidth) / spaceWidth))) + "Rate:";
+    }
+
+    private float MeasureRateText(string value)
+        => MeasureText(rate, value);
+
+    private static float MeasureText(Text text, string value)
+    {
+        var pixelsPerUnit = Mathf.Max(0.001f, text.pixelsPerUnit);
+        var pixelSize = Mathf.Max(1, Mathf.RoundToInt(text.fontSize * pixelsPerUnit));
+        text.font.RequestCharactersInTexture(value, pixelSize, text.fontStyle);
+        var width = 0f;
+        foreach (var character in value)
+            if (text.font.GetCharacterInfo(
+                    character, out var info, pixelSize, text.fontStyle))
+                width += info.advance;
+        return width / pixelsPerUnit;
+    }
+
+    private Text[] GetDisplayTexts()
+    {
+        var roots = new[]
+        {
+            judgeResultCount, judgeResultText, table, rate,
+            statusCombo, statusScore, statusAchievement, statusDXScore
+        };
+        var texts = new List<Text>();
+        foreach (var root in roots.Where(text => text != null))
+            texts.AddRange(root.GetComponentsInChildren<Text>(true));
+
+        var scene = gameObject.scene;
+        foreach (var text in Resources.FindObjectsOfTypeAll<Text>())
+        {
+            if (text != null && text.gameObject.scene == scene &&
+                (text.name == "TimeText" || text.name == "TimeText (1)"))
+                texts.Add(text);
+        }
+        return texts.Distinct().ToArray();
+    }
+
+    private void WarmActualDisplayTexts(IEnumerable<Text> texts)
+    {
+        using var generator = new TextGenerator();
+        foreach (var text in texts)
+        {
+            if (text == null || text.font == null)
+                continue;
+            var settings = text.GetGenerationSettings(text.rectTransform.rect.size);
+            settings.horizontalOverflow = HorizontalWrapMode.Overflow;
+            settings.verticalOverflow = VerticalWrapMode.Overflow;
+            generator.Populate(GetWarmupText(text), settings);
         }
     }
 
-    private Text[] GetDisplayTexts() => new[]
+    private string GetWarmupText(Text text)
     {
-        judgeResultCount, judgeResultText, table, rate,
-        statusCombo, statusScore, statusAchievement, statusDXScore
-    };
+        if (text == judgeResultCount)
+            return JudgeCountWarmup + DisplayGlyphs;
+        if (text == table)
+            return ObjectCountWarmup + DisplayGlyphs;
+        if (text == rate)
+            return RateWarmup + DisplayGlyphs;
+        if (text == statusCombo)
+            return "0000" + DisplayGlyphs;
+        if (text == statusScore)
+            return "0,000,000" + DisplayGlyphs;
+        if (text == statusAchievement)
+            return "100.0000%" + DisplayGlyphs;
+        if (text == statusDXScore)
+            return "00000" + DisplayGlyphs;
+        if (text.name == "TimeText" || text.name == "TimeText (1)")
+            return "-00:00.0000" + DisplayGlyphs;
+        return string.Concat(text.text, DisplayGlyphs);
+    }
 
-    private static Font CreateSystemFont(string[] names)
+    private Font CreateSystemFont(string[] names)
     {
         foreach (var name in names)
             if (Font.GetOSInstalledFontNames().Contains(name))
@@ -273,6 +550,39 @@ public class ObjectCounter : MonoBehaviour
     {
         UpdateState();
         UpdateOutput();
+    }
+
+    public void ResetForChart()
+    {
+        tapCount = holdCount = slideCount = touchCount = breakCount = 0;
+        tapSum = holdSum = slideSum = touchSum = breakSum = 0;
+        cPerfectCount = perfectCount = greatCount = goodCount = missCount = 0;
+        combo = 0;
+        accRate[0] = 0d;
+        accRate[1] = 100d;
+        accRate[2] = 101d;
+        accRate[3] = 100d;
+        accRate[4] = 0d;
+
+        foreach (var counts in new[]
+                 {
+                     judgedTapCount, judgedHoldCount, judgedTouchCount,
+                     judgedTouchHoldCount, judgedSlideCount, judgedBreakCount,
+                     totalJudgedCount
+                 })
+        {
+            if (counts == null)
+                continue;
+            foreach (var key in counts.Keys.ToArray())
+                counts[key] = 0;
+        }
+        UpdateOutput();
+    }
+
+    public void CompleteChartInitialization()
+    {
+        UpdateOutput();
+        ScheduleDisplayFontInitialization();
     }
 
     private void UpdateOutput()
@@ -650,9 +960,9 @@ public class ObjectCounter : MonoBehaviour
         );
 
         rate.text = string.Format(
-            "FiNALE  Rate:\n" +
+            finaleRateLabel + "\n" +
             "{0:000.00}   %\n" +
-            "DELUXE Rate:\n" +
+            deluxeRateLabel + "\n" +
             "{1:000.0000} % ",
             Math.Truncate((float)FiNowScore() / FiSumScore() * 10000) / 100,
             Math.Truncate(((float)DxNowScore() / DxSumScore() * 100 + BreakRate()) * 10000) / 10000

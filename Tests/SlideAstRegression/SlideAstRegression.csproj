@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- This harness compiles player and editor sources that are written for
+         compilers with nullable annotations off, so their nullability warnings
+         are not defects in their own context. Suppressed here to keep the build
+         output readable: a run that prints warnings every time is a run whose
+         output stops being read. -->
+    <NoWarn>$(NoWarn);CS0649;CS8629;CS8602;CS8603;CS8618;CS8625</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Assets/MajdataCore/AlphaCommandBoundary.cs" />
+    <Compile Include="../../Assets/MajdataCore/EachRule.cs" />
+    <Compile Include="../../Assets/MajdataCore/ChartBracketTracker.cs" />
+    <Compile Include="../../Assets/MajdataCore/ChartTokens.cs" />
+    <Compile Include="../../Assets/MajdataCore/AlphaCommandGrammar.cs" />
+    <Compile Include="../../Assets/MajdataCore/EditorDirective.cs" />
+    <Compile Include="../../Assets/MajdataCore/AlphaVisualTiming.cs" />
+    <Compile Include="../../Assets/Scripts/SvController.cs" />
+    <Compile Include="../../Assets/MajdataCore/NoteExpression.cs" />
+    <Compile Include="../../Assets/MajdataCore/SlideShapeResolver.cs" />
+    <Compile Include="../../Assets/MajdataCore/NoteModifiers.cs" />
+    <Compile Include="../../Assets/MajdataCore/ParserMessageLocale.cs" />
+    <Compile Include="../../Assets/MajdataCore/SlidePathParser.cs" />
+    <Compile Include="../../Assets/MajdataCore/SlideCodeParser.cs" />
+    <Compile Include="../../Assets/MajdataCore/TouchSlideDirection.cs" />
+    <Compile Include="../../Assets/MajdataCore/SlideCodeJudgment.cs" />
+    <Compile Include="../../Assets/Scripts/Notes/SlideCodePathGeometry.cs" />
+    <Compile Include="SlideGeometryRegression.cs" />
+    <Compile Include="../../Assets/MajdataCore/SlideSyntaxValidator.cs" />
+    <Compile Include="../../MajdataEdit/Editor/BeatFormatBrush.cs" />
+    <Compile Include="../../MajdataEdit/Editor/NoteDurationTarget.cs" />
+    <Compile Include="../../MajdataEdit/Editor/NoteStreamMerger.cs" />
+    <Compile Include="../../MajdataEdit/Editor/VisualNoteEditor.cs" />
+    <Compile Include="../../MajdataEdit/ChartRhythmSearchEngine.cs" />
+    <Compile Include="../../MajdataEdit/Majson.cs" />
+    <Compile Include="../../MajdataEdit/Mirror.cs" />
+    <Compile Include="../../MajdataEdit/NotePreviewModule.cs" />
+    <Compile Include="../../MajdataEdit/SimaiProcess.cs" />
+    <Compile Include="../../MajdataEdit/SubWindow/MuriDetector.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="baseline/SimaiProcess_v042.cs" />
+    <Compile Include="baseline/Majson_v042.cs" />
+    <Compile Include="baseline/Shims.cs" />
+    <Compile Include="baseline/AlphaCommandBoundary_v042.cs" />
+    <Compile Include="BaselineDiff.cs" />
+    <Compile Include="ChartCorpusDiff.cs" />
+    <Compile Include="ViewBuildDiff.cs" />
+    <Compile Include="WholeChartDiff.cs" />
+    <Compile Include="Probe.cs" />
+    <Compile Include="Stubs.cs" />
+  </ItemGroup>
+</Project>

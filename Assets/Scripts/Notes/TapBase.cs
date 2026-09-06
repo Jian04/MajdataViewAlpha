@@ -1,5 +1,6 @@
-﻿using Assets.Scripts.Types;
+using Assets.Scripts.Types;
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 #nullable enable
 namespace Assets.Scripts.Notes
@@ -9,6 +10,7 @@ namespace Assets.Scripts.Notes
         public bool isBreak;
         public bool isEX;
         public bool isFirework;
+        public bool isMine;
         bool isTriggered = false;
 
         public Sprite tapSpr;
@@ -18,6 +20,31 @@ namespace Assets.Scripts.Notes
 
         public Sprite eachLine;
         public Sprite breakLine;
+
+        /// <summary>
+        /// Redirects the pictures this Note can wear to the image named by
+        /// <c>customSkin</c>, so a skinned Note keeps that image whether it is a
+        /// plain, each or break Note. Does nothing when no skin was written.
+        /// </summary>
+        /// <remarks>
+        /// Called from Start, not Awake: the loader fills <c>customSkin</c> in after
+        /// the object exists, which is after Awake has already run.
+        ///
+        /// The EX sprite is deliberately left alone. It is not another picture of the
+        /// Note, it is the halo drawn on a separate renderer underneath one; pointing
+        /// it at the skin too would draw the image twice, once oversized. The each and
+        /// break guide lines are left alone for the same reason: a line belongs to the
+        /// pair of Notes it joins, not to either one of them.
+        /// </remarks>
+        protected void ApplyCustomSkinToSprites()
+        {
+            var skin = ResolveCustomSkin(tapSpr);
+            if (skin == null)
+                return;
+            tapSpr = skin;
+            eachSpr = skin;
+            breakSpr = skin;
+        }
 
         public RuntimeAnimatorController BreakShine;
 
@@ -33,6 +60,7 @@ namespace Assets.Scripts.Notes
         public float noteScale = 1f;
         public float noteScaleX = 1f;
         public float noteScaleY = 1f;
+        private Vector2? liveScaleDefault;
 
         protected SpriteRenderer exSpriteRender;
         protected SpriteRenderer lineSpriteRender;
@@ -40,6 +68,17 @@ namespace Assets.Scripts.Notes
         protected SpriteRenderer spriteRenderer;
         private MaterialPropertyBlock brightnessProperties;
         private bool? tapLineOnOppositeSide;
+
+        protected override IEnumerable<SpriteRenderer> GetLiveVisualRenderers()
+        {
+            foreach (var renderer in base.GetLiveVisualRenderers())
+                if (renderer != null)
+                    yield return renderer;
+            if (lineSpriteRender != null)
+                yield return lineSpriteRender;
+        }
+
+        protected virtual void Awake() => HideSpriteUntilInitialized(transform);
 
         protected void ApplyExAlpha()
         {
@@ -52,21 +91,34 @@ namespace Assets.Scripts.Notes
             exSpriteRender.color = color;
         }
 
+        public override void ApplyLiveScale(Vector2? scale)
+        {
+            liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
+            var value = scale ?? liveScaleDefault.Value;
+            noteScaleX = value.x;
+            noteScaleY = value.y;
+        }
+
         protected void PreLoad()
         {
-            var notes = GameObject.Find("Notes").transform;
-            noteManager = notes.GetComponent<NoteManager>();
+            var notes = noteManager != null ? noteManager.transform : GameObject.Find("Notes").transform;
+            if (noteManager == null) noteManager = notes.GetComponent<NoteManager>();
             tapLine = Instantiate(tapLine, notes);
             tapLine.SetActive(false);
             lineSpriteRender = tapLine.GetComponent<SpriteRenderer>();
             spriteRenderer = GetComponent<SpriteRenderer>();
             brightnessProperties = new MaterialPropertyBlock();
             exSpriteRender = transform.GetChild(0).GetComponent<SpriteRenderer>();
-            timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
-            objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
+            if (timeProvider == null) timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
+            if (objectCounter == null) objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
 
             spriteRenderer.sortingOrder += noteSortOrder;
             exSpriteRender.sortingOrder += noteSortOrder;
+
+            // Both Tap and Star reach their sprite fields through here, and both do it
+            // before assigning any of them to a renderer, which is what makes this the
+            // one place a per-Note skin has to be swapped in.
+            ApplyCustomSkinToSprites();
 
             
         }
@@ -74,11 +126,14 @@ namespace Assets.Scripts.Notes
         {
             if (timeProvider == null || noteManager == null)
                 return;
-            if (previewOnly)
+
+            if (JudgmentDisabled || JudgmentSuspended)
                 return;
 
+            BeforeFixedJudgment();
+
             var timing = GetJudgeTiming();
-            if (!isJudged && timing > 0.15f)
+            if (!isJudged && timing > MissWindow)
             {
                 judgeResult = JudgeType.Miss;
                 isJudged = true;
@@ -117,10 +172,25 @@ namespace Assets.Scripts.Notes
             }
 
         }
+
+        /// <summary>
+        /// Lets a note prepare dependent visuals before this frame can judge and
+        /// destroy it. The default is intentionally empty.
+        /// </summary>
+        protected virtual void BeforeFixedJudgment()
+        {
+        }
         // Update is called once per frame
         protected virtual void Update()
         {
-            if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < 0f)
+            if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < GameplayRevealTime)
+            {
+                tapLine.SetActive(false);
+                spriteRenderer.forceRenderingOff = true;
+                if (isEX) exSpriteRender.forceRenderingOff = true;
+                return;
+            }
+            if (IsPausedTimelinePreview && timeProvider.AudioTime > time)
             {
                 tapLine.SetActive(false);
                 spriteRenderer.forceRenderingOff = true;
@@ -128,8 +198,7 @@ namespace Assets.Scripts.Notes
                 return;
             }
 
-            var judgeOffset = timeProvider.AudioTime - time;
-            if (IsBeforeBounceWindow(judgeOffset))
+            if (IsBeforeBounceWindow())
             {
                 tapLine.SetActive(false);
                 spriteRenderer.forceRenderingOff = true;
@@ -137,10 +206,8 @@ namespace Assets.Scripts.Notes
                 return;
             }
 
-            var isBouncing = IsBounceActive(judgeOffset);
-            var distance = isBouncing ? GetBounceDistance(judgeOffset) : GetSvDistance();
-            var destScale = GetSpawnScale(distance);
-            var hasLeftSpawn = HasLeftSpawnAtCurrentTime(noteScrollPos);
+            var isBouncing = IsBounceActive();
+            var distance = isBouncing ? GetBounceDistance() : GetSvDistance();
 
             if (isBouncing)
             {
@@ -150,59 +217,46 @@ namespace Assets.Scripts.Notes
                     noteScale * noteScaleX,
                     noteScale * noteScaleY,
                     1f);
-                var bounceLineScale = Mathf.Clamp01(distance / 4.8f);
-                tapLine.SetActive(distance > 0.001f && distance <= 4.8f);
+                var absoluteDistance = Mathf.Abs(distance);
+                var bounceLineScale = absoluteDistance / DefaultDestroyRadius;
+                tapLine.SetActive(absoluteDistance > 0.001f);
                 tapLine.transform.localScale = new Vector3(bounceLineScale, bounceLineScale, 1f);
             }
-            else switch(State)
+            else
             {
-                case NoteStatus.Initialized:
-                    if (hasLeftSpawn)
-                    {
-                        State = NoteStatus.Running;
-                        goto case NoteStatus.Running;
-                    }
-                    if (destScale >= 0f)
-                    {
-                        State = NoteStatus.Pending;
-                        goto case NoteStatus.Pending;
-                    }
-                    else
-                        transform.localScale = new Vector3(0, 0);
+                var presentation = GetSpawnPresentation(
+                    distance, noteScrollPos, ref spawnCrossingMemo);
+                if (!presentation.Visible)
+                {
+                    State = NoteStatus.Initialized;
+                    transform.localScale = Vector3.zero;
+                    tapLine.SetActive(false);
+                    spriteRenderer.forceRenderingOff = true;
+                    if (isEX)
+                        exSpriteRender.forceRenderingOff = true;
                     return;
-                case NoteStatus.Pending:
-                    {
-                        if (hasLeftSpawn)
-                        {
-                            State = NoteStatus.Running;
-                            goto case NoteStatus.Running;
-                        }
-                        var pendingScale = Mathf.Clamp01(destScale);
-                        tapLine.SetActive(pendingScale > 0.3f);
-                        transform.localScale = new Vector3(
-                            pendingScale * noteScale * noteScaleX,
-                            pendingScale * noteScale * noteScaleY,
-                            1f);
-                        transform.position = getPositionFromDistance(spawnRadius);
-                        var lineScale = Mathf.Abs(spawnRadius / 4.8f);
-                        tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
-                    }
-                    break;
-                case NoteStatus.Running:
-                    {
-                        transform.position = getPositionFromDistance(distance);
-                        transform.localScale = new Vector3(
-                            noteScale * noteScaleX,
-                            noteScale * noteScaleY,
-                            1f);
-                        var absoluteDistance = Mathf.Abs(distance);
-                        tapLine.SetActive(absoluteDistance > 0.001f && absoluteDistance <= 4.8f);
-                        var lineScale = Mathf.Abs(distance / 4.8f);
-                        tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
-                    }
-                    break;
+                }
+
+                State = presentation.Running
+                    ? NoteStatus.Running
+                    : NoteStatus.Pending;
+                transform.position = getPositionFromDistance(presentation.Distance);
+                transform.localScale = new Vector3(
+                    presentation.Scale * noteScale * noteScaleX,
+                    presentation.Scale * noteScale * noteScaleY,
+                    1f);
+                var absoluteDistance = Mathf.Abs(presentation.Distance);
+                tapLine.SetActive(
+                    presentation.Running
+                        ? absoluteDistance > 0.001f
+                        : presentation.Scale > 0.3f);
+                var lineScale = absoluteDistance / DefaultDestroyRadius;
+                tapLine.transform.localScale = new Vector3(
+                    lineScale, lineScale, 1f);
             }
-            UpdateTapLineRotation(State == NoteStatus.Pending ? spawnRadius : distance);
+            UpdateTapLineRotation(
+                isBouncing ? distance :
+                State == NoteStatus.Pending ? spawnRadius : distance);
 
             spriteRenderer.forceRenderingOff = false;
             if (isEX) exSpriteRender.forceRenderingOff = false;
@@ -229,7 +283,7 @@ namespace Assets.Scripts.Notes
         }
         protected void Check(object sender, InputEventArgs arg)
         {
-            if (previewOnly)
+            if (JudgmentDisabled || JudgmentSuspended)
                 return;
             if (this == null || !isActiveAndEnabled || sensor == null || inputManager == null || noteManager == null)
                 return;
@@ -309,12 +363,16 @@ namespace Assets.Scripts.Notes
                 Destroy(tapLine);
             if (inputManager != null)
                 inputManager.UnbindArea(Check, sensorPos);
-            if (previewOnly || HttpHandler.IsReloding)
+            if (JudgmentDisabled || HttpHandler.IsReloding)
                 return;
             var effectManager = GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
-            if (effectManager == null) return;
-            effectManager.PlayEffect(JudgeQueueKey, isBreak, judgeResult, noteTintColor);
-            effectManager.PlayFastLate(JudgeQueueKey, judgeResult);
+            if (effectManager != null &&
+                (!isMine || NoteEffectManager.ShowMineHitFeedback))
+            {
+                effectManager.PlayEffect(
+                    JudgeQueueKey, destroyRadius, isBreak, judgeResult, noteTintColor);
+                effectManager.PlayFastLate(JudgeQueueKey, destroyRadius, judgeResult);
+            }
             if (isFirework && judgeResult != JudgeType.Miss)
             {
                 var firework = GameObject.Find("FireworkEffect");

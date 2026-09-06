@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -26,8 +25,12 @@ public class ScreenEffectController : MonoBehaviour
     private EffectTrack rotateEffects;
     private EffectTrack shakeEffects;
     private readonly Dictionary<EffectChange, Color> tintColors = new();
-    private readonly List<RotationTarget> rotationTargets = new();
+    private readonly List<FrameTarget> frameTargets = new();
+    private readonly List<Transform> backgroundTransforms = new();
+    private readonly List<FrameTransformState> backgroundFrameStates = new();
     private AudioTimeProvider timeProvider;
+    private MediaTimelineController mediaTimeline;
+    private Transform backgroundTransform;
     private Material material;
     private RenderTexture trailTexture;
     private RenderTexture trailTexture2;
@@ -39,14 +42,22 @@ public class ScreenEffectController : MonoBehaviour
     private bool materialIsDefault;
     private int trailSeedStage;
     private float gameplayRotationDegrees;
-    private int rotationTargetRefreshFrame = -1;
+    private Vector2 gameplayMove;
+    private float gameplayScale = 1f;
+    private int frameTargetRefreshFrame = -1;
 
     public bool IsPreparedForRecording => !enabled || material == null || !needsWarmup;
 
-    public void Configure(List<EffectChange> effectEvents, AudioTimeProvider provider)
+    public void Configure(
+        List<EffectChange> effectEvents,
+        AudioTimeProvider provider,
+        MediaTimelineController timeline = null)
     {
         timeProvider = provider;
-        ApplyGameplayRotation(0f);
+        mediaTimeline = timeline;
+        RestoreBackgroundTransforms();
+        ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: false);
+        ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: true);
         effects.Clear();
         effectsByType.Clear();
         if (effectEvents != null)
@@ -114,24 +125,40 @@ public class ScreenEffectController : MonoBehaviour
 
     private void Update()
     {
-        EnsureRotationTargets();
-        ResetRotationTargets();
+        RefreshGameplayState();
     }
 
+    /// <summary>
+    /// Moves the canvas half of the frame. A Canvas batches its meshes in
+    /// PostLateUpdate, which is over before any camera callback runs, so the
+    /// OnPreCull pass below cannot move UI: the batch for the frame is already
+    /// built, and OnPostRender puts the transform back before the next rebuild
+    /// would pick the move up. That is why the notes and the aperture followed
+    /// ZOOM/MOVE while the HUD text and the cover panels stayed pinned to the
+    /// screen. These targets are therefore moved here, ahead of the rebuild,
+    /// and left in place instead of being restored.
+    /// </summary>
     private void LateUpdate()
     {
-        if (timeProvider == null || rotateEffects == null)
-        {
-            gameplayRotationDegrees = 0f;
-            return;
-        }
-
-        gameplayRotationDegrees = rotateEffects.Evaluate(timeProvider.AudioTime);
+        EnsureFrameTargets();
+        ApplyGameplayTransform(
+            gameplayRotationDegrees, gameplayMove, gameplayScale, onCanvas: true);
     }
 
     private void OnPreCull()
     {
-        ApplyGameplayRotation(gameplayRotationDegrees);
+        EnsureFrameTargets();
+        CaptureFrameTargets();
+        ApplyGameplayTransform(
+            gameplayRotationDegrees, gameplayMove, gameplayScale, onCanvas: false);
+        ApplyBackgroundTransform(
+            gameplayRotationDegrees, gameplayMove, gameplayScale);
+    }
+
+    private void OnPostRender()
+    {
+        RestoreBackgroundTransforms();
+        ResetFrameTargets();
     }
 
     public bool PrepareForRecording()
@@ -175,7 +202,6 @@ public class ScreenEffectController : MonoBehaviour
         var contrast = contrastEffects.Evaluate(time);
         var rainbow = Mathf.Clamp01(rainbowEffects.Evaluate(time));
         var vignette = Mathf.Clamp01(vignetteEffects.Evaluate(time));
-        var zoom = Mathf.Clamp(zoomEffects.Evaluate(time), 0f, 8f);
         var glitch = Mathf.Clamp01(glitchEffects.Evaluate(time));
         var tvNoise = Mathf.Clamp01(tvNoiseEffects.Evaluate(time));
         var hue = rotationDegreesToRadians(hueEffects.Evaluate(time));
@@ -184,7 +210,8 @@ public class ScreenEffectController : MonoBehaviour
         if (tintAmount > 0.001f &&
             (tintEvent == null || !tintColors.TryGetValue(tintEvent, out tintColor)))
             tintAmount = 0f;
-        moveEffects.EvaluateVector(time, out var offsetX, out var offsetY);
+        var offsetX = 0f;
+        var offsetY = 0f;
         var shake = shakeEffects.Evaluate(time, out var shakeEvent);
         if (shakeEvent != null && Mathf.Abs(shake) > 0.0001f)
         {
@@ -207,7 +234,7 @@ public class ScreenEffectController : MonoBehaviour
         if (gaussian <= 0.001f && neon <= 0.001f && trail <= 0.001f && Mathf.Abs(flash) <= 0.001f &&
             brightness <= 0.001f && saturation <= 0.001f && contrast <= 0.001f &&
             rainbow <= 0.001f && vignette <= 0.001f &&
-            zoom <= 0.001f && glitch <= 0.001f && tvNoise <= 0.001f &&
+            glitch <= 0.001f && tvNoise <= 0.001f &&
             Mathf.Abs(hue) <= 0.0001f && tintAmount <= 0.001f &&
             Mathf.Abs(offsetX) <= 0.0001f && Mathf.Abs(offsetY) <= 0.0001f)
         {
@@ -233,7 +260,7 @@ public class ScreenEffectController : MonoBehaviour
         material.SetFloat("_EffectTime", time);
         material.SetFloat("_Flash", flash);
         material.SetFloat("_Vignette", vignette);
-        material.SetFloat("_Zoom", zoom);
+        material.SetFloat("_Zoom", 0f);
         material.SetFloat("_Glitch", glitch);
         material.SetFloat("_TVNoise", tvNoise);
         material.SetFloat("_Hue", hue);
@@ -357,77 +384,305 @@ public class ScreenEffectController : MonoBehaviour
     private static float rotationDegreesToRadians(float degrees)
         => degrees * Mathf.Deg2Rad;
 
-    private void ApplyGameplayRotation(float degrees)
+    private void ApplyGameplayTransform(
+        float degrees,
+        Vector2 normalizedOffset,
+        float scale,
+        bool onCanvas)
     {
-        EnsureRotationTargets();
+        EnsureFrameTargets();
         gameplayRotationDegrees = degrees;
-        var offset = Quaternion.Euler(0f, 0f, degrees);
-        foreach (var target in rotationTargets)
+        var rotation = Quaternion.Euler(0f, 0f, degrees);
+        foreach (var target in frameTargets)
         {
-            if (target.Transform != null)
-                target.Transform.localRotation = target.BaseRotation * offset;
+            if (target.Transform == null || target.OnCanvas != onCanvas)
+                continue;
+            var targetRotation = target.SkipRotation ? Quaternion.identity : rotation;
+            var planarPosition = targetRotation * new Vector3(
+                target.BasePosition.x * scale,
+                target.BasePosition.y * scale,
+                0f);
+            target.Transform.localRotation = targetRotation * target.BaseRotation;
+            target.Transform.localPosition = new Vector3(
+                planarPosition.x + normalizedOffset.x * target.MoveScale.x,
+                planarPosition.y + normalizedOffset.y * target.MoveScale.y,
+                target.BasePosition.z);
+            target.Transform.localScale = target.BaseScale * scale;
         }
     }
 
-    private void EnsureRotationTargets()
+    private void ApplyBackgroundTransform(
+        float degrees,
+        Vector2 normalizedOffset,
+        float scale)
     {
-        if (rotationTargets.Count > 0 &&
-            !rotationTargets.Exists(target => target.Transform == null) &&
-            Time.frameCount < rotationTargetRefreshFrame)
+        RestoreBackgroundTransforms();
+        backgroundTransform ??= GameObject.Find("Background")?.transform;
+        backgroundTransforms.Clear();
+        if (backgroundTransform != null)
+            backgroundTransforms.Add(backgroundTransform);
+        mediaTimeline?.CollectVisualTransforms(backgroundTransforms);
+
+        var planeSize = GetGameplayPlaneSize();
+        var offset = new Vector3(
+            normalizedOffset.x * planeSize.x,
+            normalizedOffset.y * planeSize.y,
+            0f);
+        var backgroundScale = Mathf.Max(0.01f, scale);
+        var rotation = Quaternion.Euler(0f, 0f, degrees);
+
+        foreach (var target in backgroundTransforms)
+        {
+            if (target == null)
+                continue;
+            backgroundFrameStates.Add(new FrameTransformState(
+                target, target.position, target.rotation, target.localScale));
+            var planarPosition = rotation * new Vector3(
+                target.position.x * backgroundScale,
+                target.position.y * backgroundScale,
+                0f);
+            target.position = new Vector3(
+                planarPosition.x + offset.x,
+                planarPosition.y + offset.y,
+                target.position.z);
+            target.rotation = rotation * target.rotation;
+            target.localScale *= backgroundScale;
+        }
+    }
+
+    private void RestoreBackgroundTransforms()
+    {
+        foreach (var state in backgroundFrameStates)
+        {
+            if (state.Transform == null)
+                continue;
+            state.Transform.position = state.Position;
+            state.Transform.rotation = state.Rotation;
+            state.Transform.localScale = state.Scale;
+        }
+        backgroundFrameStates.Clear();
+    }
+
+    private void RefreshGameplayState()
+    {
+        if (timeProvider == null || rotateEffects == null)
+        {
+            gameplayRotationDegrees = 0f;
+            gameplayMove = Vector2.zero;
+            gameplayScale = 1f;
+            return;
+        }
+
+        var time = timeProvider.AudioTime;
+        gameplayRotationDegrees = rotateEffects.Evaluate(time);
+        moveEffects.EvaluateVector(time, out var moveX, out var moveY);
+        gameplayMove = new Vector2(moveX, moveY);
+        gameplayScale = Mathf.Clamp(1f + zoomEffects.Evaluate(time), 0.1f, 8f);
+    }
+
+    private void EnsureFrameTargets()
+    {
+        if (frameTargets.Count > 0 &&
+            !frameTargets.Exists(target => target.Transform == null) &&
+            Time.frameCount < frameTargetRefreshFrame)
             return;
 
-        RefreshRotationTargets();
-        rotationTargetRefreshFrame = Time.frameCount + 30;
+        // Re-registering records whatever pose a target currently holds as its
+        // base. Canvas targets are sitting in their moved pose, so put them
+        // back first or every refresh would bake the offset in permanently.
+        RestoreCanvasTargets();
+        RefreshFrameTargets();
+        frameTargetRefreshFrame = Time.frameCount + 30;
     }
 
-    private void ResetRotationTargets()
+    // Canvas targets are deliberately left where LateUpdate put them: restoring
+    // them here would undo the move before the canvas ever rebuilt with it.
+    private void ResetFrameTargets()
     {
-        foreach (var target in rotationTargets)
+        foreach (var target in frameTargets)
         {
-            if (target.Transform != null)
+            if (target.Transform != null && !target.OnCanvas)
+            {
                 target.Transform.localRotation = target.BaseRotation;
+                target.Transform.localPosition = target.BasePosition;
+                target.Transform.localScale = target.BaseScale;
+            }
         }
     }
 
-    private void RefreshRotationTargets()
+    private void RestoreCanvasTargets()
     {
-        foreach (var target in rotationTargets)
-        {
-            if (target.Transform != null)
+        foreach (var target in frameTargets)
+            if (target.Transform != null && target.OnCanvas)
+            {
                 target.Transform.localRotation = target.BaseRotation;
-        }
-        rotationTargets.Clear();
+                target.Transform.localPosition = target.BasePosition;
+                target.Transform.localScale = target.BaseScale;
+            }
+    }
 
-        AddRotationTarget(GameObject.Find("Notes")?.transform);
-        AddRotationTarget(GameObject.Find("NoteEffects")?.transform);
-        AddRotationTarget(GameObject.Find("FireworkEffect")?.transform);
+    public void BeginCanvasLayoutChange()
+    {
+        EnsureFrameTargets();
+        RestoreCanvasTargets();
+    }
+
+    public void EndCanvasLayoutChange()
+    {
+        foreach (var target in frameTargets)
+            if (target.Transform != null && target.OnCanvas)
+                target.CaptureBase();
+        ApplyGameplayTransform(
+            gameplayRotationDegrees, gameplayMove, gameplayScale, onCanvas: true);
+    }
+
+    // Canvas targets hold their moved pose between frames, so re-reading it as
+    // the base would fold the offset in and let the frame creep away.
+    private void CaptureFrameTargets()
+    {
+        foreach (var target in frameTargets)
+            if (target.Transform != null && !target.OnCanvas)
+                target.CaptureBase();
+    }
+
+    private void RefreshFrameTargets()
+    {
+        frameTargets.Clear();
+
+        AddFrameTarget(GameObject.Find("Notes")?.transform);
+        AddFrameTarget(GameObject.Find("NoteEffects")?.transform);
+        AddFrameTarget(GameObject.Find("FireworkEffect")?.transform);
 
         var outline = GameObject.Find("Outline") ?? GameObject.Find("DebugOutline");
-        AddRotationTarget(outline?.transform);
-        AddRotationTarget(GameObject.Find("JudgeAreaOverlay")?.transform);
+        AddFrameTarget(outline?.transform);
+        AddFrameTarget(GameObject.Find("JudgeAreaOverlay")?.transform);
+        // The two cover layers frame the play area, so they follow its ZOOM/MOVE:
+        // otherwise the aperture keeps its authored 1080 radius while the outline and
+        // notes move inside it. Rotation is skipped because a rotated square aperture
+        // cannot be framed by the axis-aligned letterbox panels, and the visible part
+        // of both covers is a circle.
+        AddFrameTarget(FindSceneTransform("1080Circle_Rev"), GetGameplayPlaneSize(), true);
+        AddFrameTarget(FindSceneTransform("BackgroundCover"), GetGameplayPlaneSize(), true);
+        AddCanvasInfoFrameTargets();
     }
 
-    private void AddRotationTarget(Transform target)
+    // Everything drawn on the info canvas - the two side panels, the judge and combo
+    // readouts, the song card - belongs to the frame around the play area, so it
+    // travels with it. Moving the panels as a group is also what keeps the outer
+    // cover correct: its pieces can never drift apart from the aperture.
+    private void AddCanvasInfoFrameTargets()
+    {
+        var canvas = GameObject.Find("CanvasInfo")?.transform as RectTransform;
+        if (canvas == null)
+            return;
+        // Children of a canvas are positioned in canvas units, so a normalised
+        // MOVE offset has to be scaled by the canvas rect rather than the
+        // gameplay plane.
+        var canvasSize = new Vector2(canvas.rect.width, canvas.rect.height);
+        for (var i = 0; i < canvas.childCount; i++)
+            AddFrameTarget(canvas.GetChild(i), canvasSize, true, onCanvas: true);
+    }
+
+    private static Transform FindSceneTransform(string objectName)
+    {
+        foreach (var candidate in Resources.FindObjectsOfTypeAll<Transform>())
+            if (candidate != null &&
+                candidate.gameObject.scene.IsValid() &&
+                candidate.gameObject.name == objectName)
+                return candidate;
+        return null;
+    }
+
+    private void AddFrameTarget(Transform target)
+        => AddFrameTarget(target, GetGameplayPlaneSize());
+
+    private void AddFrameTarget(
+        Transform target,
+        Vector2 moveScale,
+        bool skipRotation = false,
+        bool onCanvas = false)
     {
         if (target == null)
             return;
-        foreach (var existing in rotationTargets)
+        foreach (var existing in frameTargets)
         {
             if (target == existing.Transform || target.IsChildOf(existing.Transform))
                 return;
         }
-        rotationTargets.Add(new RotationTarget(target, target.localRotation));
+        frameTargets.Add(new FrameTarget(
+            target,
+            target.localRotation,
+            target.localPosition,
+            target.localScale,
+            moveScale,
+            skipRotation,
+            onCanvas));
     }
 
-    private sealed class RotationTarget
+    private Vector2 GetGameplayPlaneSize()
+    {
+        var cameraComponent = GetComponent<Camera>();
+        if (cameraComponent == null || !cameraComponent.orthographic)
+            return new Vector2(19.2f, 10.8f);
+        var height = cameraComponent.orthographicSize * 2f;
+        return new Vector2(height * cameraComponent.aspect, height);
+    }
+
+    private sealed class FrameTarget
     {
         public readonly Transform Transform;
-        public readonly Quaternion BaseRotation;
+        public Quaternion BaseRotation { get; private set; }
+        public Vector3 BasePosition { get; private set; }
+        public Vector3 BaseScale { get; private set; }
+        public readonly Vector2 MoveScale;
+        public readonly bool SkipRotation;
+        // A canvas builds its meshes once per frame, before any camera runs, so
+        // it cannot be moved from OnPreCull the way a sprite can.
+        public readonly bool OnCanvas;
 
-        public RotationTarget(Transform transform, Quaternion baseRotation)
+        public FrameTarget(
+            Transform transform,
+            Quaternion baseRotation,
+            Vector3 basePosition,
+            Vector3 baseScale,
+            Vector2 moveScale,
+            bool skipRotation = false,
+            bool onCanvas = false)
         {
             Transform = transform;
             BaseRotation = baseRotation;
+            BasePosition = basePosition;
+            BaseScale = baseScale;
+            MoveScale = moveScale;
+            SkipRotation = skipRotation;
+            OnCanvas = onCanvas;
+        }
+
+        public void CaptureBase()
+        {
+            BaseRotation = Transform.localRotation;
+            BasePosition = Transform.localPosition;
+            BaseScale = Transform.localScale;
+        }
+    }
+
+    private sealed class FrameTransformState
+    {
+        public readonly Transform Transform;
+        public readonly Vector3 Position;
+        public readonly Quaternion Rotation;
+        public readonly Vector3 Scale;
+
+        public FrameTransformState(
+            Transform transform,
+            Vector3 position,
+            Quaternion rotation,
+            Vector3 scale)
+        {
+            Transform = transform;
+            Position = position;
+            Rotation = rotation;
+            Scale = scale;
         }
     }
 
@@ -725,9 +980,17 @@ public class ScreenEffectController : MonoBehaviour
 
     private void OnDestroy()
     {
-        ApplyGameplayRotation(0f);
+        RestoreBackgroundTransforms();
+        ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: false);
+        ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: true);
         ReleaseTrail();
         if (material != null)
             Destroy(material);
+    }
+
+    private void OnDisable()
+    {
+        RestoreBackgroundTransforms();
+        ResetFrameTargets();
     }
 }

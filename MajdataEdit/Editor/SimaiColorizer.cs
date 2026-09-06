@@ -13,6 +13,7 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
     private static readonly SolidColorBrush DarkMarkerBrush = Brush("#4EC9B0");
     private static readonly SolidColorBrush DarkCommentBrush = Brush("#7A828E");
     private static readonly SolidColorBrush DarkAlphaBrush = Brush("#C586C0");
+    private static readonly SolidColorBrush DarkBorrowBrush = Brush("#E8935A");
     private static readonly SolidColorBrush LightBpmBrush = Brush("#16825D");
     private static readonly SolidColorBrush LightBeatBrush = Brush("#9A6700");
     private static readonly SolidColorBrush LightDurationBrush = Brush("#0969DA");
@@ -20,9 +21,9 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
     private static readonly SolidColorBrush LightMarkerBrush = Brush("#007A78");
     private static readonly SolidColorBrush LightCommentBrush = Brush("#6A737D");
     private static readonly SolidColorBrush LightAlphaBrush = Brush("#A626A4");
+    private static readonly SolidColorBrush LightBorrowBrush = Brush("#BC4C00");
 
-    private static bool IsLightTheme =>
-        string.Equals(ThemeManager.CurrentTheme.name, "light", StringComparison.OrdinalIgnoreCase);
+    private static bool IsLightTheme => ThemeManager.CurrentIsLight;
     private static SolidColorBrush BpmBrush => IsLightTheme ? LightBpmBrush : DarkBpmBrush;
     private static SolidColorBrush BeatBrush => IsLightTheme ? LightBeatBrush : DarkBeatBrush;
     private static SolidColorBrush DurationBrush => IsLightTheme ? LightDurationBrush : DarkDurationBrush;
@@ -30,10 +31,12 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
     private static SolidColorBrush MarkerBrush => IsLightTheme ? LightMarkerBrush : DarkMarkerBrush;
     private static SolidColorBrush CommentBrush => IsLightTheme ? LightCommentBrush : DarkCommentBrush;
     private static SolidColorBrush AlphaBrush => IsLightTheme ? LightAlphaBrush : DarkAlphaBrush;
+    private static SolidColorBrush BorrowBrush => IsLightTheme ? LightBorrowBrush : DarkBorrowBrush;
 
     private readonly List<TextSpan> markerSpans = new();
     private readonly List<TextSpan> commentSpans = new();
     private readonly List<TextSpan> alphaSpans = new();
+    private readonly List<TextSpan> borrowSpans = new();
     private object? cachedVersion;
 
     protected override void ColorizeLine(DocumentLine line)
@@ -99,6 +102,7 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
 
         ApplyStateSpan(line, spanStart, text.Length, BrushForState(state));
         ApplyForegroundSpans(line, alphaSpans, AlphaBrush);
+        ApplyForegroundSpans(line, borrowSpans, BorrowBrush);
         ApplyForegroundSpans(line, markerSpans, MarkerBrush);
         ApplyForegroundSpans(line, commentSpans, CommentBrush);
     }
@@ -113,6 +117,7 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
         markerSpans.Clear();
         commentSpans.Clear();
         alphaSpans.Clear();
+        borrowSpans.Clear();
 
         var text = document.Text;
         for (var i = 0; i < text.Length;)
@@ -135,100 +140,75 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
                 continue;
             }
 
-            if (text[i] == '<' && AlphaCommandBoundary.IsPotentialStart(text, i))
+            // Only a token the command grammar recognizes is painted as a command,
+            // so a colored "<...>" means the editor understood it. A half-typed or
+            // misspelled one stays plain and leaves the squiggle as the only signal.
+            if (text[i] == '<' &&
+                MajdataCore.AlphaCommandBoundary.TryGetToken(text, i, out var command) &&
+                command.isKnown)
             {
-                var end = FindAlphaTokenEnd(text, i);
-                alphaSpans.Add(new TextSpan(i, end - i));
-                i = end;
+                alphaSpans.Add(new TextSpan(command.start, command.length));
+                i = command.start + command.length;
                 continue;
             }
 
-            if (text[i] is '@' or '&' && TryReadEditorMarker(text, i, out var length))
+            // All inheritance suffixes share one colour. The carrier remains a
+            // normal note token; only the inherited value starts at '~'.
+            if (text[i] == '~' &&
+                MajdataCore.SlidePathParser.TryReadTrajectoryBorrow(
+                    text, i, out _, out var afterBorrow) &&
+                text.IndexOf('\n', i, afterBorrow - i) < 0)
             {
-                markerSpans.Add(new TextSpan(i, length));
-                i += length;
+                borrowSpans.Add(new TextSpan(i, afterBorrow - i));
+                i = afterBorrow;
+                continue;
+            }
+
+            if (text[i] == '~')
+            {
+                var inheritedPosition = new MajdataCore.SlidePositionData
+                {
+                    area = 'E',
+                    position = 1
+                };
+                if (MajdataCore.SlidePathParser.TryReadRadiusOverride(
+                        text, i, inheritedPosition, out var afterInheritance) ==
+                    MajdataCore.RadiusOverrideResult.Applied &&
+                    text.IndexOf('\n', i, afterInheritance - i) < 0)
+                {
+                    borrowSpans.Add(new TextSpan(i, afterInheritance - i));
+                    i = afterInheritance;
+                    continue;
+                }
+            }
+
+            if (MajdataCore.EditorDirectiveScanner.TryRead(text, i, out var directive) &&
+                directive.length > 0)
+            {
+                if (directive.kind == MajdataCore.EditorDirectiveKind.Overlay &&
+                    directive.length >= 4 &&
+                    directive.start + 1 < text.Length &&
+                    text[directive.start + 1] == '*')
+                {
+                    markerSpans.Add(new TextSpan(directive.start, 2));
+                    markerSpans.Add(new TextSpan(
+                        directive.start + directive.length - 2, 2));
+                    // The scanner returns the whole overlay block as one directive.
+                    // Only skip its opening marker so commands and inheritance
+                    // expressions inside the block still receive syntax colours.
+                    i = directive.start + 2;
+                    continue;
+                }
+                else
+                {
+                    markerSpans.Add(new TextSpan(directive.start, directive.length));
+                }
+                i = directive.start + directive.length;
                 continue;
             }
 
             i++;
         }
-    }
-
-    private static int FindAlphaTokenEnd(string text, int start)
-    {
-        var end = start + 2;
-        while (end < text.Length)
-        {
-            var ch = text[end];
-            if (ch == '>')
-                return end + 1;
-            if (ch is '\r' or '\n' or ';' or '\uFF1B')
-                return end;
-            end++;
-        }
-        return end;
-    }
-
-    private static bool TryReadEditorMarker(string text, int start, out int length)
-    {
-        length = 0;
-        if (start < 0 || start >= text.Length || text[start] is not ('@' or '&'))
-            return false;
-
-        if (text[start] == '@')
-        {
-            if (start + 2 < text.Length && text[start + 1] == '{')
-            {
-                var close = text.IndexOf('}', start + 2);
-                if (close > start + 2 &&
-                    text.Substring(start + 2, close - start - 2).All(char.IsDigit))
-                {
-                    length = close - start + 1;
-                    return true;
-                }
-            }
-
-            foreach (var marker in new[] { "start", "end" })
-            {
-                if (start + marker.Length + 1 <= text.Length &&
-                    string.Equals(text.Substring(start + 1, marker.Length), marker,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    length = marker.Length + 1;
-                    return true;
-                }
-            }
-        }
-
-        if (start + 3 < text.Length && char.IsDigit(text[start + 1]))
-        {
-            var slash = text.IndexOf('/', start + 1);
-            if (slash > start + 1 && slash + 1 < text.Length && char.IsDigit(text[slash + 1]))
-            {
-                var end = slash + 1;
-                while (end < text.Length && char.IsDigit(text[end]))
-                    end++;
-                length = end - start;
-                return true;
-            }
-        }
-
-        if (start + 5 <= text.Length &&
-            string.Equals(text.Substring(start + 1, 4), "NULL", StringComparison.OrdinalIgnoreCase))
-        {
-            length = 5;
-            return true;
-        }
-
-        if (start + 7 > text.Length)
-            return false;
-
-        var candidate = text.Substring(start + 1, 6);
-        if (!candidate.All(Uri.IsHexDigit))
-            return false;
-
-        length = 7;
-        return true;
     }
 
     private static SolidColorBrush? BrushForState(int state) => state switch

@@ -1,0 +1,137 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net6.0-windows</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UseWPF>true</UseWPF>
+
+        <Version>4.4.0</Version>
+        <Company />
+        <GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
+        <Authors>bbben</Authors>
+        <PackageProjectUrl>https://github.com/LingFeng-bbben/MajdataEdit</PackageProjectUrl>
+        <Copyright>Copyright © 2021</Copyright>
+        <ApplicationIcon>bear-3.ico</ApplicationIcon>
+        <UseApplicationTrust>false</UseApplicationTrust>
+        <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+        <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**;**\._*;**\.DS_Store</DefaultItemExcludes>
+    </PropertyGroup>
+    <ItemGroup>
+      <None Remove="Image\bg_dummy.jpg" />
+      <None Remove="Image\outline_find_replace_white_24dp.png" />
+      <None Remove="Image\outline_search_white_24dp.png" />
+    </ItemGroup>
+    <!-- Shared parser sources are compiled by both this WPF project and Unity.
+         Files under alpha/Assets/MajdataCore are included directly in Assembly-CSharp.
+         A future editor integrated into View can reuse the same source files. -->
+    <ItemGroup>
+        <Compile Include="..\Assets\MajdataCore\**\*.cs"
+                 Exclude="..\Assets\MajdataCore\**\._*.cs;..\Assets\MajdataCore\**\.DS_Store">
+            <Link>MajdataCore\%(RecursiveDir)%(Filename)%(Extension)</Link>
+        </Compile>
+    </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
+        <PackageReference Include="radio42.Bass.Net.core" Version="2.4.17.5" />
+        <PackageReference Include="DiscordRichPresence" Version="1.2.1.24" />
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+        <PackageReference Include="Semver" Version="2.3.0" />
+        <PackageReference Include="TagLibSharp" Version="2.3.0" />
+        <PackageReference Include="WPFLocalizeExtension" Version="3.10.0" />
+        <PackageReference Include="XAMLMarkupExtensions" Version="2.1.3" />
+    </ItemGroup>
+    <ItemGroup>
+        <Content Include="SFX\**\*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Themes\**\*.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Themes\**\*.png">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="ChartSearchCache\**\*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="EditorSetting.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\SongDetailTemplates\dx\DxBase.png">
+            <Link>Resources\SongDetailTemplates\dx\DxBase.png</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\SongDetailTemplates\dx\DxOverlay.png">
+            <Link>Resources\SongDetailTemplates\dx\DxOverlay.png</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\SongDetailTemplates\dx\DxReMasterBase.png">
+            <Link>Resources\SongDetailTemplates\dx\DxReMasterBase.png</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\SongDetailTemplates\dx\DxReMasterOverlay.png">
+            <Link>Resources\SongDetailTemplates\dx\DxReMasterOverlay.png</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\SongDetailParts\*.png">
+            <Link>Assets\SongDetailParts\%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\Fonts\Aileron-Regular.otf">
+            <Link>Resources\Fonts\Aileron-Regular.otf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\Fonts\Allerta-Regular.ttf">
+            <Link>Resources\Fonts\Allerta-Regular.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\Fonts\MicrosoftYaHei-Bold.ttc">
+            <Link>Resources\Fonts\MicrosoftYaHei-Bold.ttc</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\Fonts\NotoSansSC-VF.ttf">
+            <Link>Resources\Fonts\NotoSansSC-VF.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+    <ItemGroup>
+        <ContentWithTargetPath Include="bass.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>bass.dll</TargetPath>
+        </ContentWithTargetPath>
+        <ContentWithTargetPath Include="bass_fx.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>bass_fx.dll</TargetPath>
+        </ContentWithTargetPath>
+        <ContentWithTargetPath Include="slide_time.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>slide_time.json</TargetPath>
+        </ContentWithTargetPath>
+                <ContentWithTargetPath Include="LICENSE">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <TargetPath>LICENSE_MajdataEdit</TargetPath>
+        </ContentWithTargetPath>
+    </ItemGroup>
+    <ItemGroup>
+        <None Include="Properties\Settings.settings">
+            <Generator>SettingsSingleFileGenerator</Generator>
+            <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+        </None>
+    </ItemGroup>
+    <ItemGroup>
+      <Resource Include="bear-3.ico" />
+      <Resource Include="Image\bg_dummy.jpg" />
+      <Resource Include="Image\outline_find_replace_white_24dp.png" />
+      <Resource Include="Image\outline_search_white_24dp.png" />
+    </ItemGroup>
+    <!-- Distribute MaiMuriDX with the application. Its tools directory contains
+         roughly 72 MB and 2,788 Python runtime/script files, so robocopy mirrors
+         it incrementally instead of making MSBuild enumerate every file.
+         Robocopy exit codes below 8 indicate success and are normalized to zero. -->
+    <Target Name="CopyMuriTools" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+        <Exec Command="robocopy &quot;$(ProjectDir)tools&quot; &quot;$(TargetDir)tools&quot; /MIR /XO /NFL /NDL /NJH /NJS /NC /NS /NP &amp; if %25ERRORLEVEL%25 LSS 8 exit 0 &amp; exit %25ERRORLEVEL%25" />
+    </Target>
+    <Target Name="CopyToolsToPublish" AfterTargets="Publish" Condition="'$(OS)' == 'Windows_NT'">
+        <Exec Command="robocopy &quot;$(ProjectDir)tools&quot; &quot;$(PublishDir)tools&quot; /MIR /XO /NFL /NDL /NJH /NJS /NC /NS /NP &amp; if %25ERRORLEVEL%25 LSS 8 exit 0 &amp; exit %25ERRORLEVEL%25" />
+    </Target>
+</Project>

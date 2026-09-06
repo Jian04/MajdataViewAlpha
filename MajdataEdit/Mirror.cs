@@ -1,5 +1,6 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.RegularExpressions;
+using MajdataCore;
 
 namespace MajdataEdit;
 
@@ -58,6 +59,8 @@ internal static class Mirror
         { '2', '3' },
         { '8', '5' },
         { '1', '4' },
+        { '<', '>' },
+        { '>', '<' },
         { 'q', 'p' },
         { 'p', 'q' },
         { 'z', 's' },
@@ -114,6 +117,58 @@ internal static class Mirror
 
     public static string NoteMirrorHandle(string str, HandleType type)
     {
+        if (string.IsNullOrEmpty(str))
+            return str;
+
+        var result = new StringBuilder(str.Length);
+        var plainStart = 0;
+        var index = 0;
+        while (index < str.Length)
+        {
+            var protectedEnd = FindProtectedRangeEnd(str, index);
+            if (protectedEnd < 0)
+            {
+                index++;
+                continue;
+            }
+
+            if (index > plainStart)
+                result.Append(MirrorPlainText(str[plainStart..index], type));
+            result.Append(str, index, protectedEnd - index);
+            index = protectedEnd;
+            plainStart = index;
+        }
+
+        if (plainStart < str.Length)
+            result.Append(MirrorPlainText(str[plainStart..], type));
+        return result.ToString();
+    }
+
+    private static int FindProtectedRangeEnd(string text, int start)
+    {
+        if (start + 1 < text.Length && text[start] == '|' && text[start + 1] == '*')
+        {
+            var end = text.IndexOf("*|", start + 2, StringComparison.Ordinal);
+            return end < 0 ? text.Length : end + 2;
+        }
+
+        if (start + 1 < text.Length && text[start] == '|' && text[start + 1] == '|')
+        {
+            var end = text.IndexOfAny(new[] { '\r', '\n' }, start + 2);
+            return end < 0 ? text.Length : end;
+        }
+
+        if (text[start] != '<' ||
+            !AlphaCommandBoundary.TryGetCommand(
+                text,
+                start,
+                out var endBracket))
+            return -1;
+        return endBracket + 1;
+    }
+
+    private static string MirrorPlainText(string str, HandleType type)
+    {
         // NOTE: SimaiProcess accepts strings such as 1-5[8:1]{16}, but they cannot be mirrored correctly.
         // This is intentional because the syntax itself is invalid even though SimaiProcess does not reject it.
 
@@ -123,8 +178,9 @@ internal static class Mirror
         int hsStatus = 0;              // HS parse state: 0 none, 1 "<", 2 "H", 3 "S", 4 "*"; all states must occur in order.
         
         // Whitespace is retained in every segment and ignored by helpers so its position remains unchanged.
-        foreach (char c in str)
+        for (var index = 0; index < str.Length; index++)
         {
+            var c = str[index];
             curPart.Append(c);
 
             // A segment containing any of these characters must be ignored.
@@ -234,10 +290,12 @@ internal static class Mirror
     {
         StringBuilder result = new StringBuilder();
         bool isSpecialPrefix = false;
+        bool isCenterPrefix = false;
         bool isInBracket = false;
 
-        foreach (char c in str)
+        for (var index = 0; index < str.Length; index++)
         {
+            var c = str[index];
             // Ignore whitespace.
             if (Char.IsWhiteSpace(c))
             {
@@ -250,6 +308,12 @@ internal static class Mirror
             {
                 // Ignore content inside brackets because it contains duration and related settings.
                 // '[' also enters this branch because isInBrancket remains false until the later state update.
+                result.Append(c);
+            }
+            else if (isCenterPrefix)
+            {
+                // C1/C2 are aliases of the center sensor and do not rotate.
+                isCenterPrefix = false;
                 result.Append(c);
             }
             else if (isSpecialPrefix)
@@ -272,7 +336,11 @@ internal static class Mirror
             else
             {
                 // Otherwise use the default mapping.
-                if (normalMap.ContainsKey(c))
+                if (index + 1 < str.Length && str[index + 1] == 'd' && specialMap.ContainsKey(c))
+                {
+                    result.Append(specialMap[c]);
+                }
+                else if (normalMap.ContainsKey(c))
                 {
                     result.Append(normalMap[c]);
                 }
@@ -298,6 +366,10 @@ internal static class Mirror
             if (specialPrefix.Contains(c))
             {
                 isSpecialPrefix = true;
+            }
+            if (c == 'C')
+            {
+                isCenterPrefix = true;
             }
         }
 

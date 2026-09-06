@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -43,11 +44,15 @@ public class BGManager : MonoBehaviour
     // Uses the original reverse-circle frame for the outer area.
     private SpriteRenderer circleRevRenderer;
     private Color originalCircleRevColor = Color.white;
+    private SpriteRenderer backgroundClipRenderer;
+    private bool clipBackgroundToRing;
 
     private bool displayModeApplied;
     private bool loadingPreview;
     private bool chartBackgroundActive;
     private bool outerCoverHeldForPreview;
+    private float outerCoverReleaseStart = float.NaN;
+    private const float OuterCoverReleaseDuration = 0.6f;
     private const float VerticalOverscanPixels = 3f;
     private static readonly WaitForEndOfFrame WaitForFrameEnd = new();
     private float coverWorldHeight;
@@ -60,7 +65,8 @@ public class BGManager : MonoBehaviour
     private bool showSongDetailIntro;
     private bool backgroundVisible;
     private float mediaOverlayBlend;
-    private const float IntroGameplayRevealTime = -2f;
+    private const float IntroGameplayRevealTime =
+        MajdataCore.AlphaVisualTiming.GameplayRevealTime;
 
     public bool IsPreparedForRecording => videoWarmupReady;
 
@@ -88,16 +94,28 @@ public class BGManager : MonoBehaviour
         canvasInfo = GameObject.Find("CanvasInfo");
         if (canvasInfo != null)
         {
+            RectTransform sidePanel = null;
             foreach (var image in canvasInfo.GetComponentsInChildren<RawImage>(true))
             {
                 var color = image.color;
                 if (color.r <= 0.01f && color.g <= 0.01f && color.b <= 0.01f)
                 {
+                    var rect = image.rectTransform;
+                    // Older scenes already contain short top/bottom strips at x=0.
+                    // The runtime covers below own those strips and extend far enough
+                    // for ZOOM, so retaining both composites black twice.
+                    if (Mathf.Abs(rect.anchoredPosition.x) < 1f)
+                    {
+                        image.gameObject.SetActive(false);
+                        continue;
+                    }
                     infoBackgrounds.Add(image);
                     image.gameObject.SetActive(true);
-                    ExtendSidePanelToScreenEdge(image.rectTransform);
+                    ExtendSidePanelToScreenEdge(rect);
+                    sidePanel = rect;
                 }
             }
+            AddTopAndBottomCover(sidePanel);
         }
         if (circleRev != null)
         {
@@ -128,20 +146,104 @@ public class BGManager : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Runtime top/bottom panels replace the short legacy scene strips. Once ZOOM
+    /// shrinks the frame, they must extend far enough that the background cannot
+    /// show through above and below the play area.
+    ///
+    /// Their inner edges sit on the authored screen edge rather than on anything
+    /// measured. That is the same edge the play area reaches at its authored
+    /// size, and the whole frame is carried by one ZOOM/MOVE transform, so the
+    /// edges stay together without ever being recomputed. Nothing here can reach
+    /// across the middle of the screen.
+    /// </summary>
+    private void AddTopAndBottomCover(RectTransform sample)
+    {
+        var parent = sample != null ? sample.parent as RectTransform : null;
+        if (parent == null)
+            return;
+
+        const float zoomOutMargin = 10f;
+        var height = parent.rect.height * zoomOutMargin;
+        // Cover only the aperture between the side panels. Extending this across
+        // the whole enlarged canvas draws the same translucent black twice at the
+        // top-left and top-right (and likewise below), making those regions darker.
+        // ExtendSidePanelToScreenEdge preserves this inner edge.
+        var sideSign = Mathf.Sign(sample.anchoredPosition.x);
+        var innerEdge = sample.anchoredPosition.x -
+                        sideSign * sample.rect.width * 0.5f;
+        var width = Mathf.Max(1f, Mathf.Abs(innerEdge) * 2f);
+
+        foreach (var sign in new[] { 1f, -1f })
+        {
+            var clone = Instantiate(sample.gameObject, sample.parent);
+            clone.name = sample.name + (sign > 0f ? "_Top" : "_Bottom");
+            if (!clone.TryGetComponent<RectTransform>(out var rect))
+            {
+                Destroy(clone);
+                continue;
+            }
+
+            // Only the panel itself is wanted; anything parented to the sample
+            // belongs to the authored layout and must not be duplicated.
+            for (var i = rect.childCount - 1; i >= 0; i--)
+                Destroy(rect.GetChild(i).gameObject);
+
+            // Anchors are pinned to the centre so sizeDelta really is a size.
+            // On a stretched anchor it means an inset from the anchors instead,
+            // and a panel this large would swallow the whole window.
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.sizeDelta = new Vector2(width, height);
+            rect.anchoredPosition = new Vector2(
+                0f,
+                sign * (parent.rect.height * 0.5f + height * 0.5f));
+
+            if (clone.TryGetComponent<RawImage>(out var image))
+                infoBackgrounds.Add(image);
+            clone.SetActive(true);
+        }
+    }
+
     private static void ExtendSidePanelToScreenEdge(RectTransform rect)
     {
         if (rect == null || Mathf.Abs(rect.anchoredPosition.x) < 1f)
             return;
 
-        // Preserve the inner edge and add outward overscan for fractional Canvas scaling.
-        const float overscan = 4f;
+        // The inner edge stays exactly where it was authored: it lines up with
+        // the aperture, and one ZOOM/MOVE transform carries the aperture, these
+        // panels and the canvas text together, so that edge stays lined up on
+        // its own. Only the outward side grows.
+        //
+        // It has to grow a long way. ZOOM is clamped to a tenth, so once the
+        // frame shrinks with the play area a panel sized for one viewport stops
+        // short of the screen edge and the background shows through beside it.
+        // Ten viewports still covers the edge at the smallest ZOOM.
+        //
+        // Growing outward from the authored edge is also why this cannot black
+        // the screen out. Deriving the rect from the measured aperture instead
+        // did: that arithmetic assumed centre anchors, and on a stretched anchor
+        // sizeDelta is an inset from the anchors rather than a size, so ten
+        // viewports of it swallowed the whole window as it grew.
+        var parent = rect.parent as RectTransform;
+        if (parent == null)
+            return;
+        const float zoomOutMargin = 10f;
+        var outward = parent.rect.width * zoomOutMargin;
+
         var size = rect.sizeDelta;
-        size.x += overscan;
+        size.x += outward;
+        // Vertical growth is symmetric, so it stays centred and never reaches
+        // across the aperture; it just keeps the column tall enough to still
+        // cover its corners once the frame shrinks.
+        size.y += parent.rect.height * zoomOutMargin * 2f;
         rect.sizeDelta = size;
         var position = rect.anchoredPosition;
-        position.x += Mathf.Sign(position.x) * overscan * 0.5f;
+        position.x += Mathf.Sign(position.x) * outward * 0.5f;
         rect.anchoredPosition = position;
     }
+
 
     private void Update()
     {
@@ -163,7 +265,26 @@ public class BGManager : MonoBehaviour
         if (displayModeApplied && outerCoverHeldForPreview && provider != null && provider.AudioTime >= 0f)
         {
             outerCoverHeldForPreview = false;
-            SetOuterCoverAlpha(pendingOuterCover);
+            // The outer area is held fully closed for the whole intro. Snapping it
+            // open on the first gameplay frame reads as a hard brightness step, so
+            // hand it over with a short crossfade instead.
+            outerCoverReleaseStart = provider.AudioTime;
+        }
+
+        if (!float.IsNaN(outerCoverReleaseStart) && provider != null)
+        {
+            if (provider.AudioTime < 0f)
+                outerCoverReleaseStart = float.NaN;
+            else
+            {
+                var progress = Mathf.Clamp01(
+                    (provider.AudioTime - outerCoverReleaseStart) /
+                    OuterCoverReleaseDuration);
+                SetOuterCoverAlpha(
+                    Mathf.Lerp(1f, pendingOuterCover, Mathf.SmoothStep(0f, 1f, progress)));
+                if (progress >= 1f)
+                    outerCoverReleaseStart = float.NaN;
+            }
         }
 
         if (!videoPlayer.isPrepared || !videoPlayer.isPlaying)
@@ -253,6 +374,22 @@ public class BGManager : MonoBehaviour
         songDetailIntroBg?.SetSpeed(0f);
     }
 
+    public void SetPausedTimelineTime(float time)
+    {
+        if (videoPlayer != null && videoPlayer.isPrepared)
+        {
+            var target = Math.Max(0d, time);
+            if (videoPlayer.length > 0d)
+                target = Math.Min(
+                    target,
+                    Math.Max(0d, videoPlayer.length - 0.001d));
+            videoPlayer.time = target;
+            videoPlayer.Pause();
+            ApplyDisplayModeForPlayback();
+        }
+        PauseVideo();
+    }
+
     public void ContinueVideo(float speed)
     {
         playSpeed = speed;
@@ -277,9 +414,9 @@ public class BGManager : MonoBehaviour
         backgroundMediaReady = false;
         displayModeApplied = false;
         loadingPreview = true;
-        outerCoverHeldForPreview = true;
         pendingInnerCover = Mathf.Clamp01(innerCover);
         pendingOuterCover = Mathf.Clamp01(outerCover);
+        outerCoverHeldForPreview = true;
         SetPreviewUiVisible(true);
         SetBackgroundVisible(false);
 
@@ -421,11 +558,19 @@ public class BGManager : MonoBehaviour
             bgCoverRenderer.color = color;
         }
 
-        var outerAlpha = provider != null && provider.AudioTime < 0f
-            ? 1f
-            : pendingOuterCover;
-        outerCoverHeldForPreview = outerAlpha >= 0.999f && provider != null && provider.AudioTime < 0f;
-        SetOuterCoverAlpha(outerAlpha);
+        // The outer area is only held fully closed while the intro hand-over is
+        // still pending. Keying this on "any negative time" instead would replay
+        // the hand-over every time playback resumes from a pause, which reads as
+        // a corner flash.
+        var introHold = outerCoverHeldForPreview &&
+                        provider != null &&
+                        provider.AudioTime < 0f;
+        var outerAlpha = introHold ? 1f : pendingOuterCover;
+        outerCoverHeldForPreview = introHold;
+        // While the intro hand-over crossfade runs, Update owns the outer alpha;
+        // writing the target here would turn the fade back into a snap.
+        if (float.IsNaN(outerCoverReleaseStart))
+            SetOuterCoverAlpha(outerAlpha);
     }
 
     private IEnumerator loadPic(string path, bool useAsBackground)
@@ -515,6 +660,54 @@ public class BGManager : MonoBehaviour
             return coverWorldWidth;
         var camera = Camera.main;
         return camera != null ? GetCameraCoverHeight() * camera.aspect : GetCameraCoverHeight();
+    }
+
+    /// <summary>
+    /// Keeps the background picture inside the play circle.
+    /// </summary>
+    /// <remarks>
+    /// The frame that hides the outer area is the one whose alpha the outer
+    /// brightness setting drives, so turning that brightness up uncovers the
+    /// four corners of the picture along with the notes out there. This is a
+    /// second copy of the same frame, opaque and on the background's own
+    /// sorting layer: it cuts the picture to the circle underneath everything
+    /// that is played, so the corners go dark while the notes stay visible.
+    /// </remarks>
+    public void SetBackgroundClip(bool clip)
+    {
+        if (clipBackgroundToRing == clip && backgroundClipRenderer != null)
+        {
+            backgroundClipRenderer.enabled = clip;
+            return;
+        }
+        clipBackgroundToRing = clip;
+
+        if (backgroundClipRenderer == null)
+        {
+            if (!clip || circleRev == null || circleRevRenderer == null ||
+                circleRevRenderer.sprite == null || spriteRender == null)
+                return;
+
+            var clipObject = new GameObject("BackgroundRingClip");
+            // Parented to the frame it copies, so ZOOM and MOVE carry it
+            // without a second transform to keep in step.
+            clipObject.transform.SetParent(circleRev.transform, false);
+            clipObject.transform.localPosition = Vector3.zero;
+            clipObject.transform.localRotation = Quaternion.identity;
+            clipObject.transform.localScale = Vector3.one;
+
+            backgroundClipRenderer = clipObject.AddComponent<SpriteRenderer>();
+            backgroundClipRenderer.sprite = circleRevRenderer.sprite;
+            backgroundClipRenderer.sortingLayerID = spriteRender.sortingLayerID;
+            backgroundClipRenderer.sortingOrder = Mathf.Max(
+                spriteRender.sortingOrder,
+                bgCoverRenderer != null ? bgCoverRenderer.sortingOrder : 0) + 1;
+            var clipColor = originalCircleRevColor;
+            clipColor.a = 1f;
+            backgroundClipRenderer.color = clipColor;
+        }
+
+        backgroundClipRenderer.enabled = clip;
     }
 
     public void SetBackgroundFitMode(int fitMode)

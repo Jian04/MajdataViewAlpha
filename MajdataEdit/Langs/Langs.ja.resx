@@ -156,6 +156,15 @@
   <data name="ShowAllPerfect" xml:space="preserve">
     <value>All Perfect を表示・再生</value>
   </data>
+  <data name="ShowMineHitFeedback" xml:space="preserve">
+    <value>Mine のヒットエフェクトと文字を表示</value>
+  </data>
+  <data name="ClipBackgroundToRing" xml:space="preserve">
+    <value>背景を内円で切り抜く</value>
+  </data>
+  <data name="DisplaySection" xml:space="preserve">
+    <value>表示オプション</value>
+  </data>
   <data name="ShowJudgeText" xml:space="preserve">
     <value>判定文字を表示</value>
   </data>
@@ -340,7 +349,7 @@ If you wanna an excellent map, you can set the accuracy to
     <comment>Maybe not the most accurate translation</comment>
   </data>
   <data name="SyntaxError" xml:space="preserve">
-    <value>[SyntaxError] "{0}"({1}L,{2}C) fail to analyze，may be a syntax error here.</value>
+    <value>[構文エラー] "{0}"({1}L,{2}C) を解析できません。構文エラーの可能性があります。</value>
     <comment>Translation required. {0} is the simai-language text which has Syntax Error. {1} and {2} is Line and Column index(which may not needed to be translate)</comment>
   </data>
   <data name="WhatsThis" xml:space="preserve">
@@ -584,6 +593,7 @@ Open Browser to download latest update of Majdata?</value>
   <data name="NoteDensity" xml:space="preserve"><value>ノーツ密度グラフ</value></data>
   <data name="FormatBrush12" xml:space="preserve"><value>拍子ブラシ（12分）</value></data>
   <data name="FormatBrush24" xml:space="preserve"><value>拍子ブラシ（24分）</value></data>
+  <data name="FormatBrush384" xml:space="preserve"><value>拍子ブラシ（384分）</value></data>
   <data name="AutoOrganize16" xml:space="preserve"><value>自動整理（譜面全体・16分）</value></data>
   <data name="MuriCheckExternal" xml:space="preserve"><value>無理配置チェック（MaiMuriDX）</value></data>
   <data name="ConvertAudio44100" xml:space="preserve"><value>音声を 44100 Hz に変換</value></data>
@@ -613,7 +623,9 @@ Open Browser to download latest update of Majdata?</value>
   <data name="Division16" xml:space="preserve"><value>16分</value></data>
   <data name="Division24" xml:space="preserve"><value>24分</value></data>
   <data name="Division32" xml:space="preserve"><value>32分</value></data>
+  <data name="Division384" xml:space="preserve"><value>384分</value></data>
   <data name="SearchSelectedInLibrary" xml:space="preserve"><value>選択パターンをライブラリで検索</value></data>
+  <data name="MergeNoteStreams" xml:space="preserve"><value>ノーツストリームを結合</value></data>
   <data name="SongTitleLabel" xml:space="preserve"><value>曲名</value></data>
   <data name="ArtistLabel" xml:space="preserve"><value>アーティスト</value></data>
   <data name="DesignerLabel" xml:space="preserve"><value>譜面制作者</value></data>
@@ -785,10 +797,12 @@ Alpha 構文ヘルプ
 
 字幕
 ----
-<TEXT*こんにちは>          次の TEXT まで表示
-<TEXT*(こんにちは,2)>      2 秒間表示
-<TEXT*(こんにちは,16:1)>   現在の BPM の16分音符1つ分表示
-<TEXT*>                    字幕を消去
+<TEXT*("こんにちは")>          次の TEXT まで表示
+<TEXT*("こんにちは",2)>      2 秒間表示
+<TEXT*("こんにちは",16:1)>   現在の BPM の16分音符1つ分表示
+<TEXT*("こんにちは",2,0.25,0.1,40)>  位置と文字サイズを指定して2秒間表示
+<TEXT*("文字送り",3,font=Allerta,index=1,style=Typewriter,transition=1)>  独立したフォントとチャンネルで1秒かけて文字送り
+<TEXT*("")>                    字幕を消去
 
 メディア
 ----------
@@ -801,7 +815,7 @@ MP4 は再生終了時に自動で元へ戻ります。静止画は False また
 
 画面エフェクト
 --------------
-共通ルール：True で有効、False で無効になります。最後の [切り替え時間] は省略できます。
+共通ルール：True で有効、False で無効になります。最後の切り替え時間は省略できます。
 時間を省略すると即時変更されます。秒数または 8:1、16:1 などの拍長を使用できます。
 異なる名前のエフェクトは重ねられます。同じ True を再指定すると現在値から新しい目標へ変化します。
 Gaussian  <Gaussian*(True,強度[,時間])>  ガウスぼかし
@@ -867,6 +881,7 @@ Shake     <Shake*(True,強度,周波数[,角度,時間])> 画面を振動（Hz�
   <data name="TransitionLabel" xml:space="preserve"><value>トランジション</value></data>
   <data name="ValidationIssueAtLine" xml:space="preserve"><value>{0} 行目に問題があります：{1}</value></data>
   <data name="ChartStatementInvalid" xml:space="preserve"><value>譜面の記述を解析できません</value></data>
+  <data name="ViewCouldNotBuildBeat" xml:space="preserve"><value>この拍は文法上正しいものの、View がノーツを生成できずスキップしました：{0}</value></data>
   <data name="ChartKeyRange" xml:space="preserve"><value>キーは 1 から 8 の範囲で指定してください</value></data>
   <data name="SlideDurationInvalid" xml:space="preserve"><value>Slide の長さは 0 より大きい必要があります。[1:0] は使用できません</value></data>
   <data name="SlideTargetMissing" xml:space="preserve"><value>Slide の終点キーがありません</value></data>
@@ -892,8 +907,10 @@ Shake     <Shake*(True,強度,周波数[,角度,時間])> 画面を振動（Hz�
   <data name="SoundExTip" xml:space="preserve"><value>EX Note の判定音に影響します。</value></data>
   <data name="SoundTouchTip" xml:space="preserve"><value>Touch の判定音に影響します。</value></data>
   <data name="SoundHanabiTip" xml:space="preserve"><value>花火音と Touch-Hold のループ音に影響します。</value></data>
+  <data name="SoundMineTip" xml:space="preserve"><value>Mine ヒット音の倍率です。最終音量は Mine 音量 × 元の音量です。</value></data>
   <data name="FfmpegNotFound" xml:space="preserve"><value>ffmpeg.exe が見つかりません。プログラムフォルダーまたは PATH に配置してください。</value></data>
   <data name="MuriDxUnsupported" xml:space="preserve"><value>無理配置チェックは現在 DX 譜面に対応していません。</value></data>
+  <data name="MuriUnmeasuredSlide" xml:space="preserve"><value>[未計測] "{0}"({1}L,{2}C) は実測データがないため、撞尾チェックの対象外です。</value></data>
   <data name="UnhandledError" xml:space="preserve"><value>エラー</value></data>
   <data name="ChartReadErrorBody" xml:space="preserve"><value>maidata.txt の {0} 行目を読み込めませんでした：{1}</value></data>
   <data name="ChartReadErrorTitle" xml:space="preserve"><value>譜面読み込みエラー</value></data>
@@ -901,8 +918,10 @@ Shake     <Shake*(True,強度,周波数[,角度,時間])> 画面を振動（Hz�
   <data name="NewChartHint" xml:space="preserve"><value>右クリックで小節を追加し、View をクリックしてノーツを追加できます</value></data>
   <data name="AlphaMissingClose" xml:space="preserve"><value>Alpha 構文に閉じ山括弧 &gt; がありません</value></data>
   <data name="AlphaFormatError" xml:space="preserve"><value>Alpha 構文の形式が正しくありません</value></data>
+  <data name="AlphaArgumentError" xml:space="preserve"><value>Alpha コマンド {0} の引数を解析できません：{1}</value></data>
   <data name="AlphaMissingAsterisk" xml:space="preserve"><value>Alpha 構文に * がありません</value></data>
   <data name="AlphaUnknownCommand" xml:space="preserve"><value>不明な Alpha コマンド：{0}</value></data>
+  <data name="AlphaCommandAfterNote" xml:space="preserve"><value>&lt;{0}&gt; がこの拍のノーツより後ろに書かれているため、再生時に反映されません。この拍のノーツより前へ移動してください。</value></data>
   <data name="MediaFileMissing" xml:space="preserve"><value>メディアファイルが見つかりません：{0}&#10;譜面フォルダーからの相対パスを指定してください。</value></data>
   <data name="SoundSettings" xml:space="preserve"><value>音量設定</value></data>
   <data name="AutoOnset" xml:space="preserve"><value>自動タイミング生成</value></data>
@@ -944,12 +963,13 @@ Shake     <Shake*(True,強度,周波数[,角度,時間])> 画面を振動（Hz�
 ## 1  基本ルール
 - Alpha コマンドは <COMMAND*引数> の形式です。名前は大文字小文字を区別しませんが、補完に表示される大文字を推奨します。
 - コマンドは時間軸上に置かれ、カンマ枠を消費せず、その時点以降に作用します。
+- コマンドはその拍のノーツより前に書きます。ノーツの後ろに書くとエラーになり、実行されません。
 - True / False で状態を切り替え、NULL で対応するノーツ属性を解除します。
 - 時間は秒（0.5、2）または拍長（8:1、16:3）で指定し、直前の BPM を使用します。
-- 種別キー：tap、each、hold、slide、star、break、touch、touchhold。種別値は全体値より優先されます。
+- 種別キー：tap、each、hold、slide、star、break、touch、touchhold。表示用 COLOR / SIZE / ALPHA は移動星用の slidestar にも対応します。種別値は全体値より優先されます。
 - 「<」で分類補完を開きます。空の引数で Tab を押すと既定値を入力し、値がある場合は次へ移動します。
-! このページの角括弧は省略可能な部分を表します。実際には入力しません。[,時間] は最後のカンマと時間を省略できる意味です。
-E (120){4}<SV*1.5>1,2,<TEXT*(サビ開始,2)>3,4,
+! 灰色の斜体で示された引数は省略できます。斜体の ,時間 は最後のカンマと時間をどちらも省略できるという意味です。通常の表示の角括弧は構文の一部で、h[時間] のようにそのまま入力します。
+E (120){4}<SV*1.5>1,2,<TEXT*("サビ開始",2)>3,4,
 ## 2  エディターマーカーとコメント
 ### 行コメントとブロックコメント
 S || コメント
@@ -969,7 +989,13 @@ E @7/8
 S @{分割数}ノーツ列,
 E @{4}1h,2h,3h,
 E {8}1,2,3,4,5,6,
+E @{2}1h,2h,
+E @{4}3,4,5,6,
+E {8}1,2,3,4,5,6,7,8,
 - “@” の直後が “{” の場合、現在時刻から独立したノーツ列を開始します。独自の分割数で進み、メイン譜面の時刻は進めません。
+- “@{分割数}” は複数行連続で使用できます。すべて現在のメイン時刻から始まり、それぞれ独立して進みます。
+- 複数行を “@*” と “*@” で囲むと一つのノーツ列になります。分割数と Alpha 状態は行をまたいで継続します。
+- カレットがノーツ列内にあるとき、右クリックの「音符流を結合」で次のメイン列と正確な共通グリッドに結合し、Alpha コマンドの時刻も保持します。
 - 同時刻のノーツは Each として結合されます。上の例は {8}1h/1,2,2h/3,4,3h/5,6, と同じです。
 - 重ねるメイン行の前に独立行で記述してください。@4/4 や @RRGGBB など他の @ マーカーには影響しません。
 ### 編集領域の背景色
@@ -982,17 +1008,51 @@ S @NULL
 S A/B/D/E エリア位置 + h[時間]
 E B1h[4:1] / E3hf[8:1]
 - A、B、D、E エリアで TouchHold を使用できます。エリア文字の後に 1～8 の位置番号が必要です。
+### Touch の距離指定
+S エリア位置~[距離]
+E E1~[4.8] / B3~[1.5] / A5~[4.8]b
+- ~[距離] はエリア本来の方向を保ったまま、描画される距離だけを変更します。判定は元のセンサーのままです。
+- 距離は SPAWN / DESTROY と同じ単位です。判定円は 4.8、B エリアは既定 2.3、E は 3.0、A と D は 4.1 で、0～10 まで指定できます。
+- 現在は Touch のみ対応です。C エリアは方向を持たず、TouchHold の扇形は距離と結び付いており、Slide 内にも書けません。いずれもエラーになります。
 ### Break Touch / TouchHold
 S エリア位置 + b
 S エリア位置 + h + b[時間]
 E B1b / E3b / Chb[4:1] / B1hb[8:1]
 - b で Touch または TouchHold を Break にします。h と b の順序はどちらでも使用できます。
-### Touch Slide
-S 始点[-|<|>|^]終点[時間]
+### ヘッドなし Slide 修飾
+S 始点?-終点[時間] / 始点!-終点[時間]
+E 1?-5[8:1] / 1!-5[8:1] / A1?-A2[8:1] / A1!-A2[8:1]
+- ? と ! は通常 Slide と Touch Slide のヘッドを消します。? は移動星のフェードインを維持し、! は Slide が動き始めるまで移動星を隠します。
+### 花火修飾
+S キーf / キーhf[時間] / キーf-Slide[時間]
+E 1f / 1hf[8:1] / 1f-5[8:1] / Cf / Chf[8:1]
+- f は Tap、Hold、Touch、TouchHold、または Slide ヘッドのヒット花火を追加します。Slide では軌道終点ではなくヘッド位置の直後に置きます。
+### 星形 TAP
+S キー$ / キー$$
+E 1$ / 2$$
+- $ は通常 TAP を回転しない星形 TAP に変更し、$$ は同じ星を固定速度で回転させます。
+### Touch Slide（AstroDX の円弧方向と互換）
+S 始点[-|<|>|<<|>>|^|v|p|q|pp|qq]終点[時間]
+S 始点V折返し点終点[時間]
+S 始点P周回番号終点[時間] / 始点Q周回番号終点[時間]
 E A1-A3[8:1] / A1<A3<A5[8:1] / 1d-E5[8:1]
+E A1VCE2[8:1]
+E A1pE5[8:1] / B1ppB5[8:1]
+E A1-E5[8:1] / 1P3E5Q0A5[8:1]
 E A1b-A2b[8:1] / A1!-A2[8:1] / A1?-A2[8:1]
+E A1<<E5[8:1] / A1<<<E5[8:1] / A1>>>E5[8:1]
 - A/B/C/D/E の Touch 終点を含む軌道は Touch Slide です。もう一方には通常キーまたは D キーも使用できます。
-- 頭の b は Break 頭、終点後の b は Break 軌道、! または ? は頭なしです。時間指定は必須です。
+- 頭の b は Break 頭、終点後の b は Break 軌道です。? と ! はどちらも頭なしですが、? は移動星が待機中にフェードインし、! は Slide が動き始めるまで移動星も表示しません。時間指定は必須です。
+- 接続 Touch Slide の時間は全体で1つだけ指定します。View が区間境界を保持できないため、区間ごとの時間指定は現在エラーになります。
+- 同じ向きの < または > を連続すると、等間隔の連続スパイラルになります。2 個で 1 周、3 個で 2 周して終点へ入り、以後も同様です。多重周回は Touch Slide 専用で、通常の数字 Slide と方向混在には使用できません。
+- 大文字 P / Q は接線で周回軌道へ出入りします。0 は中央円、1-8 は側面円、9 は最外周です。P は反時計回り、Q は時計回りです。
+### SlideCode（MajdataPlay の判定区と終端エフェクトに対応）
+S 始点 + A/B/C/P/Q 命令 + K終点[時間]
+E 5Q9A1P98CQ49K5[8:1] / 1A3571P0K1[4:1]
+- 最初の 1-8 が始点です。A は外周キー、B は内側交点、C は中心、P/Q は反時計/時計回り、K1-K8 が終点です。
+- A357 や P98 のように、同じ命令へパラメータを続けて書けます。
+- P と Q、また 0 番円と 9 番円は直接接続できず、間に A/B/C ノードが必要です。
+- K なしの 1Q85 は通常の選択式 PQ で、従来の pp/qq の追加周回を維持します。K 付きの 1Q8K5 だけが SlideCode で、最短の接線と円弧で接続します。両構文は独立しています。
 ### Mine、D ゾーン、修飾位置
 S m = 灰色 Mine、d = D ゾーン位置
 E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
@@ -1002,6 +1062,14 @@ E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
 S 始点rp終点[時間] / 始点rq終点[時間]
 E 1rp3[8:1] / 1rq7[8:1]
 - rp と rq は、それぞれ pp と qq の反対方向へ円弧を進みます。
+### 星の軌道を借りる ~[]
+S ノーツ~[完全なスライド]
+E 1~[5-7[8:1]] / 1b~[5-7[8:1]] / 1$~[5-7[8:1]] / 1~[C1-A5[8:1]] / 1~[2P35[8:1]]
+- ノーツは書かれた位置には落ちず、角括弧の中のスライドの軌道を、そのスライド自身の始点から、そのスライド自身の長さで進みます。
+- 描かれるのは動いているノーツだけです。軌跡も星の頭も描かれず、書かれた位置には何も出ません。判定も加算もされません。
+- ~[] の前のノーツ自体が移動します。1~[...] は Tap、1$~[...] のときだけ星が軌道を進みます。
+- 角括弧には長さを含む完全なスライドを書きます。キースライドと Touch スライドはどちらも借りられますが、Wifi スライドは星が三つなので借りられません。
+- 借りた軌道の後ろにスライドは繋げられません。修飾（b、h、$、f）は ~[] の前後どちらでも書けます。
 ## 4  ノーツ系 Alpha コマンド
 ### SV — 実スクロール速度
 S <SV*倍率>
@@ -1009,12 +1077,15 @@ S <SV*種別=倍率,種別=倍率>
 S <SV*種別=NULL>
 E <SV*1.5> / <SV*tap=2,hold=0.75> / <SV*tap=NULL>
 - 全体 SV は正数、0、負数を使用できます。種別 NULL で全体 SV の継承へ戻します。
+- 全体 SV は Tap、Hold、Star 頭、Touch、TouchHold に作用します。`slide=` は譜面で指定された時間内の Slide / Wifi / TouchSlide 軌道を制御します。総移動量が正なら終了時刻に合わせて正規化し、0 または負なら停止・巻き戻しを反映したまま指定終了時刻で打ち切ります。`slide=` がない軌道は従来の時間進行を保ちます。
 ### HS — 従来の落下速度
 S <HS*倍率>
 S <HS*種別=倍率,種別=倍率>
 S <HS*種別=NULL>
-E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*hold=NULL>
+E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*slide=999> / <HS*hold=NULL>
 - 従来の出現・落下倍率を変更します。種別 NULL で追加倍率を解除します。
+- Touch / TouchHold は touchSpeed × HS を使用し、負数で表示アニメーションが逆転、0 で判定状態に固定されます。判定と効果音は音声時刻のままです。
+- `HS*slide=倍率` は元の HS と同じ表示速度倍率です。例えば `HS*slide=999` は軌道時間を変えず、ほぼ瞬時に表示します。全体 HS は Slide に影響せず、軌道速度は `SV*slide` のままです。`HS*slide=NULL` で 1 倍へ戻ります。
 ### SPAWN — リングノーツの出現半径
 S <SPAWN*半径>
 S <SPAWN*種別=半径,種別=半径>
@@ -1024,40 +1095,75 @@ E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
 - 半径は -4.8～4.8 です。1.225 は従来位置、0 は中央、4.8 は手前の判定ライン、-4.8 は反対側の判定ラインです。
 - 半径に応じて初回表示と移動開始時刻が自動的に変わります。実速度は引き続き SV × HS で決まり、最終判定キーは変わらず、ガイドラインもその目標を示します。
 - Tap、Hold、Star 頭、Each、Break のリングノーツに作用します。Touch、TouchHold、Slide 軌道本体は変わりません。
+### SPAWNMODE — SV 逆走後の出現状態
+S <SPAWNMODE*Rewind> / <SPAWNMODE*Once>
+S <SPAWNMODE*種別=Rewind,種別=Once>
+S <SPAWNMODE*NULL> / <SPAWNMODE*種別=NULL>
+E <SPAWNMODE*Once> / <SPAWNMODE*tap=Once,hold=Rewind>
+- 既定値の Rewind は、累積 SV が SPAWN より前へ戻るとノーツを再び縮小・非表示にし、次の通過で再表示します。
+- Once は最初に SPAWN を越えた後も表示を維持します。NULL で Rewind に戻します。
+- 対応種別は SPAWN と同じです。Touch、TouchHold、Slide 軌道本体は SPAWNMODE 非対応です。
+### DESTROY — リングノーツの表示終点
+S <DESTROY*半径>
+S <DESTROY*種別=半径,種別=半径>
+S <DESTROY*NULL> / <DESTROY*種別=NULL>
+E <DESTROY*4.8> / <DESTROY*tap=1.225,hold=-4.8>
+- Tap、Star、Each、Hold、Break の表示終点だけを変更し、判定時刻と判定キーは変えません。
+- SPAWN より小さい値、負数、外周値を含め、指定半径をそのまま使用します。NULL で 4.8 に戻します。
 ### BOUNCE — 判定ライン往復
 S <BOUNCE*時間>
 S <BOUNCE*種別=時間,種別=時間>
 S <BOUNCE*NULL> / <BOUNCE*種別=NULL>
 E <BOUNCE*8:1> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>
 - Tap、Star、Each、Hold は判定ラインから SPAWN 半径へ移動して停止し、判定ラインへ戻ります。
-- 時間は秒または拍比で指定できます。種別値は全体値より優先され、判定が早く有効になることはありません。
+- 時間は秒または拍比で指定できます。種別値は全体値より優先されます。SV / HS に応じて離陸時刻と表示速度を再計算し、負数では逆走、SV=0 では停止しますが、判定が早く有効になることはありません。
+- BOUNCE は SPAWNMODE に従います。Rewind は SV が最初の離陸交点より前へ戻ると再び非表示になり、再通過で表示されます。Once は最初の通過後も表示を維持します。波形は常に最初の出現点を示します。
+### FAKE — 表示専用ノーツ
+S <FAKE*True> / <FAKE*False>
+S <FAKE*種別=True,種別=False>
+E <FAKE*True> / <FAKE*tap=True,slide=True> / <FAKE*False>
+- 現在のノーツストリームで後続ノーツを表示専用にします。物量、判定、ヒット音、ヒット／判定演出は発生しません。False で解除します。
 ### COLOR — ノーツ色
 S <COLOR*RRGGBB>
 S <COLOR*種別=色,種別=色>
 S <COLOR*NULL> / <COLOR*種別=NULL>
-E <COLOR*FF6699> / <COLOR*tap=FF77AA,slide=66DDFF> / <COLOR*tap=NULL> / <COLOR*NULL>
-- 全体値は以降のノーツに作用し、種別値が優先されます。色は6桁 RGB で指定します。
+E <COLOR*FF6699> / <COLOR*star=FF77AA,slidestar=FFFFFF,slide=66DDFF> / <COLOR*slidestar=NULL> / <COLOR*NULL>
+- 全体値は以降のノーツに作用し、種別値が優先されます。star は星型ノーツと Slide ヘッド、slidestar は移動星、slide は軌道を制御します。色は6桁 RGB で指定します。
+### COLORV — 読み込み済みノーツ色
+S <COLORV*RRGGBB> / <COLORV*種別=RRGGBB>
+E <COLORV*FFFFFF> / <COLORV*star=FF77AA,slidestar=FFFFFF,slide=66DDFF>
+- 読み込み済みノーツへ即時適用します。通常の種別に加え、star、slidestar、slide を個別指定できます。
 ### SIZE — ノーツサイズ
 S <SIZE*倍率> / <SIZE*(X倍率,Y倍率)>
 S <SIZE*種別=倍率> / <SIZE*種別=(X倍率,Y倍率)>
 S <SIZE*NULL> / <SIZE*種別=NULL>
-E <SIZE*1.2> / <SIZE*(1.2,0.8)> / <SIZE*tap=(1,1.5),star=0.9>
+E <SIZE*1.2> / <SIZE*(1.2,0.8)> / <SIZE*star=0.9,slidestar=1.1>
 E <SIZE*slide=1.25> / <SIZE*slide=NULL> / <SIZE*NULL>
-- 全体 SIZE は通常ノーツと星頭を変更しますが Slide 軌道は変更しません。軌道は slide= で設定します。
+- 全体 SIZE は通常ノーツ、Slide ヘッド、移動星を変更しますが Slide 軌道は変更しません。star=、slidestar=、slide= で個別に設定できます。
+### SIZEV — 読み込み済みノーツサイズ
+S <SIZEV*倍率> / <SIZEV*(X倍率,Y倍率)> / <SIZEV*種別=倍率>
+E <SIZEV*1.2> / <SIZEV*slidestar=0.8,slide=1.25>
+- 読み込み済みノーツへ倍率を即時適用し、star、slidestar、slide を個別指定できます。
 ### ALPHA — ノーツ透明度
 S <ALPHA*0..1>
 S <ALPHA*種別=0..1,種別=0..1>
 S <ALPHA*NULL> / <ALPHA*種別=NULL>
-E <ALPHA*0.5> / <ALPHA*tap=0.4,slide=0.8> / <ALPHA*tap=NULL>
+E <ALPHA*0.5> / <ALPHA*star=0.4,slidestar=0.6,slide=0.8> / <ALPHA*slidestar=NULL>
+### ALPHAV — 読み込み済みノーツ透明度
+S <ALPHAV*0..1> / <ALPHAV*種別=0..1>
+E <ALPHAV*0.5> / <ALPHAV*star=0.4,slidestar=0.6,slide=0.8>
+- 読み込み済みノーツへ透明度を即時適用し、star、slidestar、slide を個別指定できます。
 ## 5  表示系 Alpha コマンド
 ### JLINE — 判定ライン色
 S <JLINE*RRGGBB> / <JLINE*(RRGGBB[,切替時間])> / <JLINE*NULL>
 E <JLINE*00FF00> / <JLINE*(FF6699,0.3)> / <JLINE*(FFFFFF,8:1)> / <JLINE*NULL>
 - NULL でスキン色に戻します。再生中の判定ラインに作用します。
-### TEXT — 左上字幕
-S <TEXT*内容> / <TEXT*(内容[,表示時間])>
-E <TEXT*サビ> / <TEXT*(同時押し注意,2)> / <TEXT*(最終区間,16:3)>
-- 時間なしでは次の TEXT まで保持し、時間ありでは自動で消えます。最後のカンマ以降が有効な時間なら表示時間として扱います。
+### TEXT — 字幕
+S <TEXT*("内容"[,表示時間][,x=0][,y=0][,size=32][,font=Default][,index=0][,style=Fade][,transition=0.3])>
+E <TEXT*("サビ")> / <TEXT*("同時押し注意",2,index=1)> / <TEXT*("文字送り",3,font=Allerta,index=2,style=Typewriter,transition=1)>
+- 内容は二重引用符で囲みます。表示時間を省略すると同じ index の次の TEXT まで表示します。index 0～4 は独立して同時表示できます。
+- font は Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta を使用できます。Default はプレイヤーフォントに追従せず元の字幕フォントを使います。
+- style=Fade の transition はフェード時間、style=Typewriter では文字送り完了時間です。秒数または 8:1 の拍形式を使用できます。
 ### 表示スイッチ
 S <ShowJudgeLine*(True|False[,切替時間])>
 S <ShowJudgeArea*(True|False[,切替時間])>
@@ -1076,11 +1182,15 @@ E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,
 S <OuterBrightness*(0..1[,切替時間])>
 S <InnerBrightness*(0..1[,切替時間])>
 E <OuterBrightness*(0.8,8:1)> / <InnerBrightness*(0.45,1)>
-- 値は 0～1 に制限され、0 は暗く、1 は最大です。
+- 値は 0～1 に制限され、0 は最も明るく、1 は最も暗い状態です。
 ## 6  フィルター系 Alpha コマンド
-> 共通：True で有効・保持、False で無効。最後の切替時間は省略可能です。異なるフィルターは重ねられ、同名 True は現在値から新しい値へ変化します。
+> 共通：True で有効・保持、False で無効。最後の切替時間は省略可能です。Instant は即座に目標値へ変化し、指定時間だけ保持してから即座に戻します。異なるフィルターは重ねられ、同名 True は現在値から新しい値へ変化します。
 S <Effect*(False[,切替時間])>
+S <Effect*(Instant,強度,表示時間)>
+S <Tint*(Instant,RRGGBB,強度,表示時間)> / <Move*(Instant,dx,dy,表示時間)>
+S <Shake*(Instant,強度,周波数[,角度],表示時間)>
 E <Gaussian*(False,8:1)> / <Move*(False,0.5)> / <Tint*(False)>
+E <Zoom*(Instant,1.5,8:1)> / <Hue*(Instant,180,1)> / <Move*(Instant,0.08,-0.04,2)>
 ### Gaussian / Neon / Trail
 S <Gaussian*(True,強度[,切替時間])>
 S <Neon*(True,強度[,切替時間])>
@@ -1107,7 +1217,7 @@ S <Glitch*(True,強度[,切替時間])>
 S <TVNoise*(True,強度[,切替時間])>
 E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
 E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
-- Vignette は円形範囲を縮小、Zoom は最大 8、Glitch は横ずれ、TVNoise は走査線とノイズです。
+- Vignette は円形範囲を縮小、Zoom は倍率を直接指定（0.6=60%、1=等倍、1.5=150%、範囲 0.1～8）、Glitch は横ずれ、TVNoise は走査線とノイズです。
 ### Hue / Tint
 S <Hue*(True,角度[,切替時間])>
 S <Tint*(True,RRGGBB,強度[,切替時間])>
@@ -1133,15 +1243,18 @@ E <PVOVERLAY*(True,media/cutin.png,8:1)> / <PVOVERLAY*(True,media/movie.mp4,0.5)
 ! パスは譜面フォルダー基準です。絶対パスと “..” は使用不可で、ファイル名のカンマも避けてください。メディアイベントは波形に表示されます。
 ## 8  エディター処理
 - 時間補完は Hold、TouchHold、Slide に [8:1]、[4:1]、[2:1]、[16:3] を提示します。[1:0] は時間なし Hold 専用で、Slide には提示しません。
-- Touch Slide は A/B/C/D/E、連結 `A1<A3<A5[8:1]`、BREAK `A1b-A2b[8:1]`、ヘッドなし `A1!-A2[8:1]` / `A1?-A2[8:1]` に対応します。
+- Touch Slide は A/B/C/D/E、連結 `A1<A3<A5[8:1]`、等間隔の多重スパイラル `A1<<<E5[8:1]`、BREAK `A1b-A2b[8:1]`、ヘッドなし `A1!-A2[8:1]` / `A1?-A2[8:1]` に対応します。
 - 「エフェクトなし譜面を書き出す」は <> コマンド、|| 以降、@ 行全体を削除するため、編集用拍子と背景色も出力には残りません。
 ## 9  組み合わせ例
 E (160){16}<COLOR*star=FF66CC><SIZE*star=1.15>1-5[8:1],2,3,4,
-E <TEXT*(間奏,2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
+E <TEXT*("間奏",2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
 E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
 - 同時刻に複数の Alpha コマンドを連続して書けます。追加カンマは不要です。「ノーツ → 表示 → フィルター → メディア」の順にすると補完と一致して読みやすくなります。
 ]]></value></data>
   <data name="BackgroundFitMode" xml:space="preserve"><value>背景 / PV の拡大方法</value></data>
   <data name="BackgroundFitHeight" xml:space="preserve"><value>高さに合わせる（縦横比維持）</value></data>
   <data name="BackgroundFitWidth" xml:space="preserve"><value>幅に合わせる（縦横比維持）</value></data>
+  <data name="UtageLabel" xml:space="preserve"><value>左上の文字</value></data>
+  <data name="UtageCoop" xml:space="preserve"><value>協力譜面</value></data>
+  <data name="RefreshPreview" xml:space="preserve"><value>プレビュー更新</value></data>
 </root>

@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -24,9 +24,9 @@ using System.Windows.Threading;
 using DiscordRPC;
 using MajdataEdit.AutoSaveModule;
 using MajdataEdit.Editor;
-using MajdataEdit.SyntaxModule;
 using Microsoft.Win32;
 using Newtonsoft.Json;
+using MajdataCore;
 using Newtonsoft.Json.Linq;
 using Semver;
 using Un4seen.Bass;
@@ -59,6 +59,8 @@ public partial class MainWindow : Window
     public Timer chartChangeTimer = new(1000); // Delayed chart-change parsing
     private readonly Timer currentTimeRefreshTimer = new(100);
     private readonly Timer notePreviewTimer = new(120);
+    private int pausedPreviewPrimingGeneration = -1;
+    private DateTime pausedPreviewPrimingSince;
     private readonly HttpListener visualEditListener = new();
     private CancellationTokenSource? visualEditCancellation;
 
@@ -88,7 +90,7 @@ public partial class MainWindow : Window
     private object? timelineMediaSource;
     private readonly List<TimelineOverlayItem> timelineOverlayCache = new();
     private int waveRedrawQueued;
-    private int waveResizeQueued;
+    private System.Windows.Threading.DispatcherTimer? waveResizeDebounceTimer;
     private object? cachedWaveTimingList;
     private object? cachedWaveMeterList;
     private object? cachedWaveNoteList;
@@ -98,18 +100,19 @@ public partial class MainWindow : Window
     private List<double> cachedWeakBeats = new();
     // Serialize preview, playback, pause, and stop requests so View observes editor order.
     private Task<bool>? pendingPlaySend;
-    // A waveform seek invalidates the View's current judge queues. The Stop request
-    // is sent immediately; a subsequent Play waits for this exact request before Run.
+    // A seek invalidates View's judge queues. A new Start must wait for this Stop.
     private Task<bool>? pendingScrubStop;
-    // Preview requests use the same View endpoint as playback. Keep the in-flight send
-    // as a barrier so Stop and Start can never overtake a late preview request.
+    // Preview requests share the View endpoint, so playback waits for an in-flight preview.
     private Task<bool>? pendingNotePreviewSend;
     // Invalidates delayed control requests after a newer user action.
     private int viewControlGeneration;
-    // Treat an in-flight pause as paused when deciding whether a seek needs a full stop.
+    // A Pause request can still be in flight when the user starts scrubbing.
     private bool pausePending;
+    private bool stopPending;
     // Options for the current RecordVideoWindow capture pass.
     internal RecordVideoOptions? pendingRecordOptions;
+
+    internal bool IsOriginalDifficulty => selectedDifficulty == 6;
     private double? flowTimelineCursor;
     private bool flowPreviewActive;
     private bool flowPreviewAwaitingView;
@@ -118,10 +121,22 @@ public partial class MainWindow : Window
     private int flowPreviewGeneration;
     private int notePreviewGeneration;
     private string? lastNotePreviewKey;
+    private readonly object pausedSeekGate = new();
+    private readonly object pausedPreviewSendGate = new();
+    private readonly object stoppedPreviewSendGate = new();
+    private double pendingSeekTime = double.NaN;
+    private int pendingSeekGeneration;
+    private bool pausedSeekWorkerRunning;
+    private bool pausedTimelinePreviewActive;
+    private bool pausedTimelinePreviewNeedsReload;
+    private bool pausedTimelinePreviewRequested;
+    private double pausedTimelinePreviewTime = double.NaN;
     private int lastSyntaxValidationSlotStart = -1;
     private const double RecordingIntroDuration = 5d;
     // Assets/Animation/Enter.anim is 3.1166666 seconds long.
     private const double AllPerfectDuration = 3.1166666d;
+    private static readonly TimeSpan ViewClockLeadTime =
+        TimeSpan.FromMilliseconds(100);
 
     private bool isSaved = true;
     private EditorControlMethod lastEditorState = EditorControlMethod.Stop;
@@ -130,6 +145,7 @@ public partial class MainWindow : Window
 
     private double lastMousePointX; //Used for drag scroll
 
+    private const int DefaultDifficultyIndex = 4;
     private int selectedDifficulty = -1;
     private double songLength;
 
@@ -150,9 +166,16 @@ public partial class MainWindow : Window
 
     private void SetRawFumenText(string content)
     {
+        var wasLoading = isLoading;
         isLoading = true;
-        fumenEditor.Text = content ?? string.Empty;
-        isLoading = false;
+        try
+        {
+            fumenEditor.Text = content ?? string.Empty;
+        }
+        finally
+        {
+            isLoading = wasLoading;
+        }
     }
 
     private long GetRawFumenPosition()
@@ -173,7 +196,12 @@ public partial class MainWindow : Window
         timingList.Clear();
         timingList.AddRange(SimaiProcess.timinglist);
         var indexOfTheNote = timingList.IndexOf(theNote);
-        fumenEditor.SelectLineColumn(theNote.rawTextPositionY, theNote.rawTextPositionX);
+        // SimaiTimingPoint stores the column after consuming the timing comma.
+        // AvalonEdit uses a direct character column, so select immediately before
+        // that comma to keep the caret on the same timing slot as the playhead.
+        fumenEditor.SelectLineColumn(
+            theNote.rawTextPositionY,
+            Math.Max(0, theNote.rawTextPositionX - 1));
     }
 
     private void SeekTextFromIndex(int noteGroupIndex)
@@ -194,7 +222,7 @@ public partial class MainWindow : Window
 
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING && (bool)FollowPlayCheck.IsChecked!)
             return;
-        var time = SimaiProcess.Serialize(GetRawFumenText(), GetRawFumenPosition());
+        var time = GetCaretTimingTime();
         SetBgmPosition(time);
         //Console.WriteLine("SelectionChanged");
         SimaiProcess.ClearNoteListPlayedState();
@@ -247,6 +275,15 @@ public partial class MainWindow : Window
         if (soundSetting != null) soundSetting.Close();
         if (editorSetting == null) ReadEditorSetting();
 
+        // A completed media build belongs to the chart that started it. Invalidate
+        // those callbacks before changing maidataDir so an old build cannot replace
+        // the newly opened chart's audio or waveform.
+        Interlocked.Increment(ref timelineAudioBuildGeneration);
+        Interlocked.Increment(ref timelineWaveBuildGeneration);
+        timelineAudioBuildTask = null;
+        timelineAudioSourcePath = null;
+        loadedTrackPath = null;
+
         var useOgg = File.Exists(path + "/track.ogg");
 
         var originalAudioPath = path + "/track" + (useOgg ? ".ogg" : ".mp3");
@@ -263,6 +300,28 @@ public partial class MainWindow : Window
             return;
         }
 
+        var viewHasPreviousChart =
+            lastEditorState != EditorControlMethod.Stop ||
+            pausedTimelinePreviewActive ||
+            pausedTimelinePreviewRequested ||
+            lastNotePreviewKey != null;
+        CancelNotePreview();
+        viewControlGeneration++;
+        pausePending = false;
+        stopPending = false;
+        pausedTimelinePreviewActive = false;
+        pausedTimelinePreviewRequested = false;
+        pausedTimelinePreviewNeedsReload = false;
+        pausedTimelinePreviewTime = double.NaN;
+        lock (pausedSeekGate)
+        {
+            pendingSeekTime = double.NaN;
+            pendingSeekGeneration = viewControlGeneration;
+        }
+        if (viewHasPreviousChart)
+            sendRequestStop();
+        lastEditorState = EditorControlMethod.Stop;
+
         maidataDir = path;
         timelineAudioSourcePath = MediaTools.FindCachedTimelineAudio(path);
         var audioPath = timelineAudioSourcePath ?? originalAudioPath;
@@ -272,13 +331,22 @@ public partial class MainWindow : Window
         {
             Bass.BASS_ChannelStop(bgmStream);
             Bass.BASS_StreamFree(bgmStream);
+            bgmStream = -1024;
         }
 
-        //soundSetting.Close();
         var decodeStream = Bass.BASS_StreamCreateFile(audioPath, 0L, 0L, BASSFlag.BASS_STREAM_DECODE | BASSFlag.BASS_STREAM_PRESCAN);
+        if (decodeStream == 0)
+            throw new InvalidOperationException(string.Format(
+                GetLocalizedString("AudioDecodeFailed"), Bass.BASS_ErrorGetCode()));
+
         bgmStream = BassFx.BASS_FX_TempoCreate(decodeStream, BASSFlag.BASS_FX_FREESOURCE);
+        if (bgmStream == 0)
+        {
+            Bass.BASS_StreamFree(decodeStream);
+            throw new InvalidOperationException(string.Format(
+                GetLocalizedString("AudioDecodeFailed"), Bass.BASS_ErrorGetCode()));
+        }
         loadedTrackPath = audioPath;
-        //Bass.BASS_StreamCreateFile(audioPath, 0L, 0L, BASSFlag.BASS_SAMPLE_FLOAT);
 
         Bass.BASS_ChannelSetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_BGM_Level);
         Bass.BASS_ChannelSetAttribute(trackStartStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_BGM_Level);
@@ -302,6 +370,7 @@ public partial class MainWindow : Window
         Bass.BASS_ChannelSetAttribute(hanabiStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Hanabi_Level);
         Bass.BASS_ChannelSetAttribute(holdRiserStream, BASSAttribute.BASS_ATTRIB_VOL,
             editorSetting!.Default_Hanabi_Level);
+        SetMineVolume(editorSetting!.Default_Mine_Level);
         var info = Bass.BASS_ChannelGetInfo(bgmStream);
         if (info.freq != 44100) MessageBox.Show(GetLocalizedString("Warn44100Hz"), GetLocalizedString("Attention"));
         ReadWaveFromFile();
@@ -310,17 +379,35 @@ public partial class MainWindow : Window
         if (!SimaiProcess.ReadData(dataPath)) return;
 
 
-        LevelSelector.SelectedItem = LevelSelector.Items[0];
-        ReadSetting();
-        chartParsePending = true;
-        SetRawFumenText(SimaiProcess.fumens[selectedDifficulty]);
-        SimaiProcess.Serialize(GetRawFumenText());
-        SeekTextFromTime();
-        chartParsePending = false;
+        isLoading = true;
+        try
+        {
+            var fallbackDifficulty = FindFirstPopulatedDifficulty();
+            LevelSelector.SelectedIndex = fallbackDifficulty;
+            selectedDifficulty = fallbackDifficulty;
+            ReadSetting();
+            selectedDifficulty = LevelSelector.SelectedIndex is >= 0 and < 7
+                ? LevelSelector.SelectedIndex
+                : fallbackDifficulty;
+            LevelSelector.SelectedIndex = selectedDifficulty;
+            SetRawFumenText(SimaiProcess.fumens[selectedDifficulty]);
+            suppressLevelTextChange = true;
+            LevelTextBox.Text = SimaiProcess.levels[selectedDifficulty] ?? string.Empty;
+            suppressLevelTextChange = false;
+            OffsetTextBox.Text = SimaiProcess.first.ToString(CultureInfo.InvariantCulture);
+            chartParsePending = true;
+            SimaiProcess.Serialize(GetRawFumenText());
+            SeekTextFromTime();
+            chartParsePending = false;
+            DrawWave();
+        }
+        finally
+        {
+            suppressLevelTextChange = false;
+            chartParsePending = false;
+            isLoading = false;
+        }
         FumenContent.Focus();
-        DrawWave();
-
-        OffsetTextBox.Text = SimaiProcess.first.ToString();
 
         Cover.Visibility = Visibility.Collapsed;
         MenuEdit.IsEnabled = true;
@@ -395,6 +482,15 @@ public partial class MainWindow : Window
 
     private sealed record BasicParseError(int PositionX, int PositionY, string Message);
 
+    // What the squiggles are showing right now. The error list window and the
+    // play gate read this, so neither can disagree with the editor: they used to
+    // read SyntaxChecker.ErrorList, which nothing ever filled.
+    private List<BasicParseError> latestParseErrors = new();
+
+    // Errors found in the chart text, kept apart from the beats View reported it
+    // could not build so a new validation pass does not wipe View's report.
+    private List<BasicParseError> textParseErrors = new();
+
     private List<BasicParseError> SuppressActiveTimingSlotErrors(List<BasicParseError> errors)
     {
         if (errors.Count == 0 || !FumenContent.IsKeyboardFocusWithin)
@@ -440,6 +536,22 @@ public partial class MainWindow : Window
         return (start, end);
     }
 
+    private double GetCaretTimingTime()
+    {
+        var source = GetRawFumenText();
+        if (string.IsNullOrEmpty(source))
+            return 0d;
+        var caret = Math.Clamp((int)GetRawFumenPosition(), 0, source.Length);
+        var (_, slotEnd) = GetTimingSlotBounds(source, caret);
+        // A timing slot belongs to its closing comma. Serializing at that comma
+        // samples the slot time before the parser advances to the next division.
+        var timingPosition =
+            slotEnd < source.Length && source[slotEnd] == ','
+                ? slotEnd
+                : caret;
+        return SimaiProcess.Serialize(source, timingPosition);
+    }
+
     private static int GetTextOffset(string source, int line, int column)
     {
         var offset = 0;
@@ -459,10 +571,40 @@ public partial class MainWindow : Window
 
     private void SetBasicParseErrors(IEnumerable<BasicParseError> errors)
     {
-        var errorList = errors.ToList();
+        textParseErrors = errors.ToList();
+        ApplyParseErrorMarks();
+    }
+
+    /// <summary>
+    /// Re-marks after View has answered. A beat View could not build is legal
+    /// text, so text validation alone leaves it unmarked and the note just goes
+    /// missing with nothing to look for.
+    /// </summary>
+    private void RefreshViewDropMarks() => ApplyParseErrorMarks();
+
+    private void ApplyParseErrorMarks()
+    {
+        var errorList = textParseErrors.ToList();
+        var marked = errorList
+            .Select(error => (error.PositionY, error.PositionX))
+            .ToHashSet();
+        foreach (var drop in WebControl.LastDroppedBeats)
+        {
+            if (!marked.Add((drop.line, drop.column)))
+                continue;
+            errorList.Add(new BasicParseError(
+                drop.column,
+                drop.line,
+                string.Format(
+                    GetLocalizedString("ViewCouldNotBuildBeat"),
+                    drop.reason ?? string.Empty)));
+        }
+
         Dispatcher.Invoke(() =>
         {
-            basicParseErrorRenderer.SetErrors(errorList.Select(e => (e.PositionY, e.Message)));
+            latestParseErrors = errorList;
+            basicParseErrorRenderer.SetErrors(
+                errorList.Select(e => (e.PositionY, e.PositionX, e.Message)));
             ErrCount.Visibility = errorList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             ErrCount_Label.Visibility = errorList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             ErrCount.Content = errorList.Count.ToString(CultureInfo.InvariantCulture);
@@ -474,8 +616,10 @@ public partial class MainWindow : Window
 
     private void ClearBasicParseErrors()
     {
+        textParseErrors = new List<BasicParseError>();
         Dispatcher.Invoke(() =>
         {
+            latestParseErrors = new List<BasicParseError>();
             basicParseErrorRenderer.Clear();
             ErrCount.Visibility = Visibility.Collapsed;
             ErrCount_Label.Visibility = Visibility.Collapsed;
@@ -493,12 +637,6 @@ public partial class MainWindow : Window
             songLength = Bass.BASS_ChannelBytes2Seconds(bgmDecode,
                 Bass.BASS_ChannelGetLength(bgmDecode, BASSMode.BASS_POS_BYTE));
             waveformDisplayLength = songLength;
-/*                int sampleNumber = (int)((songLength * 1000) / (0.02f * 1000));
-                wavedBs = new float[sampleNumber];
-                for (int i = 0; i < sampleNumber; i++)
-                {
-                    wavedBs[i] = Bass.BASS_ChannelGetLevels(bgmDecode, 0.02f, BASSLevel.BASS_LEVEL_MONO)[0];
-                }*/
             Bass.BASS_StreamFree(bgmDecode);
             var bgmSample = Bass.BASS_SampleLoad(maidataDir + "/track" + (useOgg ? ".ogg" : ".mp3"), 0, 0, 1, BASSFlag.BASS_DEFAULT);
             try
@@ -510,11 +648,11 @@ public partial class MainWindow : Window
                 Bass.BASS_SampleGetData(bgmSample, bgmRAW);
 
                 waveRaws[0] = new short[sampleCount / 20 + 1];
-                for (var i = 0; i < sampleCount; i = i + 20) waveRaws[0][i / 20] = bgmRAW[i];
+                for (var i = 0; i < sampleCount; i += 20) waveRaws[0][i / 20] = bgmRAW[i];
                 waveRaws[1] = new short[sampleCount / 50 + 1];
-                for (var i = 0; i < sampleCount; i = i + 50) waveRaws[1][i / 50] = bgmRAW[i];
+                for (var i = 0; i < sampleCount; i += 50) waveRaws[1][i / 50] = bgmRAW[i];
                 waveRaws[2] = new short[sampleCount / 100 + 1];
-                for (var i = 0; i < sampleCount; i = i + 100) waveRaws[2][i / 100] = bgmRAW[i];
+                for (var i = 0; i < sampleCount; i += 100) waveRaws[2][i / 100] = bgmRAW[i];
             }
             finally
             {
@@ -578,7 +716,13 @@ public partial class MainWindow : Window
     {
         if (selectedDifficulty == -1) return;
         SimaiProcess.fumens[selectedDifficulty] = GetRawFumenText();
-        SimaiProcess.first = float.Parse(OffsetTextBox.Text);
+        // Saving in the middle of typing an offset used to throw "Input string
+        // was not in a correct format" and abandon the save, and since the box
+        // still held what it held, every save after it threw too, right up until
+        // the editor was restarted. An offset that does not read keeps the offset
+        // that does.
+        if (SimaiProcess.TryReadOffset(OffsetTextBox.Text, out var offset))
+            SimaiProcess.first = offset;
         if (maidataDir == "")
         {
             var saveDialog = new SaveFileDialog
@@ -612,6 +756,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!NoteStreamMerger.TryFlattenAll(source, out var flattened, out var mergeError))
+        {
+            MessageBox.Show(mergeError, GetLocalizedString("Attention"));
+            return;
+        }
+
         var dialog = new SaveFileDialog
         {
             Filter = "maidata.txt|*.txt|Text file|*.txt|All files|*.*",
@@ -622,7 +772,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog() != true)
             return;
 
-        var cleaned = StripAlphaOnlySyntax(source);
+        var cleaned = StripAlphaOnlySyntax(flattened);
         File.WriteAllText(dialog.FileName, cleaned, Encoding.UTF8);
     }
 
@@ -633,10 +783,25 @@ public partial class MainWindow : Window
 
         var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
         var lines = normalized.Split('\n');
+        var inOverlayBlock = false;
         for (var i = 0; i < lines.Length; i++)
         {
             var line = lines[i];
             var trimmed = line.Trim();
+
+            if (inOverlayBlock)
+            {
+                lines[i] = "";
+                if (trimmed.Contains("*@", StringComparison.Ordinal))
+                    inOverlayBlock = false;
+                continue;
+            }
+            if (trimmed.StartsWith("@*", StringComparison.Ordinal))
+            {
+                lines[i] = "";
+                inOverlayBlock = !trimmed.Contains("*@", StringComparison.Ordinal);
+                continue;
+            }
 
             if (IsEditorBackgroundColorLine(trimmed))
             {
@@ -648,7 +813,7 @@ public partial class MainWindow : Window
             if (commentStart >= 0)
                 line = line.Substring(0, commentStart);
 
-            lines[i] = RemoveAlphaAngleCommands(line);
+            lines[i] = AlphaCommandBoundary.RemoveCommands(line);
         }
 
         return string.Join(Environment.NewLine, lines);
@@ -659,44 +824,19 @@ public partial class MainWindow : Window
         if (trimmed.Length == 0)
             return false;
 
+        // Every '@' line steers the editor alone, overlay lines included: plain
+        // simai has no way to express them, so this export drops them.
         if (trimmed[0] == '@')
             return true;
-        if (trimmed[0] != '&')
-            return false;
 
-        var value = trimmed.Substring(1);
-        if (value.Equals("NULL", StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (value.Length != 6)
-            return false;
-        return value.All(Uri.IsHexDigit);
+        return EditorDirectiveScanner.TryRead(trimmed, 0, out var directive) &&
+               directive.kind is EditorDirectiveKind.SectionReset
+                   or EditorDirectiveKind.SectionColor &&
+               directive.length == trimmed.Length;
     }
 
-    private static string RemoveAlphaAngleCommands(string line)
-    {
-        if (string.IsNullOrEmpty(line))
-            return line;
-
-        var builder = new StringBuilder(line.Length);
-        for (var i = 0; i < line.Length;)
-        {
-            if (line[i] == '<' && IsAlphaCommandStart(line, i, out var close))
-            {
-                i = close + 1;
-                continue;
-            }
-
-            builder.Append(line[i]);
-            i++;
-        }
-
-        return builder.ToString();
-    }
-
-    private static bool IsAlphaCommandStart(string text, int openIndex, out int closeIndex)
-    {
-        return AlphaCommandBoundary.TryGetCommand(text, openIndex, out closeIndex);
-    }
+    private static bool IsAlphaCommandStart(string text, int openIndex, out int closeIndex) =>
+        AlphaCommandBoundary.TryGetCommand(text, openIndex, out closeIndex);
 
     private void SaveSetting()
     {
@@ -715,8 +855,17 @@ public partial class MainWindow : Window
         Bass.BASS_ChannelGetAttribute(touchStream, BASSAttribute.BASS_ATTRIB_VOL, ref setting.Touch_Level);
         Bass.BASS_ChannelGetAttribute(slideStream, BASSAttribute.BASS_ATTRIB_VOL, ref setting.Slide_Level);
         Bass.BASS_ChannelGetAttribute(hanabiStream, BASSAttribute.BASS_ATTRIB_VOL, ref setting.Hanabi_Level);
+        setting.Mine_Level = MineVolume;
         var json = JsonConvert.SerializeObject(setting);
         File.WriteAllText(maidataDir + "/" + majSettingFilename, json);
+    }
+
+    private static int FindFirstPopulatedDifficulty()
+    {
+        for (var index = 0; index < SimaiProcess.fumens.Length; index++)
+            if (!string.IsNullOrWhiteSpace(SimaiProcess.fumens[index]))
+                return index;
+        return DefaultDifficultyIndex;
     }
 
     private void ReadSetting()
@@ -724,8 +873,13 @@ public partial class MainWindow : Window
         var path = maidataDir + "/" + majSettingFilename;
         if (!File.Exists(path)) return;
         var setting = JsonConvert.DeserializeObject<MajSetting>(File.ReadAllText(path));
-        LevelSelector.SelectedIndex = setting!.lastEditDiff;
-        selectedDifficulty = setting.lastEditDiff;
+        if (setting == null)
+            return;
+        var difficulty = setting.lastEditDiff >= 0 && setting.lastEditDiff < LevelSelector.Items.Count
+            ? setting.lastEditDiff
+            : FindFirstPopulatedDifficulty();
+        LevelSelector.SelectedIndex = difficulty;
+        selectedDifficulty = difficulty;
         SetBgmPosition(setting.lastEditTime);
         Bass.BASS_ChannelSetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, setting.BGM_Level);
         Bass.BASS_ChannelSetAttribute(trackStartStream, BASSAttribute.BASS_ATTRIB_VOL, setting.BGM_Level);
@@ -744,6 +898,7 @@ public partial class MainWindow : Window
         Bass.BASS_ChannelSetAttribute(touchStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Touch_Level);
         Bass.BASS_ChannelSetAttribute(hanabiStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Hanabi_Level);
         Bass.BASS_ChannelSetAttribute(holdRiserStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Hanabi_Level);
+        SetMineVolume(setting.Mine_Level);
 
         SaveSetting(); // Overwrite settings from older versions.
     }
@@ -757,8 +912,7 @@ public partial class MainWindow : Window
                 "&title=" + GetLocalizedString("SetTitle") + "\n" +
                 "&artist=" + GetLocalizedString("SetArtist") + "\n" +
                 "&des=" + GetLocalizedString("SetDes") + "\n" +
-                "&first=0\n" +
-                "|*\n" + GetLocalizedString("NewChartHint") + "\n*|\n");
+                "&first=0\n");
     }
 
     private void CreateEditorSetting()
@@ -826,6 +980,7 @@ public partial class MainWindow : Window
             editorSetting.RenderMode = 1;
 
         LocalizeDictionary.Instance.Culture = new CultureInfo(editorSetting.Language);
+        MajdataCore.ParserMessageLocale.SetCulture(editorSetting.Language);
         AddGesture(editorSetting.PlayPauseKey, "PlayAndPause");
         AddGesture(editorSetting.PlayStopKey, "StopPlaying");
         AddGesture(editorSetting.SaveKey, "SaveFile");
@@ -855,7 +1010,7 @@ public partial class MainWindow : Window
     }
 
     private static bool IsLightEditorTheme(string? themeName) =>
-        string.Equals(themeName, "light", StringComparison.OrdinalIgnoreCase);
+        ThemeManager.IsLight(ThemeManager.LoadThemeByName(themeName));
 
     internal void ApplyEditorAppearance()
     {
@@ -889,6 +1044,11 @@ public partial class MainWindow : Window
         TextBlock.SetLineHeight(textView, textView.DefaultLineHeight * 1.10d);
         TextBlock.SetLineStackingStrategy(textView, LineStackingStrategy.BlockLineHeight);
         ThemeManager.ApplyEditor(FumenContent, theme);
+        // The colourizer is asked for its brushes while a line is being drawn, and
+        // AvalonEdit keeps the lines it has already drawn. Without this the syntax
+        // colours stay on the old theme until something else forces a redraw, and
+        // scrolling brings the new ones in a few lines at a time.
+        FumenContent.TextArea.TextView.Redraw();
     }
 
     private static System.Windows.Media.FontFamily LoadBundledEditorFont(
@@ -909,6 +1069,7 @@ public partial class MainWindow : Window
     {
         ThemeManager.ApplyApplicationResources(theme);
         ThemeManager.ApplyEditor(FumenContent, theme);
+        FumenContent.TextArea.TextView.Redraw();
         DrawWave();
     }
 
@@ -936,7 +1097,6 @@ public partial class MainWindow : Window
     // Delayed chart-change parsing
     private void ChartChangeTimer_Elapsed(object? sender, ElapsedEventArgs e)
     {
-        Console.WriteLine("TextChanged");
         QueueImmediateWaveRefresh();
     }
 
@@ -951,29 +1111,182 @@ public partial class MainWindow : Window
             immediateWaveRefreshQueued = false;
             if (isLoading || string.IsNullOrEmpty(GetRawFumenText()))
                 return;
-            ghostCusorPositionTime = (float)SimaiProcess.Serialize(
-                GetRawFumenText(), GetRawFumenPosition());
+            ghostCusorPositionTime = (float)GetCaretTimingTime();
             chartParsePending = false;
             DrawWave();
             SyntaxCheck();
         }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
-    private void QueueNotePreview()
+    private void QueueNotePreview(bool chartChanged = false)
     {
-        if (isLoading || isPlaying || lastEditorState != EditorControlMethod.Stop)
+        if (isLoading || isPlaying || stopPending)
             return;
+        // Focusing the editor is part of Pause itself and raises SelectionChanged.
+        // It is not a chart edit or a scrub, so it must not replace the live chart.
+        if (pausePending)
+            return;
+        var paused = lastEditorState == EditorControlMethod.Pause || pausePending;
+        if (!paused && lastEditorState != EditorControlMethod.Stop)
+            return;
+        if (paused && chartChanged)
+            pausedTimelinePreviewNeedsReload = true;
+        if (paused)
+            pausedTimelinePreviewRequested = true;
 
         notePreviewGeneration++;
         notePreviewTimer.Stop();
+
+        // A Seek only moves View's clock, so it neither needs the chart nor the
+        // debounce timer. Publishing the newest position and letting one worker
+        // chase it keeps a continuous drag at the round-trip rate instead of
+        // queueing a request per drag frame. This runs even when a reload is
+        // pending, otherwise dragging right after an edit would freeze View
+        // until the drag stopped.
+        if (pausedTimelinePreviewActive &&
+            !pausePending &&
+            lastEditorState == EditorControlMethod.Pause &&
+            !double.IsNaN(pausedTimelinePreviewTime))
+        {
+            QueuePausedTimelineSeek(GetTimelinePosition());
+            if (!pausedTimelinePreviewNeedsReload)
+                return;
+        }
+
+        notePreviewTimer.Interval = paused ? 50 : 120;
+        // The reload below is what switches this pause session over to the Seek
+        // path above, and a drag asks for it again on every mouse move. Restarting
+        // the wait each time pushed it past the end of the drag, so the first drag
+        // after pausing sent nothing at all and only the next one followed the
+        // timeline. The wait is a deadline from the first request instead, and it
+        // starts over with the next play/pause because that bumps the generation.
+        if (IsPrimingPausedPreview())
+        {
+            if (pausedPreviewPrimingGeneration != viewControlGeneration)
+            {
+                pausedPreviewPrimingGeneration = viewControlGeneration;
+                pausedPreviewPrimingSince = DateTime.Now;
+            }
+            var waited = (DateTime.Now - pausedPreviewPrimingSince).TotalMilliseconds;
+            notePreviewTimer.Interval = Math.Max(1d, notePreviewTimer.Interval - waited);
+        }
         notePreviewTimer.Start();
     }
+
+    private void QueuePausedTimelineSeek(double time)
+    {
+        lock (pausedSeekGate)
+        {
+            pendingSeekTime = time;
+            pendingSeekGeneration = viewControlGeneration;
+            if (pausedSeekWorkerRunning)
+                return;
+            pausedSeekWorkerRunning = true;
+        }
+
+        Task.Run(RunPausedTimelineSeekWorker);
+    }
+
+    private void CancelPausedTimelineSeek()
+    {
+        lock (pausedSeekGate)
+            pendingSeekTime = double.NaN;
+    }
+
+    private void RunPausedTimelineSeekWorker()
+    {
+        try
+        {
+            PumpPausedTimelineSeeks();
+        }
+        catch
+        {
+            // Never leave the single-flight flag set, or every later drag would
+            // silently stop updating View.
+            lock (pausedSeekGate)
+                pausedSeekWorkerRunning = false;
+            throw;
+        }
+    }
+
+    private void PumpPausedTimelineSeeks()
+    {
+        while (true)
+        {
+            double time;
+            int generation;
+            lock (pausedSeekGate)
+            {
+                if (double.IsNaN(pendingSeekTime))
+                {
+                    pausedSeekWorkerRunning = false;
+                    return;
+                }
+                time = pendingSeekTime;
+                generation = pendingSeekGeneration;
+                pendingSeekTime = double.NaN;
+            }
+
+            if (generation != Volatile.Read(ref viewControlGeneration))
+                continue;
+
+            bool sent;
+            // The debounced reload posts from the timer thread, so both paths
+            // share one send gate to keep View's request order well defined.
+            lock (pausedPreviewSendGate)
+                sent = sendRequestTimelineSeek((float)time);
+            if (!sent)
+                continue;
+
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (generation != viewControlGeneration)
+                    return;
+                pausedTimelinePreviewTime = time;
+            });
+        }
+    }
+
+    private bool IsPausedTimelineSeekOnly()
+        => lastEditorState == EditorControlMethod.Pause &&
+           !pausePending &&
+           pausedTimelinePreviewActive &&
+           !pausedTimelinePreviewNeedsReload &&
+           !double.IsNaN(pausedTimelinePreviewTime);
+
+    /// <summary>
+    /// True while this pause session still owes View the one reload that makes
+    /// later timeline moves plain Seeks.
+    /// </summary>
+    private bool IsPrimingPausedPreview()
+        => lastEditorState == EditorControlMethod.Pause &&
+           !pausePending &&
+           !pausedTimelinePreviewActive;
+
 
     private void CancelNotePreview()
     {
         notePreviewGeneration++;
         notePreviewTimer.Stop();
+        CancelPausedTimelineSeek();
         lastNotePreviewKey = null;
+    }
+
+    private void ClearStoppedNotePreview()
+    {
+        if (isPlaying || lastEditorState != EditorControlMethod.Stop)
+            return;
+
+        CancelNotePreview();
+        var generation = notePreviewGeneration;
+        var requestJson = JsonConvert.SerializeObject(
+            CreateNotePreviewRequest(null));
+        lock (stoppedPreviewSendGate)
+        {
+            if (generation != notePreviewGeneration)
+                return;
+            WebControl.RequestPOST("http://localhost:8013/", requestJson);
+        }
     }
 
     private void NotePreviewTimer_Elapsed(object? sender, ElapsedEventArgs e)
@@ -988,21 +1301,95 @@ public partial class MainWindow : Window
                 previousPreview.GetAwaiter().GetResult();
 
             string? requestJson = null;
+            var pausedPreview = false;
+            var reloadPausedPreview = false;
+            var priming = false;
+            var pausedTime = 0d;
+            var controlGeneration = 0;
             Dispatcher.Invoke(() =>
             {
-                if (generation == notePreviewGeneration &&
-                    !isLoading && !isPlaying && lastEditorState == EditorControlMethod.Stop)
+                if (isLoading || isPlaying || stopPending)
+                    return;
+                // A Seek always carries the timeline position read right here, so a
+                // newer queue request cannot make it stale. Only reload previews
+                // need the generation guard.
+                var seekOnly = IsPausedTimelineSeekOnly();
+                // The priming reload reads the timeline position below, so like a
+                // Seek it cannot go stale. Letting a drag still in progress cancel
+                // it is what made a whole drag produce nothing.
+                priming = IsPrimingPausedPreview();
+                if (!seekOnly && !priming && generation != notePreviewGeneration)
+                    return;
+                if (lastEditorState == EditorControlMethod.Stop)
+                {
                     requestJson = BuildNotePreviewRequestJson();
+                    return;
+                }
+                if (pausePending)
+                    return;
+                if (lastEditorState != EditorControlMethod.Pause)
+                    return;
+
+                pausedPreview = true;
+                pausedTime = GetTimelinePosition();
+                // Paused preview objects are reversible. Load once on entry or after
+                // a chart edit; every timeline move in either direction is Seek-only.
+                reloadPausedPreview = !seekOnly;
+                controlGeneration = viewControlGeneration;
+                if (reloadPausedPreview)
+                    SimaiProcess.Serialize(
+                        GetRawFumenText(),
+                        GetRawFumenPosition());
             });
 
-            if (string.IsNullOrEmpty(requestJson) || generation != notePreviewGeneration ||
+            if (pausedPreview)
+            {
+                bool sent;
+                lock (pausedPreviewSendGate)
+                    sent = reloadPausedPreview
+                        ? sendRequestRun(
+                            DateTime.Now,
+                            PlayMethod.Normal,
+                            (float)pausedTime,
+                            controlGeneration: controlGeneration,
+                            timelinePreview: true)
+                        : sendRequestTimelineSeek((float)pausedTime);
+                Dispatcher.Invoke(() =>
+                {
+                    if (!sent ||
+                        (reloadPausedPreview && !priming &&
+                         generation != notePreviewGeneration))
+                        return;
+                    pausedTimelinePreviewActive = true;
+                    pausedTimelinePreviewRequested = false;
+                    pausedTimelinePreviewTime = pausedTime;
+                    if (reloadPausedPreview)
+                        pausedTimelinePreviewNeedsReload = false;
+                });
+                completion.TrySetResult(sent);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(requestJson) ||
+                generation != notePreviewGeneration ||
                 isLoading || isPlaying || lastEditorState != EditorControlMethod.Stop)
             {
                 completion.TrySetResult(true);
                 return;
             }
 
-            completion.TrySetResult(WebControl.RequestPOST("http://localhost:8013/", requestJson) != "ERROR");
+            lock (stoppedPreviewSendGate)
+            {
+                if (generation != notePreviewGeneration)
+                {
+                    completion.TrySetResult(true);
+                    return;
+                }
+                completion.TrySetResult(
+                    WebControl.RequestPOST(
+                        "http://localhost:8013/",
+                        requestJson) != "ERROR");
+            }
         }
         catch
         {
@@ -1012,16 +1399,28 @@ public partial class MainWindow : Window
 
     private string? BuildNotePreviewRequestJson()
     {
-        var group = NotePreviewModule.ExtractNoteGroupAtCaret(GetRawFumenText(), (int)GetRawFumenPosition());
+        var text = GetRawFumenText();
+        var caret = (int)GetRawFumenPosition();
+        var group = NotePreviewModule.ExtractNoteGroupAtCaret(text, caret);
         var previewTimings = NotePreviewModule.ExpandPreviewTimings(group);
         var previewKey = string.Join("`", previewTimings.Select(timing => string.Join("/", timing)));
         if (string.Equals(previewKey, lastNotePreviewKey, StringComparison.Ordinal))
             return null;
 
         lastNotePreviewKey = previewKey;
-        var request = new EditRequestjson
+        return JsonConvert.SerializeObject(
+            CreateNotePreviewRequest(
+                BuildNotePreviewMajsonJson(previewTimings)));
+    }
+
+    private EditRequestjson CreateNotePreviewRequest(string? previewJson)
+    {
+        return new EditRequestjson
         {
             control = EditorControlMethod.Preview,
+            jsonPath = string.IsNullOrWhiteSpace(maidataDir)
+                ? null
+                : Path.Combine(maidataDir, "majdata.json"),
             language = editorSetting?.Language ?? "en-US",
             noteSpeed = editorSetting?.playSpeed ?? 7f,
             touchSpeed = editorSetting?.touchSpeed ?? 7.5f,
@@ -1035,14 +1434,15 @@ public partial class MainWindow : Window
             standbyTheme = IsLightEditorTheme(editorSetting?.EditorTheme) ? "light" : "dark",
             introBgTheme = editorSetting?.ViewIntroStyle ?? "circleplus",
             backgroundFitMode = editorSetting?.BackgroundFitMode ?? 0,
+            clipBackgroundToRing = editorSetting?.ClipBackgroundToRing ?? false,
             songDetailStyle = editorSetting?.SongDetailStyle ?? 1,
             showGeneratedMark = editorSetting?.ShowGeneratedMark ?? false,
             viewDisplayFontPreset = editorSetting?.ViewDisplayFontPreset ?? 0,
             enableVisualChartEditor = editorSetting?.EnableVisualChartEditor ?? true,
+            showMineHitFeedback = editorSetting?.ShowMineHitFeedback ?? true,
             editorPlayMethod = EditorPlayMethod.Disabled,
-            previewJson = BuildNotePreviewMajsonJson(previewTimings)
+            previewJson = previewJson
         };
-        return JsonConvert.SerializeObject(request);
     }
 
     private string? BuildNotePreviewMajsonJson(List<List<string>> previewTimings)
@@ -1163,29 +1563,33 @@ public partial class MainWindow : Window
 
     private void QueueWaveResize()
     {
-        if (Interlocked.CompareExchange(ref waveResizeQueued, 1, 0) != 0)
-            return;
+        // WPF stretches the existing bitmap while the edge is moving, so both
+        // edges zoom the same time window. The rebuild must not run during the
+        // drag: a GDI redraw on the UI thread costs tens of milliseconds, and a
+        // hand-drag pauses often enough that a short debounce fired repeatedly
+        // and showed up as periodic stutter.
+        waveResizeDebounceTimer ??=
+            new System.Windows.Threading.DispatcherTimer(
+                System.Windows.Threading.DispatcherPriority.Render)
+            {
+                Interval = TimeSpan.FromMilliseconds(250)
+            };
+        waveResizeDebounceTimer.Stop();
+        waveResizeDebounceTimer.Tick -= WaveResizeDebounceTimer_Tick;
+        waveResizeDebounceTimer.Tick += WaveResizeDebounceTimer_Tick;
+        waveResizeDebounceTimer.Start();
+    }
 
-        Dispatcher.BeginInvoke(new Action(() =>
+    private void WaveResizeDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        waveResizeDebounceTimer?.Stop();
+        if (isDrawing)
         {
-            var retry = false;
-            try
-            {
-                if (isDrawing)
-                {
-                    retry = true;
-                    return;
-                }
-                InitWave();
-                DrawWaveCore();
-            }
-            finally
-            {
-                Interlocked.Exchange(ref waveResizeQueued, 0);
-                if (retry)
-                    QueueWaveResize();
-            }
-        }), System.Windows.Threading.DispatcherPriority.Render);
+            waveResizeDebounceTimer?.Start();
+            return;
+        }
+        InitWave();
+        DrawWaveCore();
     }
 
     private void DrawWave()
@@ -1243,17 +1647,17 @@ public partial class MainWindow : Window
             var step = displayLength / waveLevels.Length;
             if (!double.IsFinite(step) || step <= 0d)
                 return;
-            var startindex = (int)((currentTime - deltatime) / step);
-            var stopindex = (int)((currentTime + deltatime) / step);
-            var linewidth = backBitmap.Width / (float)Math.Max(1, stopindex - startindex);
-            var isLightTheme = string.Equals(ThemeManager.CurrentTheme.name, "light",
-                StringComparison.OrdinalIgnoreCase);
+            var viewport = CreateWaveViewport(currentTime, width);
+            var startindex = (int)Math.Floor(viewport.StartTime / step);
+            var stopindex = (int)Math.Ceiling(viewport.EndTime / step) + 1;
+            var linewidth = (float)(step * viewport.PixelsPerSecond);
+            var isLightTheme = ThemeManager.CurrentIsLight;
             using var wavePen = new Pen(
-                isLightTheme ? Color.FromArgb(225, 96, 184, 137) : Color.FromArgb(225, 32, 178, 92),
+                isLightTheme ? Color.FromArgb(175, 42, 132, 86) : Color.FromArgb(185, 18, 136, 68),
                 Math.Clamp(linewidth, 1f, 1.6f));
             if (startindex < 0)
             {
-                var zeroX = (0 - startindex) * linewidth;
+                var zeroX = viewport.TimeToX(0d);
                 graphics.DrawLine(wavePen, 0f, height / 2f, Math.Min(width, zeroX), height / 2f);
             }
 
@@ -1263,7 +1667,7 @@ public partial class MainWindow : Window
                 if (i < 0) continue;
                 if (i >= waveLevels.Length - 1) break;
 
-                var x = (i - startindex) * linewidth;
+                var x = viewport.TimeToX(i * step);
                 var y = waveLevels[i] / 65535f * height + height / 2;
                 var point = new PointF(x, y);
                 if (previousPoint.HasValue)
@@ -1283,15 +1687,15 @@ public partial class MainWindow : Window
 
             foreach (var btime in cachedStrongBeats)
             {
-                if (Math.Abs(btime - currentTime) > deltatime) continue;
-                var x = ((float)(btime / step) - startindex) * linewidth;
+                if (!viewport.Contains(btime)) continue;
+                var x = viewport.TimeToX(btime);
                 graphics.DrawLine(strongBeatPen, x, 0, x, height);
             }
 
             foreach (var btime in cachedWeakBeats)
             {
-                if (Math.Abs(btime - currentTime) > deltatime) continue;
-                var x = ((float)(btime / step) - startindex) * linewidth;
+                if (!viewport.Contains(btime)) continue;
+                var x = viewport.TimeToX(btime);
                 graphics.DrawLine(weakBeatPen, x, 0, x, Math.Min(15, height));
             }
 
@@ -1299,15 +1703,15 @@ public partial class MainWindow : Window
                 isLightTheme ? Color.FromArgb(235, 230, 237, 245) : Color.FromArgb(245, 255, 255, 255),
                 1f);
             var timingStart = FindFirstWaveItemAtOrAfter(
-                SimaiProcess.timinglist, currentTime - deltatime);
+                SimaiProcess.timinglist, viewport.StartTime);
             for (var timingIndex = timingStart;
                  timingIndex < SimaiProcess.timinglist.Count;
                  timingIndex++)
             {
                 var note = SimaiProcess.timinglist[timingIndex];
                 if (note == null) break;
-                if (note.time > currentTime + deltatime) break;
-                var x = ((float)(note.time / step) - startindex) * linewidth;
+                if (note.time > viewport.EndTime) break;
+                var x = viewport.TimeToX(note.time);
                 graphics.DrawLine(timingPen, x, Math.Max(0, height - 15), x, height);
             }
 
@@ -1316,14 +1720,14 @@ public partial class MainWindow : Window
             EnsureWaveNoteRangeCache();
             var noteStart = FindFirstWaveItemAtOrAfter(
                 SimaiProcess.notelist,
-                currentTime - deltatime - cachedWaveMaxVisualDuration);
+                viewport.StartTime - cachedWaveMaxVisualDuration);
             for (var noteIndex = noteStart;
                  noteIndex < SimaiProcess.notelist.Count;
                  noteIndex++)
             {
                 var note = SimaiProcess.notelist[noteIndex];
                 if (note == null) break;
-                if (note.time > currentTime + deltatime) break;
+                if (note.time > viewport.EndTime) break;
                 var notes = note.noteList.Count > 0 ? note.noteList : note.getNotes();
                 var visualEndTime = note.time;
                 foreach (var visibleNote in notes)
@@ -1344,25 +1748,54 @@ public partial class MainWindow : Window
                         : note.time;
                     visualEndTime = Math.Max(visualEndTime, fireworkStart + 1d);
                 }
-                if (visualEndTime - currentTime < -deltatime) continue;
-                var isEach = notes.Count(o => !o.isSlideNoHead) > 1;
+                if (visualEndTime < viewport.StartTime) continue;
+                // Shared with the view's own each decision, which used to count
+                // headless slides the editor left out.
+                var isEach = MajdataCore.EachRule.IsEach(
+                    note.isEach,
+                    notes.Count(
+                        o => MajdataCore.EachRule.CountsTowardEach(o.isSlideNoHead)));
                 var slideCount = notes.Count(o => o.noteType == SimaiNoteType.Slide);
 
-                var x = ((float)(note.time / step) - startindex) * linewidth;
+                var x = viewport.TimeToX(note.time);
 
                 foreach (var noteD in notes)
                 {
-                    var visualPosition = noteD.isDZone
-                        ? noteD.startPosition - 0.5f
+                    var waveformPosition = noteD.isTrajectoryOnly
+                        ? noteD.trajectoryCarrierPosition
                         : noteD.startPosition;
+                    var waveformIsDZone = noteD.isTrajectoryOnly
+                        ? noteD.trajectoryCarrierIsDZone
+                        : noteD.isDZone;
+                    var visualPosition = waveformIsDZone
+                        ? waveformPosition - 0.5f
+                        : waveformPosition;
                     var y = visualPosition * 6.875f + 8f;
+
+                    if (noteD.isTrajectoryOnly)
+                    {
+                        var carrierColor = WaveNoteRenderColor(
+                            noteD.isBreak,
+                            isEach,
+                            noteD.isMineHead,
+                            noteD.trajectoryCarrierType is SimaiNoteType.Touch or
+                                SimaiNoteType.TouchHold
+                                ? Color.FromArgb(40, 196, 255)
+                                : Color.FromArgb(255, 95, 176));
+                        if (noteD.trajectoryCarrierType is SimaiNoteType.Touch or
+                            SimaiNoteType.TouchHold)
+                            DrawWaveDiamond(graphics, x, y, 3.4f, carrierColor);
+                        else
+                            DrawWaveRing(graphics, x, y, 3f, carrierColor);
+                        continue;
+                    }
 
                     if (noteD.isHanabi)
                     {
-                        var xDeltaHanabi = (float)(1f / step) * linewidth; //Hanabi is 1s due to frame analyze
+                        var xDeltaHanabi = viewport.DurationToPixels(1d); //Hanabi is 1s due to frame analyze
                         var rectangleF = new RectangleF(x, 0, xDeltaHanabi, 75);
                         if (noteD.noteType == SimaiNoteType.TouchHold)
-                            rectangleF.X += (float)(noteD.holdTime / step) * linewidth;
+                            rectangleF.X += viewport.DurationToPixels(noteD.holdTime);
                         using var gradientBrush = new LinearGradientBrush(
                             rectangleF,
                             Color.FromArgb(100, 255, 0, 0),
@@ -1375,11 +1808,11 @@ public partial class MainWindow : Window
                     if (noteD.noteType == SimaiNoteType.Tap)
                     {
                         var color = WaveNoteRenderColor(
-                            noteD.isBreak, isEach, noteD.isMonoHead, Color.FromArgb(255, 95, 176));
+                            noteD.isBreak, isEach, noteD.isMineHead, Color.FromArgb(255, 95, 176));
                         if (noteD.isForceStar)
                             DrawWaveStar(graphics, x, y, 4.5f,
                                 WaveNoteRenderColor(
-                                    noteD.isBreak, isEach, noteD.isMonoHead, normalStarColor), 0f);
+                                    noteD.isBreak, isEach, noteD.isMineHead, normalStarColor), 0f);
                         else
                             DrawWaveRing(graphics, x, y, 3f, color);
                     }
@@ -1388,14 +1821,14 @@ public partial class MainWindow : Window
                     {
                         DrawWaveDiamond(graphics, x, y, 3.4f,
                             WaveNoteRenderColor(
-                                noteD.isBreak, isEach, noteD.isMonoHead, Color.FromArgb(40, 196, 255)));
+                                noteD.isBreak, isEach, noteD.isMineHead, Color.FromArgb(40, 196, 255)));
                     }
 
                     if (noteD.noteType == SimaiNoteType.Hold)
                     {
                         var color = WaveNoteRenderColor(
-                            noteD.isBreak, isEach, noteD.isMonoHead, Color.FromArgb(255, 95, 176));
-                        var xRight = x + (float)(noteD.holdTime / step) * linewidth;
+                            noteD.isBreak, isEach, noteD.isMineHead, Color.FromArgb(255, 95, 176));
+                        var xRight = x + viewport.DurationToPixels(noteD.holdTime);
                         if (!float.IsFinite(xRight)) xRight = x;
                         if (xRight - x < 2f) xRight = x + 2f;
                         DrawWaveHold(graphics, x, xRight, y, color);
@@ -1403,29 +1836,30 @@ public partial class MainWindow : Window
 
                     if (noteD.noteType == SimaiNoteType.TouchHold)
                     {
-                        var xDelta = (float)(noteD.holdTime / step) * linewidth / 4f;
+                        var xDelta = viewport.DurationToPixels(noteD.holdTime) / 4f;
                         if (!float.IsFinite(xDelta)) xDelta = 0f;
                         if (xDelta < 1f) xDelta = 1;
-                        Color? specialColor = noteD.isMonoHead
+                        Color? specialColor = noteD.isMineHead
                             ? WaveMineColor
-                            : noteD.isBreak
-                                ? Color.OrangeRed
-                                : null;
-                        DrawWaveTouchHold(graphics, x, y, xDelta, specialColor);
+                            : null;
+                        DrawWaveTouchHold(
+                            graphics, x, y, xDelta, specialColor, noteD.isBreak);
                     }
 
                     if (noteD.noteType == SimaiNoteType.Slide)
                     {
-                        var xSlide = (float)(noteD.slideStartTime / step - startindex) * linewidth;
-                        var xSlideRight = (float)(noteD.slideTime / step) * linewidth + xSlide;
+                        var xSlide = viewport.TimeToX(noteD.slideStartTime);
+                        var xSlideRight = viewport.DurationToPixels(noteD.slideTime) + xSlide;
                         if (!float.IsFinite(xSlideRight) || !float.IsFinite(xSlide))
                             continue;
 
-                        var slideColor = noteD.isSlideMono
+                        var slideColor = noteD.isMineSlide
                             ? WaveMineColor
                             : noteD.isSlideBreak
                             ? Color.OrangeRed
-                            : slideCount >= 2 ? Color.Gold : Color.FromArgb(40, 196, 255);
+                            : MajdataCore.EachRule.TrailsAreEach(slideCount)
+                            ? Color.Gold
+                            : Color.FromArgb(40, 196, 255);
                         if (noteD.isTouchSlide)
                         {
                             if (!noteD.isSlideNoHead)
@@ -1433,7 +1867,7 @@ public partial class MainWindow : Window
                                 var headColor = WaveNoteRenderColor(
                                     noteD.isBreak,
                                     isEach,
-                                    noteD.isMonoHead,
+                                    noteD.isMineHead,
                                     noteD.touchArea == 'K'
                                         ? normalStarColor
                                         : Color.FromArgb(40, 196, 255));
@@ -1452,7 +1886,7 @@ public partial class MainWindow : Window
                         if (!noteD.isSlideNoHead && !noteD.isTouchSlide)
                         {
                             var headColor = WaveNoteRenderColor(
-                                noteD.isBreak, isEach, noteD.isMonoHead, normalStarColor);
+                                noteD.isBreak, isEach, noteD.isMineHead, normalStarColor);
                             DrawWaveStar(graphics, x, y, 4.5f, headColor, angle);
                         }
                         DrawWaveSlide(graphics, xSlide, y, xSlideRight, yEnd, slideColor);
@@ -1466,34 +1900,31 @@ public partial class MainWindow : Window
                 DrawScrollSpawnMarker(
                     graphics,
                     SimaiProcess.notelist[markerIndex],
-                    currentTime,
-                    step,
-                    startindex,
-                    linewidth);
+                    viewport);
 
-            DrawRecordingFlowBackground(graphics, currentTime, deltatime, step, startindex, linewidth, height);
-            DrawTimelineOverlay(graphics, currentTime, deltatime, step, startindex, linewidth, height);
+            DrawRecordingFlowBackground(graphics, viewport, height);
+            DrawTimelineOverlay(graphics, viewport, height);
 
-            if (playStartTime - currentTime <= deltatime)
+            if (viewport.Contains(playStartTime))
             {
                 using var markerPen = new Pen(Color.Red, 3);
-                var x1 = (float)(playStartTime / step - startindex) * linewidth;
+                var x1 = viewport.TimeToX(playStartTime);
                 PointF[] tranglePoints = { new(x1 - 2, 0), new(x1 + 2, 0), new(x1, 3.46f) };
                 graphics.DrawPolygon(markerPen, tranglePoints);
             }
 
-            if (ghostCusorPositionTime - currentTime <= deltatime)
+            if (viewport.Contains(ghostCusorPositionTime))
             {
                 using var ghostPen = new Pen(Color.Orange, 3);
-                var x2 = (float)(ghostCusorPositionTime / step - startindex) * linewidth;
+                var x2 = viewport.TimeToX(ghostCusorPositionTime);
                 PointF[] tranglePoints2 = { new(x2 - 2, 0), new(x2 + 2, 0), new(x2, 3.46f) };
                 graphics.DrawPolygon(ghostPen, tranglePoints2);
             }
 
             DrawMediaTrimMarker(graphics, SimaiProcess.mediaTrimStart, "START", Color.DeepSkyBlue,
-                currentTime, step, startindex, linewidth, height);
+                viewport, height);
             DrawMediaTrimMarker(graphics, SimaiProcess.mediaTrimEnd, "END", Color.Magenta,
-                currentTime, step, startindex, linewidth, height);
+                viewport, height);
 
             graphics.Flush();
             WaveBitmap.AddDirtyRect(new Int32Rect(0, 0, WaveBitmap.PixelWidth, WaveBitmap.PixelHeight));
@@ -1505,21 +1936,55 @@ public partial class MainWindow : Window
         }
     }
 
+    private WaveViewport CreateWaveViewport(double currentTime, int width)
+    {
+        var halfDuration = Math.Max(0.001d, deltatime);
+        var pixelsPerSecond = Math.Max(1d, width) / (halfDuration * 2d);
+        return new WaveViewport(
+            currentTime - halfDuration,
+            currentTime + halfDuration,
+            pixelsPerSecond);
+    }
+
+    private readonly struct WaveViewport
+    {
+        public WaveViewport(
+            double startTime,
+            double endTime,
+            double pixelsPerSecond)
+        {
+            StartTime = startTime;
+            EndTime = endTime;
+            PixelsPerSecond = pixelsPerSecond;
+        }
+
+        public double StartTime { get; }
+        public double EndTime { get; }
+        public double PixelsPerSecond { get; }
+        public double Duration => EndTime - StartTime;
+
+        public bool Contains(double time)
+            => time >= StartTime && time <= EndTime;
+
+        public float TimeToX(double time)
+            => (float)((time - StartTime) * PixelsPerSecond);
+
+        public float DurationToPixels(double duration)
+            => (float)(duration * PixelsPerSecond);
+    }
+
     private void DrawMediaTrimMarker(
         Graphics graphics,
         double? markerTime,
         string label,
         Color color,
-        double currentTime,
-        double step,
-        int startIndex,
-        float lineWidth,
+        WaveViewport viewport,
         int height)
     {
-        if (!markerTime.HasValue || Math.Abs(markerTime.Value - currentTime) > deltatime)
+        if (!markerTime.HasValue || !viewport.Contains(markerTime.Value))
             return;
 
-        var x = (float)(markerTime.Value / step - startIndex) * lineWidth;
+        var x = viewport.TimeToX(markerTime.Value);
         if (x < 0f || x > WaveBitmap!.PixelWidth)
             return;
 
@@ -1600,6 +2065,16 @@ public partial class MainWindow : Window
         isBreak ? Color.OrangeRed : isEach ? Color.Gold : normal;
 
     private static readonly Color WaveMineColor = Color.FromArgb(225, 170, 170, 170);
+
+    // The appearance-time glyph used to borrow the mine grey, which made a scrolled
+    // note's spawn marker and a mine look like the same thing. Green says "this is
+    // where the note comes in".
+    //
+    // The waveform is drawn on near-black, so transparency here reads as darker,
+    // not lighter: a pale colour at low alpha comes out muddy. Staying pale means
+    // staying mostly opaque, and it is the paleness that keeps it from competing
+    // with the notes.
+    private static readonly Color WaveSpawnMarkerColor = Color.FromArgb(235, 168, 246, 200);
 
     private static Color WaveNoteRenderColor(bool isBreak, bool isEach, bool isMine, Color normal) =>
         isMine ? WaveMineColor : WaveNoteColor(isBreak, isEach, normal);
@@ -1710,40 +2185,89 @@ public partial class MainWindow : Window
         float x,
         float y,
         float quarter,
-        Color? specialColor)
+        Color? specialColor,
+        bool isBreak = false)
     {
+        var baseColors = new[]
+        {
+            Color.FromArgb(220, 255, 75, 0), Color.FromArgb(220, 255, 241, 0),
+            Color.FromArgb(220, 2, 165, 89), Color.FromArgb(220, 0, 140, 254)
+        };
         var colors = specialColor.HasValue
             ? new[]
             {
                 specialColor.Value, specialColor.Value, specialColor.Value, specialColor.Value
             }
-            : new[]
+            : isBreak
+                ? baseColors.Select(color => ReplaceHue(color, 14f)).ToArray()
+                : baseColors;
+        var end = x + Math.Max(quarter * 4f, 8f);
+        const float radius = 3.45f;
+        const float tip = 2.8f;
+        var body = new[]
         {
-            Color.FromArgb(220, 255, 75, 0), Color.FromArgb(220, 255, 241, 0),
-            Color.FromArgb(220, 2, 165, 89), Color.FromArgb(220, 0, 140, 254)
+            new PointF(x, y), new PointF(x + tip, y - radius),
+            new PointF(end - tip, y - radius), new PointF(end, y),
+            new PointF(end - tip, y + radius), new PointF(x + tip, y + radius)
         };
-        for (var i = 0; i < colors.Length; i++)
+
+        using (var bodyPath = new GraphicsPath())
         {
-            using var outline = new Pen(DarkWaveColor(colors[i]), 2.7f)
+            bodyPath.AddPolygon(body);
+            var state = graphics.Save();
+            graphics.SetClip(bodyPath);
+            var segmentWidth = (end - x) / 4f;
+            for (var i = 0; i < colors.Length; i++)
             {
-                StartCap = LineCap.Round,
-                EndCap = LineCap.Round
-            };
-            using var body = new Pen(colors[i], 2.25f)
-            {
-                StartCap = LineCap.Round,
-                EndCap = LineCap.Round
-            };
-            var end = x + quarter * (4 - i);
-            graphics.DrawLine(outline, x, y, end, y);
-            graphics.DrawLine(body, x, y, end, y);
+                using var brush = new SolidBrush(colors[i]);
+                graphics.FillRectangle(brush, x + segmentWidth * i, y - radius,
+                    segmentWidth + 1f, radius * 2f);
+            }
+            graphics.Restore(state);
         }
+        using var border = new Pen(Color.FromArgb(145, 12, 12, 16), 0.38f)
+        {
+            LineJoin = LineJoin.Round
+        };
+        graphics.DrawPolygon(border, body);
         DrawWaveDiamond(
             graphics,
             x,
             y,
             3.4f,
-            specialColor ?? Color.FromArgb(40, 196, 255));
+            specialColor ?? (isBreak
+                ? Color.FromArgb(255, 101, 56)
+                : Color.FromArgb(40, 196, 255)));
+    }
+
+    private static Color ReplaceHue(
+        Color color,
+        float hue,
+        float saturationScale = 1f,
+        float lightnessOffset = 0f)
+    {
+        var saturation = Math.Clamp(
+            color.GetSaturation() * saturationScale, 0f, 1f);
+        var brightness = Math.Clamp(
+            color.GetBrightness() + lightnessOffset, 0f, 1f);
+        var chroma = (1f - MathF.Abs(2f * brightness - 1f)) * saturation;
+        var sector = ((hue % 360f) + 360f) % 360f / 60f;
+        var second = chroma * (1f - MathF.Abs(sector % 2f - 1f));
+        var rgb = sector switch
+        {
+            < 1f => (chroma, second, 0f),
+            < 2f => (second, chroma, 0f),
+            < 3f => (0f, chroma, second),
+            < 4f => (0f, second, chroma),
+            < 5f => (second, 0f, chroma),
+            _ => (chroma, 0f, second)
+        };
+        var match = brightness - chroma * 0.5f;
+        return Color.FromArgb(
+            color.A,
+            Math.Clamp((int)MathF.Round((rgb.Item1 + match) * 255f), 0, 255),
+            Math.Clamp((int)MathF.Round((rgb.Item2 + match) * 255f), 0, 255),
+            Math.Clamp((int)MathF.Round((rgb.Item3 + match) * 255f), 0, 255));
     }
 
     private static void DrawWaveSlide(Graphics graphics, float x0, float y0, float x1, float y1, Color color)
@@ -2037,6 +2561,12 @@ public partial class MainWindow : Window
 
     private void HandleVisualEditMessage(VisualEditMessage message)
     {
+        if (!HasLoadedChartDocument())
+        {
+            LogVisualEdit("request skipped: no chart is open");
+            return;
+        }
+
         if (string.Equals(message.action, "undo", StringComparison.OrdinalIgnoreCase))
         {
             if (!isLoading && lastEditorState == EditorControlMethod.Stop)
@@ -2115,7 +2645,9 @@ public partial class MainWindow : Window
             noteStart++;
 
         var current = source.Substring(noteStart, Math.Max(0, slotEnd - noteStart)).Trim();
-        var combined = MergeVisualNote(current, note, message.action, message.slideStart).Trim('/');
+        var combined = VisualNoteEditor
+            .Merge(current, note, message.action, message.slideStart)
+            .Trim('/');
         var hasFollowingComma = slotEnd < source.Length && source[slotEnd] == ',';
         fumenEditor.Select(noteStart, slotEnd - noteStart);
         fumenEditor.ReplaceSelection(combined + (hasFollowingComma ? string.Empty : ","));
@@ -2123,6 +2655,11 @@ public partial class MainWindow : Window
         RestoreEditorFocusAfterVisualInsert();
         SetSavedState(false);
     }
+
+    private bool HasLoadedChartDocument()
+        => selectedDifficulty >= 0 &&
+           !string.IsNullOrWhiteSpace(maidataDir) &&
+           Directory.Exists(maidataDir);
 
     private void RestoreEditorFocusAfterVisualInsert()
     {
@@ -2213,291 +2750,11 @@ public partial class MainWindow : Window
         return result;
     }
 
-    private static string MergeVisualNote(
-        string current,
-        string incoming,
-        string action = "note",
-        int slideStart = 0)
-    {
-        current = current.Trim().Trim('/');
-        incoming = incoming.Trim().TrimStart('/');
-        if (string.IsNullOrWhiteSpace(current))
-            return incoming;
-
-        var notes = current.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
-        if (incoming.Length == 1 && incoming[0] is >= '1' and <= '8')
-        {
-            for (var slideIndex = 0; slideIndex < notes.Count; slideIndex++)
-            {
-                if (!IsVisualSlide(notes[slideIndex]))
-                    continue;
-                if (TrySplitConnectedVisualSlide(notes[slideIndex], incoming[0], out var first, out var second))
-                {
-                    notes[slideIndex] = first;
-                    notes.Insert(slideIndex + 1, second);
-                    return string.Join('/', notes);
-                }
-            }
-
-            if (action == "slideHead")
-            {
-                if (TryCycleDisconnectedVisualSlide(notes, incoming[0]))
-                    return string.Join('/', notes);
-
-                var slideIndex = notes.FindIndex(item =>
-                    IsVisualSlide(item) && item[0] == incoming[0]);
-                if (slideIndex >= 0)
-                {
-                    ToggleVisualSlideHead(notes, slideIndex);
-                    return string.Join('/', notes);
-                }
-            }
-        }
-
-        if (action == "slidePath" && IsVisualTouch(incoming) &&
-            ToggleVisualSlidePath(notes, incoming, slideStart))
-        {
-            return string.Join('/', notes);
-        }
-
-        if (IsVisualSlide(incoming))
-        {
-            var slideIndex = notes.FindIndex(item =>
-                IsVisualSlide(item) && item[0] == incoming[0]);
-            if (slideIndex >= 0)
-            {
-                var incomingBranch = incoming.Substring(1);
-                var incomingPath = SplitVisualSlide(incoming).Path.Substring(1);
-                var branchExists = notes[slideIndex]
-                    .Split('*')
-                    .Skip(1)
-                    .Select(branch => SplitVisualSlide(branch).Path)
-                    .Contains(incomingPath, StringComparer.Ordinal);
-                if (!branchExists)
-                    notes[slideIndex] += "*" + incomingBranch;
-                return string.Join('/', notes);
-            }
-
-            var connectionIndex = notes.FindIndex(item =>
-                IsVisualSlide(item) && GetVisualSlideEnd(item) == incoming[0]);
-            if (connectionIndex >= 0)
-            {
-                notes[connectionIndex] += incoming.Substring(1);
-                return string.Join('/', notes);
-            }
-        }
-
-        var index = notes.FindIndex(item => IsVisualVariantOf(item, incoming));
-        if (index >= 0)
-            notes[index] = NextVisualVariant(notes[index], incoming);
-        else
-            notes.Add(incoming);
-        return string.Join('/', notes);
-    }
-
-    private static void ToggleVisualSlideHead(List<string> notes, int slideIndex)
-    {
-        var slide = notes[slideIndex];
-        if (slide.Length > 1 && slide[1] == 'b')
-            notes[slideIndex] = slide.Remove(1, 1);
-        else
-            notes[slideIndex] = slide.Insert(1, "b");
-    }
-
-    private static bool ToggleVisualSlidePath(
-        List<string> notes,
-        string touch,
-        int slideStart)
-    {
-        var slideIndex = notes.FindIndex(item =>
-            IsVisualSlide(item) && (slideStart == 0 || item[0] - '0' == slideStart));
-        if (slideIndex < 0)
-            return false;
-
-        var touchIndex = notes.FindIndex(item =>
-            string.Equals(item, touch, StringComparison.OrdinalIgnoreCase));
-        var slide = notes[slideIndex];
-        var isBreak = HasVisualSlideBodyBreak(slide);
-
-        if (touchIndex < 0 && !isBreak)
-        {
-            notes[slideIndex] = slide + "b";
-            return true;
-        }
-
-        if (touchIndex < 0)
-        {
-            notes[slideIndex] = slide[..^1];
-            notes.Add(touch);
-            return true;
-        }
-
-        if (!isBreak)
-        {
-            notes[slideIndex] = slide + "b";
-            return true;
-        }
-
-        notes[slideIndex] = slide[..^1];
-        notes.RemoveAt(touchIndex);
-        return true;
-    }
-
-    private static bool HasVisualSlideBodyBreak(string slide)
-    {
-        return slide.Length > 0 && slide[^1] == 'b';
-    }
-
-    private static bool TryCycleDisconnectedVisualSlide(List<string> notes, char key)
-    {
-        var previousIndex = notes.FindIndex(item =>
-            IsVisualSlide(item) && GetVisualSlideEnd(item) == key && item[0] != key);
-        if (previousIndex < 0)
-            return false;
-
-        var nextIndex = notes.FindIndex(item =>
-            IsVisualSlide(item) && item[0] == key);
-        if (nextIndex < 0 || nextIndex == previousIndex)
-            return false;
-
-        var next = notes[nextIndex];
-        if (next.Length > 1 && next[1] == 'b')
-        {
-            next = next.Remove(1, 1);
-            notes[previousIndex] += next[1..];
-            notes.RemoveAt(nextIndex);
-        }
-        else
-        {
-            notes[nextIndex] = next.Insert(1, "b");
-        }
-        return true;
-    }
-
-    private static bool TrySplitConnectedVisualSlide(
-        string token,
-        char key,
-        out string first,
-        out string second)
-    {
-        first = string.Empty;
-        second = string.Empty;
-        if (token.Contains('*'))
-            return false;
-
-        var bracketDepth = 0;
-        for (var index = 1; index < token.Length; index++)
-        {
-            if (token[index] == '[') { bracketDepth++; continue; }
-            if (token[index] == ']') { bracketDepth = Math.Max(0, bracketDepth - 1); continue; }
-            if (bracketDepth != 0 || token[index] != key)
-                continue;
-
-            var nextOperator = index + 1;
-            while (nextOperator < token.Length)
-            {
-                if (token[nextOperator] == '[')
-                {
-                    nextOperator = token.IndexOf(']', nextOperator + 1);
-                    if (nextOperator < 0)
-                        return false;
-                    nextOperator++;
-                    continue;
-                }
-                if (IsVisualSlideOperator(token[nextOperator]))
-                    break;
-                nextOperator++;
-            }
-            if (nextOperator >= token.Length)
-                continue;
-
-            first = token.Substring(0, nextOperator);
-            second = key + token.Substring(nextOperator);
-            return true;
-        }
-        return false;
-    }
-
-    private static char GetVisualSlideEnd(string token)
-    {
-        var bracketDepth = 0;
-        for (var index = token.Length - 1; index >= 0; index--)
-        {
-            if (token[index] == ']') { bracketDepth++; continue; }
-            if (token[index] == '[') { bracketDepth = Math.Max(0, bracketDepth - 1); continue; }
-            if (bracketDepth == 0 && token[index] is >= '1' and <= '8')
-                return token[index];
-        }
-        return '\0';
-    }
-
-    private static bool IsVisualSlideOperator(char value) =>
-        value is '-' or '<' or '>' or '^' or 'v' or 'p' or 'q' or 'r' or 's' or 'z' or 'V' or 'w';
-
-    private static (string Path, string Duration) SplitVisualSlide(string token)
-    {
-        var durationStart = token.LastIndexOf('[');
-        if (durationStart < 0 || !token.EndsWith(']'))
-            return (token, string.Empty);
-        return (token[..durationStart], token[durationStart..]);
-    }
-
-    private static bool IsVisualSlide(string token)
-    {
-        if (token.Length < 3 || token[0] is < '1' or > '8')
-            return false;
-        return token.IndexOfAny(new[] { '-', '<', '>', '^', 'v', 'p', 'q', 's', 'z', 'V', 'w' }, 1) >= 0;
-    }
-
-    private static bool IsVisualVariantOf(string existing, string incoming)
-    {
-        if (existing == incoming)
-            return true;
-        if (IsVisualTouch(incoming))
-            return IsVisualTouchHold(existing, incoming);
-        if (incoming.Length != 1 || incoming[0] is < '1' or > '8')
-            return false;
-        return existing == incoming + "b" ||
-               existing == incoming + "h[8:1]" ||
-               existing == incoming + "hb[8:1]";
-    }
-
-    private static string NextVisualVariant(string existing, string incoming)
-    {
-        if (IsVisualTouch(incoming))
-            return IsVisualTouchHold(existing, incoming) ? incoming : incoming + "h[8:1]";
-        if (incoming.Length != 1 || incoming[0] is < '1' or > '8')
-            return existing;
-        if (existing == incoming)
-            return incoming + "h[8:1]";
-        if (existing == incoming + "h[8:1]")
-            return incoming + "b";
-        if (existing == incoming + "b")
-            return incoming + "hb[8:1]";
-        return incoming;
-    }
-
-    private static bool IsVisualTouch(string token)
-    {
-        if (string.Equals(token, "C", StringComparison.OrdinalIgnoreCase))
-            return true;
-        return token.Length == 2 && token[0] is 'A' or 'B' or 'D' or 'E' && token[1] is >= '1' and <= '8';
-    }
-
-    private static bool IsVisualTouchHold(string existing, string touch)
-    {
-        var prefix = touch + "h[";
-        return existing.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
-               existing.EndsWith(']');
-    }
 
     private void DrawScrollSpawnMarker(
         Graphics graphics,
         SimaiTimingPoint timing,
-        double currentTime,
-        double step,
-        int startIndex,
-        float lineWidth)
+        WaveViewport viewport)
     {
         // Only annotate the timing point under the editor cursor. Rendering every
         // marker would obscure dense charts and make waveform redraws needlessly costly.
@@ -2508,55 +2765,86 @@ public partial class MainWindow : Window
         if (notes.Count == 0)
             return;
 
-        var selected = notes[0];
-        var isEach = notes.Count(note => !note.isSlideNoHead) > 1;
-        var spawnRadius = GetSpawnRadiusAt(timing.time, selected, isEach);
-        var scrollType = ResolveWaveScrollType(selected, isEach);
-        var hSpeed = GetWaveHSpeedAt(timing.time, selected, isEach, timing.HSpeed);
-        var hasScrollModifier = Math.Abs(hSpeed - 1f) > 0.0001f ||
-            HasWaveSvCurve(scrollType) ||
-            Math.Abs(spawnRadius - 1.225f) > 0.0001f;
-        if (!hasScrollModifier)
-            return;
+        var visibleNotes = notes
+            .Where(note => !note.isSlideNoHead)
+            .ToList();
+        var visualIsEach = timing.isEach || visibleNotes.Count > 1;
+        var isEach = timing.isEachInStream ?? visualIsEach;
+        foreach (var selected in visibleNotes)
+        {
+            var spawnRadius = GetSpawnRadiusAt(
+                timing.time, timing.streamIndex, selected, isEach);
+            var destroyRadius = GetDestroyRadiusAt(
+                timing.time, timing.streamIndex, selected, isEach);
+            var scrollType = ResolveWaveScrollType(
+                selected, isEach, timing.streamIndex);
+            var hSpeed = GetWaveHSpeedAt(
+                timing.time, timing.streamIndex, selected, isEach, timing.HSpeed);
+            var bounceDuration = GetWaveBounceDurationAt(
+                timing.time, timing.streamIndex, selected, isEach);
+            var hasScrollModifier = Math.Abs(hSpeed - 1f) > 0.0001f ||
+                HasWaveSvCurve(scrollType) ||
+                Math.Abs(spawnRadius - AlphaVisualTiming.DefaultSpawnRadius) >
+                0.0001f ||
+                Math.Abs(destroyRadius - AlphaVisualTiming.DefaultDestroyRadius) >
+                0.0001f ||
+                bounceDuration > 0.0001f;
+            if (!hasScrollModifier)
+                continue;
 
-        var spawnTime = FindScrollSpawnTime(
-            timing.time, hSpeed, selected.noteType, spawnRadius, scrollType);
-        if (!spawnTime.HasValue || spawnTime.Value < currentTime - deltatime ||
-            spawnTime.Value > currentTime + deltatime)
-            return;
+            var spawnTime = bounceDuration > 0.0001f
+                ? FindBounceSpawnTime(
+                    timing.time, bounceDuration, hSpeed, scrollType)
+                : FindScrollSpawnTime(
+                    timing.time, hSpeed, selected, spawnRadius,
+                    destroyRadius, scrollType);
+            if (!spawnTime.HasValue || !viewport.Contains(spawnTime.Value))
+                continue;
 
-        var x = ((float)(spawnTime.Value / step) - startIndex) * lineWidth;
-        var visualPosition = selected.isDZone ? selected.startPosition - 0.5f : selected.startPosition;
-        var y = visualPosition * 6.875f + 8f;
+            var x = viewport.TimeToX(spawnTime.Value);
+            var visualPosition = selected.isDZone
+                ? selected.startPosition - 0.5f
+                : selected.startPosition;
+            DrawScrollSpawnGlyph(
+                graphics, selected, x, visualPosition * 6.875f + 8f);
+        }
+    }
 
-        switch (selected.noteType)
+    private static void DrawScrollSpawnGlyph(
+        Graphics graphics,
+        SimaiNote note,
+        float x,
+        float y)
+    {
+        switch (note.noteType)
         {
             case SimaiNoteType.Touch:
-                DrawWaveDiamond(graphics, x, y, 3.4f, WaveMineColor);
+                DrawWaveDiamond(graphics, x, y, 3.4f, WaveSpawnMarkerColor);
                 break;
             case SimaiNoteType.Hold:
-                DrawWaveHold(graphics, x - 3f, x + 3f, y, WaveMineColor);
+                DrawWaveHold(graphics, x - 3f, x + 3f, y, WaveSpawnMarkerColor);
                 break;
             case SimaiNoteType.TouchHold:
-                DrawWaveTouchHold(graphics, x, y, 1.5f, WaveMineColor);
+                DrawWaveTouchHold(graphics, x, y, 1.5f, WaveSpawnMarkerColor);
                 break;
             case SimaiNoteType.Slide:
-                if (selected.isTouchSlide && selected.touchArea != 'K')
-                    DrawWaveDiamond(graphics, x, y, 3.4f, WaveMineColor);
+                if (note.isTouchSlide && note.touchArea != 'K')
+                    DrawWaveDiamond(graphics, x, y, 3.4f, WaveSpawnMarkerColor);
                 else
-                    DrawWaveStar(graphics, x, y, 4.5f, WaveMineColor, 0f);
+                    DrawWaveStar(graphics, x, y, 4.5f, WaveSpawnMarkerColor, 0f);
                 break;
             default:
-                if (selected.isForceStar)
-                    DrawWaveStar(graphics, x, y, 4.5f, WaveMineColor, 0f);
+                if (note.isForceStar)
+                    DrawWaveStar(graphics, x, y, 4.5f, WaveSpawnMarkerColor, 0f);
                 else
-                    DrawWaveRing(graphics, x, y, 3f, WaveMineColor);
+                    DrawWaveRing(graphics, x, y, 3f, WaveSpawnMarkerColor);
                 break;
         }
     }
 
     private static float GetSpawnRadiusAt(
         double time,
+        int streamIndex,
         SimaiNote note,
         bool isEach)
     {
@@ -2564,25 +2852,33 @@ public partial class MainWindow : Window
         {
             return SimaiProcess.spawnTable
                 .Where(item => string.Equals(item.noteType, noteType,
-                    StringComparison.OrdinalIgnoreCase) && item.time <= time)
+                    StringComparison.OrdinalIgnoreCase) && item.streamIndex == streamIndex &&
+                    item.time <= time)
                 .OrderBy(item => item.time)
+                .ThenBy(item => item.sourcePosition)
                 .LastOrDefault();
         }
 
         float Resolve(SpawnChange? change) =>
             change == null || change.reset ? 1.225f : change.radius;
 
+        if (note.isMineHead)
+        {
+            var special = Lookup("mine");
+            if (special != null && !special.reset)
+                return special.radius;
+        }
         if (note.isBreak)
         {
             var special = Lookup("break");
-            if (special != null)
-                return special.reset ? Resolve(Lookup(null)) : special.radius;
+            if (special != null && !special.reset)
+                return special.radius;
         }
         if (isEach)
         {
             var special = Lookup("each");
-            if (special != null)
-                return special.reset ? Resolve(Lookup(null)) : special.radius;
+            if (special != null && !special.reset)
+                return special.radius;
         }
 
         var baseType = note.noteType switch
@@ -2601,6 +2897,44 @@ public partial class MainWindow : Window
         return Resolve(Lookup(null));
     }
 
+    private static float GetDestroyRadiusAt(
+        double time,
+        int streamIndex,
+        SimaiNote note,
+        bool isEach)
+    {
+        var baseType = WaveBaseNoteType(note);
+        if (baseType is not ("tap" or "hold" or "star"))
+            return AlphaVisualTiming.DefaultDestroyRadius;
+
+        DestroyChange? Lookup(string? noteType) =>
+            SimaiProcess.destroyTable
+                .Where(item => item.streamIndex == streamIndex &&
+                               item.time <= time &&
+                               string.Equals(item.noteType, noteType,
+                                   StringComparison.OrdinalIgnoreCase))
+                .OrderBy(item => item.time)
+                .ThenBy(item => item.sourcePosition)
+                .LastOrDefault();
+
+        float Resolve(DestroyChange? change) =>
+            change == null || change.reset
+                ? AlphaVisualTiming.DefaultDestroyRadius
+                : change.radius;
+
+        var global = Resolve(Lookup(null));
+        if (note.isMineHead && Lookup("mine") is { reset: false } mineChange)
+            return mineChange.radius;
+        if (note.isBreak && Lookup("break") is { reset: false } breakChange)
+            return breakChange.radius;
+        if (isEach && Lookup("each") is { reset: false } eachChange)
+            return eachChange.radius;
+
+        if (Lookup(baseType) is { } typed)
+            return typed.reset ? global : typed.radius;
+        return global;
+    }
+
     private static string WaveBaseNoteType(SimaiNote note)
     {
         return note.noteType switch
@@ -2614,55 +2948,103 @@ public partial class MainWindow : Window
         };
     }
 
-    private static string ResolveWaveScrollType(SimaiNote note, bool isEach)
+    private static string ResolveWaveScrollType(SimaiNote note, bool isEach, int streamIndex)
     {
         bool HasType(string type) => SimaiProcess.svTable.Any(point =>
+            point.streamIndex == streamIndex &&
             string.Equals(point.noteType, type, StringComparison.OrdinalIgnoreCase));
 
+        if (note.isMineHead && HasType("mine"))
+            return streamIndex + "|mine";
         if (note.isBreak && HasType("break"))
-            return "break";
+            return streamIndex + "|break";
         if (isEach && HasType("each"))
-            return "each";
-        return WaveBaseNoteType(note);
+            return streamIndex + "|each";
+        return streamIndex + "|" + WaveBaseNoteType(note);
     }
 
     private static bool HasWaveSvCurve(string noteType)
     {
+        var parts = noteType.Split('|', 2);
+        var streamIndex = parts.Length == 2 && int.TryParse(parts[0], out var parsed) ? parsed : 0;
+        var type = parts.Length == 2 ? parts[1] : noteType;
         return SimaiProcess.svTable.Any(point =>
-            string.IsNullOrWhiteSpace(point.noteType) ||
-            string.Equals(point.noteType, noteType, StringComparison.OrdinalIgnoreCase));
+            point.streamIndex == streamIndex &&
+            (string.IsNullOrWhiteSpace(point.noteType) ||
+             string.Equals(point.noteType, type, StringComparison.OrdinalIgnoreCase)));
     }
 
     private static float GetWaveHSpeedAt(
         double time,
+        int streamIndex,
         SimaiNote note,
         bool isEach,
         float fallback)
     {
         var baseType = WaveBaseNoteType(note);
-        string ResolveType()
-        {
-            bool HasType(string type) => SimaiProcess.hsTable.Any(point =>
-                string.Equals(point.noteType, type, StringComparison.OrdinalIgnoreCase));
-            if (note.isBreak && HasType("break"))
-                return "break";
-            if (isEach && HasType("each"))
-                return "each";
-            return baseType;
-        }
+        SpeedChange? Lookup(string? type) =>
+            SimaiProcess.hsTable
+                .Where(point => point.streamIndex == streamIndex &&
+                                point.time <= time &&
+                                string.Equals(point.noteType, type,
+                                    StringComparison.OrdinalIgnoreCase))
+                .OrderBy(point => point.time)
+                .ThenBy(point => point.sourcePosition)
+                .LastOrDefault();
 
-        var resolvedType = ResolveType();
-        return SimaiProcess.hsTable
-            .Where(point => string.Equals(point.noteType, resolvedType,
-                StringComparison.OrdinalIgnoreCase) && point.time <= time)
-            .OrderBy(point => point.time)
-            .Select(point => (float?)point.multiplier)
-            .LastOrDefault() ?? fallback;
+        var globalChange = Lookup(null);
+        var global = globalChange == null
+            ? fallback
+            : globalChange.reset ? 1f : globalChange.multiplier;
+        float Resolve(SpeedChange change) =>
+            change.reset ? global : change.multiplier;
+
+        if (note.isMineHead && Lookup("mine") is { } mineChange)
+            return Resolve(mineChange);
+        if (note.isBreak && Lookup("break") is { } breakChange)
+            return Resolve(breakChange);
+        if (isEach && Lookup("each") is { } eachChange)
+            return Resolve(eachChange);
+        if (!string.IsNullOrWhiteSpace(baseType) &&
+            Lookup(baseType) is { } typedChange)
+            return Resolve(typedChange);
+        return global;
     }
 
-    private static List<(double Time, float Multiplier)> BuildWaveSvCurve(string noteType)
+    private static float GetWaveBounceDurationAt(
+        double time,
+        int streamIndex,
+        SimaiNote note,
+        bool isEach)
     {
-        var ordered = SimaiProcess.svTable.OrderBy(point => point.time).ToList();
+        BounceChange? Lookup(string? type) => SimaiProcess.bounceTable
+            .Where(item => item.streamIndex == streamIndex && item.time <= time &&
+                           string.Equals(item.noteType, type, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(item => item.time)
+            .ThenBy(item => item.sourcePosition)
+            .LastOrDefault();
+
+        float? Value(BounceChange? change) =>
+            change == null || change.reset ? null : Math.Max(0f, change.duration);
+        if (note.isMineHead && Value(Lookup("mine")) is { } mineValue)
+            return mineValue;
+        if (note.isBreak && Value(Lookup("break")) is { } breakValue)
+            return breakValue;
+        if (isEach && Value(Lookup("each")) is { } eachValue)
+            return eachValue;
+        return Value(Lookup(WaveBaseNoteType(note))) ?? Value(Lookup(null)) ?? 0f;
+    }
+
+    private static ScrollPoint[] BuildWaveSvCurve(string noteType)
+    {
+        var parts = noteType.Split('|', 2);
+        var streamIndex = parts.Length == 2 && int.TryParse(parts[0], out var parsed) ? parsed : 0;
+        var type = parts.Length == 2 ? parts[1] : noteType;
+        var ordered = SimaiProcess.svTable
+            .Where(point => point.streamIndex == streamIndex)
+            .OrderBy(point => point.time)
+            .ThenBy(point => point.sourcePosition)
+            .ToList();
         var globalAtZero = 1f;
         foreach (var point in ordered)
         {
@@ -2673,13 +3055,13 @@ public partial class MainWindow : Window
         }
 
         float? typeOverride = null;
-        if (!string.IsNullOrWhiteSpace(noteType))
+        if (!string.IsNullOrWhiteSpace(type))
         {
             foreach (var point in ordered)
             {
                 if (point.time > 0d)
                     break;
-                if (string.Equals(point.noteType, noteType, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(point.noteType, type, StringComparison.OrdinalIgnoreCase))
                     typeOverride = point.reset ? null : point.multiplier;
             }
         }
@@ -2690,7 +3072,7 @@ public partial class MainWindow : Window
         {
             if (point.time <= 0d ||
                 (!string.IsNullOrWhiteSpace(point.noteType) &&
-                 !string.Equals(point.noteType, noteType, StringComparison.OrdinalIgnoreCase)))
+                 !string.Equals(point.noteType, type, StringComparison.OrdinalIgnoreCase)))
                 continue;
 
             if (string.IsNullOrWhiteSpace(point.noteType))
@@ -2710,115 +3092,95 @@ public partial class MainWindow : Window
             else
                 curve.Add((point.time, effective));
         }
-        return curve;
-    }
-
-    private static double WaveCumulativeAt(
-        IReadOnlyList<(double Time, float Multiplier)> curve,
-        double time)
-    {
-        var cumulative = 0d;
-        if (time <= 0d)
-            return curve[0].Multiplier * time;
-
-        for (var index = 0; index < curve.Count; index++)
-        {
-            var start = curve[index].Time;
-            if (start >= time)
-                break;
-            var end = index + 1 < curve.Count
-                ? Math.Min(time, curve[index + 1].Time)
-                : time;
-            if (end > start)
-                cumulative += curve[index].Multiplier * (end - start);
-            if (end >= time)
-                break;
-        }
-        return cumulative;
+        return AlphaVisualTiming.BuildScrollCurve(
+            curve.Select((point, index) =>
+                new ScrollChange(point.Time, point.Multiplier, index)));
     }
 
     private double? FindScrollSpawnTime(
         double noteTime,
         float hSpeed,
-        SimaiNoteType type,
+        SimaiNote note,
         float spawnRadius,
+        float destroyRadius,
         string scrollType)
     {
-        if (editorSetting == null || hSpeed <= 0f)
+        if (editorSetting == null)
             return null;
 
-        var maiSpeed = type is SimaiNoteType.Touch or SimaiNoteType.TouchHold
-            ? editorSetting.touchSpeed
-            : editorSetting.playSpeed;
-        var speed = (float)(107.25 / (71.4184491 * Math.Pow(maiSpeed + 0.9975f, -0.985558604))) * hSpeed;
-        if (speed <= 0f || !float.IsFinite(speed))
+        var isTouch = note.noteType is SimaiNoteType.Touch or SimaiNoteType.TouchHold ||
+                      note.noteType == SimaiNoteType.Slide &&
+                      note.isTouchSlide && note.touchArea != 'K';
+        var speed = isTouch
+            ? editorSetting.touchSpeed * hSpeed
+            : AlphaVisualTiming.ToViewNoteSpeed(editorSetting.playSpeed) * hSpeed;
+        if (!float.IsFinite(speed))
             return null;
 
         var curve = BuildWaveSvCurve(scrollType);
-        var firstVisibleScroll = WaveCumulativeAt(curve, noteTime) -
-            (7.3d - spawnRadius) / speed;
+        var noteScroll = AlphaVisualTiming.GetCumulativeScroll(curve, noteTime);
+        var searchStart = Math.Min(0d, noteTime);
+        var result = isTouch
+            ? AlphaVisualTiming.FindFirstTouchVisibleTime(
+                curve, searchStart, noteTime, noteScroll, speed)
+            : AlphaVisualTiming.FindFirstVisibleTime(
+                curve, searchStart, noteTime, noteScroll, speed,
+                spawnRadius, destroyRadius);
+        return double.IsNaN(result) ? null : result;
+    }
 
-        if (noteTime <= 0d)
-            return curve[0].Multiplier > 0f
-                ? firstVisibleScroll / curve[0].Multiplier
-                : null;
-
-        if (firstVisibleScroll <= 0d && curve[0].Multiplier > 0f)
-            return firstVisibleScroll / curve[0].Multiplier;
-
-        var cumulative = 0d;
-        for (var index = 0; index < curve.Count; index++)
-        {
-            var start = curve[index].Time;
-            if (start > noteTime)
-                break;
-            var end = index + 1 < curve.Count
-                ? Math.Min(noteTime, curve[index + 1].Time)
-                : noteTime;
-            var multiplier = curve[index].Multiplier;
-            var endCumulative = cumulative + multiplier * Math.Max(0d, end - start);
-            if (multiplier > 0f && cumulative < firstVisibleScroll &&
-                endCumulative >= firstVisibleScroll)
-                return start + (firstVisibleScroll - cumulative) / multiplier;
-            if (cumulative >= firstVisibleScroll)
-                return start;
-            cumulative = endCumulative;
-            if (end >= noteTime)
-                break;
-        }
-        return cumulative >= firstVisibleScroll ? noteTime : null;
+    private static double? FindBounceSpawnTime(
+        double judgeTime,
+        float duration,
+        float hSpeed,
+        string scrollType)
+    {
+        if (duration <= 0f || Math.Abs(hSpeed) <= 0.000001f)
+            return judgeTime;
+        var curve = BuildWaveSvCurve(scrollType);
+        var latestDirection = curve
+            .Where(point => point.Time <= judgeTime && Math.Abs(point.Multiplier) > 0.000001f)
+            .Select(point => Math.Sign(point.Multiplier * hSpeed))
+            .LastOrDefault();
+        if (latestDirection == 0)
+            latestDirection = 1;
+        var judgeScroll = AlphaVisualTiming.GetCumulativeScroll(curve, judgeTime);
+        var target = judgeScroll - duration / (hSpeed * latestDirection);
+        var result = AlphaVisualTiming.FindFirstTimeAtCumulativeScroll(
+            curve,
+            curve.Length > 0 ? curve[0].Time : 0d,
+            judgeTime,
+            target,
+            hSpeed * latestDirection > 0f);
+        return double.IsNaN(result) ? judgeTime : result;
     }
 
     private void DrawTimelineOverlay(
         Graphics graphics,
-        double currentTime,
-        double visibleRange,
-        double step,
-        int startIndex,
-        float lineWidth,
+        WaveViewport viewport,
         int height)
     {
-        if (step <= 0d || lineWidth <= 0f)
+        if (viewport.PixelsPerSecond <= 0d)
             return;
 
         RefreshTimelineOverlayCache();
         using var labelFont = new Font("Cascadia Mono", 6.5f, System.Drawing.FontStyle.Regular);
         foreach (var item in timelineOverlayCache)
         {
-            if (item.Time > currentTime + visibleRange)
+            if (item.Time > viewport.EndTime)
                 continue;
 
-            var x = (float)(item.Time / step - startIndex) * lineWidth;
+            var x = viewport.TimeToX(item.Time);
             var drawDuration = double.IsPositiveInfinity(item.Duration)
-                ? Math.Max(visibleRange * 2d, currentTime + visibleRange - item.Time)
+                ? Math.Max(viewport.Duration, viewport.EndTime - item.Time)
                 : Math.Max(0d, item.Duration);
-            var durationWidth = (float)(drawDuration / step) * lineWidth;
+            var durationWidth = viewport.DurationToPixels(drawDuration);
             var label = TrimTimelineLabel(item.Label);
             var textWidth = graphics.MeasureString(label, labelFont).Width + 5f;
             var width = drawDuration > 0.0001d ? Math.Max(2f, durationWidth) : 7f;
             var cullWidth = Math.Max(width, textWidth);
-            var visualEndTime = item.Time + cullWidth / lineWidth * step;
-            if (visualEndTime < currentTime - visibleRange)
+            var visualEndTime = item.Time + cullWidth / viewport.PixelsPerSecond;
+            if (visualEndTime < viewport.StartTime)
                 continue;
             var y = item.Lane * 13f;
             var rectangle = new RectangleF(x, y, width, 12f);
@@ -2903,8 +3265,13 @@ public partial class MainWindow : Window
 
     private static string FormatEffectOverlayLabel(EffectChange item)
     {
+        var displayIntensity = item.effect == "Zoom"
+            ? item.intensity + 1f
+            : item.intensity;
         if (!item.stateful)
-            return $"{item.effect} {item.intensity:0.##}";
+            return item.attack == 0f && item.release == 0f && item.holdTime > 0f
+                ? $"{item.effect} Instant {displayIntensity:0.##}"
+                : $"{item.effect} {displayIntensity:0.##}";
         if (!item.enabled)
             return $"{item.effect} False";
         return item.effect switch
@@ -2914,7 +3281,7 @@ public partial class MainWindow : Window
             "Shake" when item.hasDirection =>
                 $"Shake True {item.intensity:0.##}@{item.paramA:0.##}Hz ∠{item.paramB * 180f / MathF.PI:0.#}°",
             "Shake" => $"Shake True {item.intensity:0.##}@{item.paramA:0.##}Hz",
-            _ => $"{item.effect} True {item.intensity:0.##}"
+            _ => $"{item.effect} True {displayIntensity:0.##}"
         };
     }
 
@@ -2945,24 +3312,20 @@ public partial class MainWindow : Window
 
     private void DrawRecordingFlowBackground(
         Graphics graphics,
-        double currentTime,
-        double visibleRange,
-        double step,
-        int startIndex,
-        float lineWidth,
+        WaveViewport viewport,
         int height)
     {
         if (editorSetting?.ShowSongDetail == true)
         {
             DrawFlowBackground(graphics, -RecordingIntroDuration, -1d, GetLocalizedString("RecordingLoadLabel"),
-                Color.FromArgb(85, 160, 245), currentTime, visibleRange, step, startIndex, lineWidth, height);
+                Color.FromArgb(85, 160, 245), viewport, height);
             DrawFlowBackground(graphics, -1d, 0d, GetLocalizedString("TransitionLabel"),
-                Color.FromArgb(70, 210, 175), currentTime, visibleRange, step, startIndex, lineWidth, height);
+                Color.FromArgb(70, 210, 175), viewport, height);
         }
         var allPerfectStart = GetAllPerfectStartTime();
         if (editorSetting?.ShowAllPerfect == true && allPerfectStart >= 0d)
             DrawFlowBackground(graphics, allPerfectStart, allPerfectStart + AllPerfectDuration, "ALL PERFECT",
-                Color.FromArgb(235, 95, 190), currentTime, visibleRange, step, startIndex, lineWidth, height);
+                Color.FromArgb(235, 95, 190), viewport, height);
     }
 
     private static void DrawFlowBackground(
@@ -2971,18 +3334,14 @@ public partial class MainWindow : Window
         double end,
         string label,
         Color color,
-        double currentTime,
-        double visibleRange,
-        double step,
-        int startIndex,
-        float lineWidth,
+        WaveViewport viewport,
         int height)
     {
-        if (start > currentTime + visibleRange || end < currentTime - visibleRange)
+        if (start > viewport.EndTime || end < viewport.StartTime)
             return;
 
-        var x = (float)(start / step - startIndex) * lineWidth;
-        var width = Math.Max(4f, (float)((end - start) / step) * lineWidth);
+        var x = viewport.TimeToX(start);
+        var width = Math.Max(4f, viewport.DurationToPixels(end - start));
         var rectangle = new RectangleF(x, 0f, width, height);
         using var gradient = new LinearGradientBrush(
             rectangle,
@@ -3034,19 +3393,24 @@ public partial class MainWindow : Window
         });
     }
 
-    private void ScrollWave(double delta)
+    private void ScrollWave(double delta, bool syncCaret = false)
     {
         CancelNotePreview();
-        if (isPlaying || ((lastEditorState == EditorControlMethod.Pause || pausePending) &&
-                          (pendingScrubStop == null || pendingScrubStop.IsCompleted)))
-            StopPlaybackForScrub();
-        delta = delta * deltatime / (Width / 2d);
+        if (isPlaying)
+            TogglePause();
         var time = GetTimelinePosition();
+        var width = WaveBitmap?.PixelWidth ??
+                    Math.Max(1, (int)Math.Round(MusicWave.ActualWidth));
+        var viewport = CreateWaveViewport(time, width);
+        delta /= viewport.PixelsPerSecond;
         SetTimelinePosition(time + delta);
         SimaiProcess.ClearNoteListPlayedState();
-        if (GetTimelinePosition() >= 0d && GetTimelinePosition() <= songLength)
+        if (syncCaret &&
+            GetTimelinePosition() >= 0d &&
+            GetTimelinePosition() <= songLength)
             SeekTextFromTime();
         DrawWave();
+        QueueNotePreview();
     }
 
     private bool TryGetMediaTrimRange(out MediaRange range)
@@ -3184,27 +3548,31 @@ public partial class MainWindow : Window
         Bass.BASS_ChannelSetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, volume);
         Bass.BASS_ChannelSetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_TEMPO, tempo);
         loadedTrackPath = audioPath;
+        // Waveform decoding is synchronous and can take several frames. Restore
+        // the channel before it starts so the UI never observes the replacement
+        // stream at its default zero position.
+        Bass.BASS_ChannelSetPosition(bgmStream, Math.Max(0d, position));
         ReadWaveFromFile();
         cachedWaveTimingList = null;
         cachedWaveMeterList = null;
         cachedWaveSongEnd = double.NaN;
-        flowTimelineCursor = null;
         flowPreviewActive = false;
         Bass.BASS_ChannelSetPosition(bgmStream, Math.Clamp(position, 0d, songLength));
+        flowTimelineCursor = null;
         DrawWave();
     }
 
     private void StopPlaybackForScrub()
     {
-        // Capture both tasks before publishing the new stop. Reading pendingPlaySend
-        // inside the worker creates a cycle when a new Play replaces it first:
-        // Stop waits for Play while Play waits for Stop.
+        // Capture predecessors before publishing the new barrier. This prevents a
+        // cycle where Stop waits for a newer Play while that Play waits for Stop.
         var previousStop = pendingScrubStop;
         var playToDrain = pendingPlaySend;
         var previewToDrain = pendingNotePreviewSend;
 
         viewControlGeneration++;
         pausePending = false;
+        stopPending = true;
         flowPreviewActive = false;
         flowPreviewGeneration++;
         Op_Button.IsEnabled = true;
@@ -3222,9 +3590,8 @@ public partial class MainWindow : Window
         waveStopMonitorTimer.Stop();
         visualEffectRefreshTimer.Stop();
 
-        // Every scrub queues a barrier. Do not return early when an older barrier is
-        // active: a Play may already be queued behind it and must be stopped again.
-        pendingScrubStop = Task.Run(() => SendScrubStop(previousStop, playToDrain, previewToDrain));
+        pendingScrubStop = Task.Run(() =>
+            SendScrubStop(previousStop, playToDrain, previewToDrain));
     }
 
     private double GetTimelinePosition()
@@ -3290,12 +3657,20 @@ public partial class MainWindow : Window
     private void TogglePlay(PlayMethod playMethod = PlayMethod.Normal)
     {
         if (Op_Button.IsEnabled == false) return;
+        var previewToDrain = pendingNotePreviewSend;
+        // An in-flight TimelinePreview may already have reached View even though
+        // the UI-side completion callback has not published the active flag yet.
+        // Treat it as a preview resume and send a fresh Start after draining it.
+        var resumeFromTimelinePreview =
+            pausedTimelinePreviewActive ||
+            pausedTimelinePreviewRequested ||
+            previewToDrain is { IsCompleted: false };
         CancelNotePreview();
         EnsureTimelineAudioReady();
-        var previewToDrain = pendingNotePreviewSend;
         var scrubStopToDrain = pendingScrubStop;
-            viewControlGeneration++;
+        viewControlGeneration++;
         pausePending = false;
+        stopPending = false;
         // Ignore a delayed BGM callback after a newer transport action.
         var playGeneration = viewControlGeneration;
 
@@ -3348,7 +3723,10 @@ public partial class MainWindow : Window
                 }
 
                 startAt = DateTime.Now.AddSeconds(recordingIntroDuration);
-                if (!sendRequestRun(startAt, playMethod))
+                if (!sendRequestRun(
+                        startAt,
+                        playMethod,
+                        controlGeneration: playGeneration))
                 {
                     RestoreFailedPlaybackStart(playGeneration);
                     return;
@@ -3362,7 +3740,11 @@ public partial class MainWindow : Window
                 startAt = DateTime.Now.AddSeconds(5d);
                 Bass.BASS_ChannelPlay(trackStartStream, true);
                 var opStartAt = startAt;
-                var opSend = Task.Run(() => sendRequestRun(opStartAt, playMethod));
+                var opSend = Task.Run(() =>
+                    sendRequestRun(
+                        opStartAt,
+                        playMethod,
+                        controlGeneration: playGeneration));
                 pendingPlaySend = opSend;
                 Task.Run(() =>
                 {
@@ -3409,10 +3791,27 @@ public partial class MainWindow : Window
                 if (lastEditorState == EditorControlMethod.Pause &&
                     (pendingScrubStop == null || pendingScrubStop.IsCompleted))
                 {
-                    SimaiProcess.ClearNoteListPlayedState();
-                    startAt = DateTime.Now;
+                    startAt = resumeFromTimelinePreview
+                        ? DateTime.Now.Add(ViewClockLeadTime)
+                        : DateTime.Now;
                     var continueAt = startAt;
-                    var continueSend = Task.Run(() => sendRequestContinue(continueAt));
+                    var resumePreview = resumeFromTimelinePreview;
+                    var previewDrain = previewToDrain;
+                    var continueSend = Task.Run(async () =>
+                    {
+                        // A TimelinePreview still in flight would land after this
+                        // Continue and put View back into preview mode, so let it
+                        // finish before resuming.
+                        if (previewDrain != null)
+                        {
+                            try { await previewDrain; }
+                            catch { }
+                        }
+                        return sendRequestContinue(
+                            continueAt,
+                            controlGeneration: playGeneration,
+                            resumeFromTimelinePreview: resumePreview);
+                    });
                     pendingPlaySend = continueSend;
                     Task.Run(() =>
                     {
@@ -3426,6 +3825,7 @@ public partial class MainWindow : Window
                         Dispatcher.Invoke(() =>
                         {
                             if (!isPlaying || playGeneration != viewControlGeneration) return;
+                            SimaiProcess.ClearNoteListPlayedState();
                             StartSELoop();
                             waveStopMonitorTimer.Start();
                             visualEffectRefreshTimer.Start();
@@ -3443,7 +3843,11 @@ public partial class MainWindow : Window
                     var runSend = Task.Run(async () =>
                     {
                         var actualStart = await SendRunAfterScrubStop(
-                            playMethod, (float)bgmStartPos, previewToDrain, scrubStopToDrain);
+                            playMethod,
+                            (float)bgmStartPos,
+                            previewToDrain,
+                            scrubStopToDrain,
+                            playGeneration);
                         if (!actualStart.HasValue)
                             return false;
 
@@ -3746,11 +4150,42 @@ public partial class MainWindow : Window
         SchedulePreBakeSongDetail();
     }
 
+    internal void ApplyRecordUtageInfo(string label, bool coop)
+    {
+        label = string.IsNullOrWhiteSpace(label) ? "\u5bb4" : label.Trim();
+        if (editorSetting == null)
+            ReadEditorSetting();
+        if (editorSetting == null ||
+            string.Equals(editorSetting.RecordUtageLabel, label, StringComparison.Ordinal) &&
+            editorSetting.RecordUtageCoop == coop)
+            return;
+
+        editorSetting.RecordUtageLabel = label;
+        editorSetting.RecordUtageCoop = coop;
+        SaveEditorSetting();
+    }
+
+    internal (string label, bool coop) GetRecordUtageDefaults()
+    {
+        if (editorSetting == null)
+            ReadEditorSetting();
+        return (
+            string.IsNullOrWhiteSpace(editorSetting?.RecordUtageLabel)
+                ? "\u5bb4"
+                : editorSetting.RecordUtageLabel.Trim(),
+            editorSetting?.RecordUtageCoop == true);
+    }
+
     private void TogglePause()
     {
         CancelNotePreview();
         var generation = ++viewControlGeneration;
         pausePending = true;
+        stopPending = false;
+        pausedTimelinePreviewActive = false;
+        pausedTimelinePreviewNeedsReload = false;
+        pausedTimelinePreviewRequested = false;
+        pausedTimelinePreviewTime = double.NaN;
         if (flowPreviewActive)
         {
             var pausedFlowTime = GetTimelinePosition();
@@ -3794,7 +4229,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                pending.Wait(3000);
+                pending.GetAwaiter().GetResult();
             }
             catch
             {
@@ -3808,11 +4243,46 @@ public partial class MainWindow : Window
         });
     }
 
+    private void SendStopOrdered(int generation)
+    {
+        var play = pendingPlaySend;
+        var preview = pendingNotePreviewSend;
+        if ((play == null || play.IsCompleted) &&
+            (preview == null || preview.IsCompleted))
+        {
+            sendRequestStop();
+            return;
+        }
+
+        Task.Run(() =>
+        {
+            try
+            {
+                play?.GetAwaiter().GetResult();
+                preview?.GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // Stop is the final barrier and must still be delivered.
+            }
+            Dispatcher.Invoke(() =>
+            {
+                if (generation == viewControlGeneration)
+                    sendRequestStop();
+            });
+        });
+    }
+
     private void ToggleStop()
     {
         CancelNotePreview();
         var generation = ++viewControlGeneration;
         pausePending = false;
+        stopPending = true;
+        pausedTimelinePreviewActive = false;
+        pausedTimelinePreviewNeedsReload = false;
+        pausedTimelinePreviewRequested = false;
+        pausedTimelinePreviewTime = double.NaN;
         flowPreviewActive = false;
         flowPreviewGeneration++;
         Op_Button.IsEnabled = true;
@@ -3831,7 +4301,7 @@ public partial class MainWindow : Window
         //soundEffectTimer.Stop();
         waveStopMonitorTimer.Stop();
         visualEffectRefreshTimer.Stop();
-        SendControlOrdered(generation, sendRequestStop);
+        SendStopOrdered(generation);
         SetTimelinePosition(playStartTime);
         DrawWave();
     }
@@ -3852,7 +4322,14 @@ public partial class MainWindow : Window
         generateSoundEffectList(Math.Max(0d, startTime), true);
 
         var requestPlayMethod = startTime < 0d ? PlayMethod.Op : PlayMethod.Normal;
-        var flowSend = Task.Run(() => sendRequestRun(DateTime.Now, requestPlayMethod, viewStartTime, true));
+        var flowControlGeneration = viewControlGeneration;
+        var flowSend = Task.Run(() =>
+            sendRequestRun(
+                DateTime.Now,
+                requestPlayMethod,
+                viewStartTime,
+                previewFlow: true,
+                controlGeneration: flowControlGeneration));
         pendingPlaySend = flowSend;
         Task.Run(async () =>
         {
@@ -3954,7 +4431,7 @@ public partial class MainWindow : Window
         }
         if (lastEditorState != EditorControlMethod.Pause &&
             editorSetting!.SyntaxCheckLevel == 2 &&
-            SyntaxChecker.GetErrorCount() != 0)
+            latestParseErrors.Count != 0)
         {
             ShowErrorWindow();
             return;
@@ -3964,7 +4441,7 @@ public partial class MainWindow : Window
 
     private void TogglePlayAndStop(PlayMethod playMethod = PlayMethod.Normal)
     {
-        if (editorSetting!.SyntaxCheckLevel == 2 && SyntaxChecker.GetErrorCount() != 0)
+        if (editorSetting!.SyntaxCheckLevel == 2 && latestParseErrors.Count != 0)
         {
             ShowErrorWindow();
             return;
@@ -3973,6 +4450,14 @@ public partial class MainWindow : Window
             ToggleStop();
         else
             TogglePlay(playMethod);
+    }
+
+    private void JumpToIntroAndPlay()
+    {
+        if (isPlaying)
+            ToggleStop();
+        SetTimelinePosition(GetTimelineMinimum());
+        TogglePlayAndPause();
     }
 
     private void SetPlaybackSpeed(float speed)
@@ -3993,15 +4478,27 @@ public partial class MainWindow : Window
         flowTimelineCursor = null;
         flowPreviewActive = false;
         flowPreviewGeneration++;
-        // Seeking while paused invalidates View judge queues and requires an ordered stop.
-        if ((lastEditorState == EditorControlMethod.Pause || pausePending) &&
-            (pendingScrubStop == null || pendingScrubStop.IsCompleted))
-            StopPlaybackForScrub();
         Bass.BASS_ChannelSetPosition(bgmStream, time);
+        if (!stopPending &&
+            (lastEditorState == EditorControlMethod.Pause || pausePending))
+            QueueNotePreview();
     }
 
 
     //*VIEW COMMUNICATION
+    /// <summary>
+    /// A request that fails while the editor is closing is our own doing: the
+    /// timers are torn down first, so a tick already queued on the dispatcher
+    /// dials a port we have decided to stop using. That is not a fault the user
+    /// can act on, and a modal box on the way out cannot be dismissed usefully.
+    /// </summary>
+    private void ReportViewUnreachable()
+    {
+        if (WebControl.IsShuttingDown)
+            return;
+        MessageBox.Show(WebControl.LastError ?? GetLocalizedString("PortClear"));
+    }
+
     private bool sendRequestStop()
     {
         var requestStop = new EditRequestjson
@@ -4012,11 +4509,21 @@ public partial class MainWindow : Window
         var response = WebControl.RequestPOST("http://localhost:8013/", json);
         if (response == "ERROR")
         {
-            MessageBox.Show(GetLocalizedString("PortClear"));
+            pausePending = false;
+            stopPending = false;
+            ReportViewUnreachable();
             return false;
         }
 
+        // The chart View built for playback finished after the start request had
+        // already answered, so anything it failed to build rides back here.
+        RefreshViewDropMarks();
         lastEditorState = EditorControlMethod.Stop;
+        stopPending = false;
+        pausedTimelinePreviewActive = false;
+        pausedTimelinePreviewRequested = false;
+        pausedTimelinePreviewNeedsReload = false;
+        pausedTimelinePreviewTime = double.NaN;
         return true;
     }
 
@@ -4030,19 +4537,39 @@ public partial class MainWindow : Window
         var response = WebControl.RequestPOST("http://localhost:8013/", json);
         if (response == "ERROR")
         {
-            MessageBox.Show(GetLocalizedString("PortClear"));
+            pausePending = false;
+            ReportViewUnreachable();
             return false;
         }
 
+        RefreshViewDropMarks();
         lastEditorState = EditorControlMethod.Pause;
+        pausePending = false;
+        if (pausedTimelinePreviewRequested)
+            QueueNotePreview();
         return true;
+    }
+
+    private bool sendRequestTimelineSeek(float time)
+    {
+        var request = new EditRequestjson
+        {
+            control = EditorControlMethod.Seek,
+            startTime = time,
+            editorPlayMethod = EditorPlayMethod.Disabled
+        };
+        var response = WebControl.RequestPOST(
+            "http://localhost:8013/",
+            JsonConvert.SerializeObject(request));
+        return response != "ERROR";
     }
 
     private async Task<DateTime?> SendRunAfterScrubStop(
         PlayMethod playMethod,
         float startTime,
         Task<bool>? previewToDrain,
-        Task<bool>? scrubStopToDrain)
+        Task<bool>? scrubStopToDrain,
+        int generation)
     {
         if (previewToDrain != null)
         {
@@ -4071,10 +4598,26 @@ public partial class MainWindow : Window
                 pendingScrubStop = null;
         }
 
-        // Generate the shared clock anchor only after every stale preview and stop
-        // request has completed. This keeps the timestamp fresh without a fixed delay.
-        var startAt = DateTime.Now;
-        return sendRequestRun(startAt, playMethod, startTime) ? startAt : null;
+        if (generation != viewControlGeneration)
+            return null;
+
+        // Phase 1 only loads and binds the chart. View keeps its clock and DJAuto
+        // disabled until the fresh Continue anchor below.
+        if (!sendRequestRun(
+                DateTime.Now,
+                playMethod,
+                startTime,
+                controlGeneration: generation) ||
+            generation != viewControlGeneration)
+            return null;
+
+        // Phase 2 starts both processes from one near-future anchor. If Pause/Stop
+        // superseded this play while loading, no Continue packet is sent.
+        var startAt = DateTime.Now.Add(ViewClockLeadTime);
+        return sendRequestContinue(
+            startAt,
+            startTime,
+            generation) ? startAt : null;
     }
 
     private async Task<bool> SendScrubStop(
@@ -4123,18 +4666,26 @@ public partial class MainWindow : Window
         return sendRequestStop();
     }
 
-    private bool sendRequestContinue(DateTime StartAt)
+    private bool sendRequestContinue(
+        DateTime StartAt,
+        float? startTimeOverride = null,
+        int? controlGeneration = null,
+        bool resumeFromTimelinePreview = false)
     {
         var request = new EditRequestjson
         {
             control = EditorControlMethod.Continue,
             language = editorSetting!.Language,
             startAt = StartAt.Ticks,
-            startTime = (float)Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream)),
+            startTime = startTimeOverride ??
+                (float)Bass.BASS_ChannelBytes2Seconds(
+                    bgmStream,
+                    Bass.BASS_ChannelGetPosition(bgmStream)),
             audioSpeed = GetPlaybackSpeed(),
             mediaAudioVolume = editorSetting.Default_BGM_Level,
             showJudgeLine = editorSetting.ShowJudgeLine,
             showJudgeText = editorSetting.ShowJudgeText,
+            showMineHitFeedback = editorSetting.ShowMineHitFeedback,
             // Hiding the judgment line always hides the judgment area.
             showJudgeArea = editorSetting.ShowJudgeArea && editorSetting.ShowJudgeLine,
             showSongDetail = editorSetting.ShowSongDetail,
@@ -4150,18 +4701,47 @@ public partial class MainWindow : Window
             standbyTheme = IsLightEditorTheme(editorSetting.EditorTheme) ? "light" : "dark",
             introBgTheme = editorSetting.ViewIntroStyle,
             backgroundFitMode = editorSetting.BackgroundFitMode,
+            clipBackgroundToRing = editorSetting.ClipBackgroundToRing,
             songDetailStyle = editorSetting.SongDetailStyle,
             editorPlayMethod = editorSetting.editorPlayMethod
         };
+        if (resumeFromTimelinePreview)
+        {
+            // View still holds the paused preview's unjudgeable notes. Hand it the
+            // chart so it can swap them for playable ones in place instead of
+            // reloading skin, background and timelines through a fresh Start.
+            var jsonStruct = BuildSongDetailMajson();
+            var path = maidataDir + "/majdata.json";
+            jsonStruct.filePath = path;
+            File.WriteAllText(path, JsonConvert.SerializeObject(jsonStruct));
+            request.jsonPath = path;
+            request.noteSpeed = editorSetting.playSpeed;
+            request.touchSpeed = editorSetting.touchSpeed;
+            request.starSpeed = editorSetting.starSpeed;
+            request.smoothSlideAnime = editorSetting.SmoothSlideAnime;
+        }
         var json = JsonConvert.SerializeObject(request);
         var response = WebControl.RequestPOST("http://localhost:8013/", json);
         if (response == "ERROR")
         {
-            MessageBox.Show(GetLocalizedString("PortClear"));
+            ReportViewUnreachable();
             return false;
         }
 
-        lastEditorState = EditorControlMethod.Start;
+        if (!controlGeneration.HasValue ||
+            controlGeneration.Value == viewControlGeneration)
+            lastEditorState = EditorControlMethod.Start;
+        if (resumeFromTimelinePreview)
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (controlGeneration.HasValue &&
+                    controlGeneration.Value != viewControlGeneration)
+                    return;
+                pausedTimelinePreviewActive = false;
+                pausedTimelinePreviewRequested = false;
+                pausedTimelinePreviewNeedsReload = false;
+                pausedTimelinePreviewTime = double.NaN;
+            });
         return true;
     }
 
@@ -4178,6 +4758,7 @@ public partial class MainWindow : Window
             showComboInfo = editorSetting.ShowComboInfo,
             showJudgeLine = editorSetting.ShowJudgeLine,
             showJudgeText = editorSetting.ShowJudgeText,
+            showMineHitFeedback = editorSetting.ShowMineHitFeedback,
             // Hiding the judgment line always hides the judgment area.
             showJudgeArea = editorSetting.ShowJudgeArea && editorSetting.ShowJudgeLine,
             showSongDetail = editorSetting.ShowSongDetail,
@@ -4195,6 +4776,7 @@ public partial class MainWindow : Window
             standbyTheme = IsLightEditorTheme(editorSetting.EditorTheme) ? "light" : "dark",
             introBgTheme = editorSetting.ViewIntroStyle,
             backgroundFitMode = editorSetting.BackgroundFitMode,
+            clipBackgroundToRing = editorSetting.ClipBackgroundToRing,
             songDetailStyle = editorSetting.SongDetailStyle
         };
         WebControl.RequestPOST("http://localhost:8013/",
@@ -4205,7 +4787,9 @@ public partial class MainWindow : Window
         DateTime StartAt,
         PlayMethod playMethod,
         float? startTimeOverride = null,
-        bool previewFlow = false)
+        bool previewFlow = false,
+        int? controlGeneration = null,
+        bool timelinePreview = false)
     {
         var jsonStruct = BuildSongDetailMajson();
         var basicErrors = ValidateMajsonForView(jsonStruct);
@@ -4223,7 +4807,9 @@ public partial class MainWindow : Window
         {
             language = editorSetting?.Language ?? "en-US"
         };
-        if (playMethod == PlayMethod.Op)
+        if (timelinePreview)
+            request.control = EditorControlMethod.TimelinePreview;
+        else if (playMethod == PlayMethod.Op)
             request.control = EditorControlMethod.OpStart;
         else if (playMethod == PlayMethod.Normal)
             request.control = EditorControlMethod.Start;
@@ -4258,10 +4844,12 @@ public partial class MainWindow : Window
             request.innerBackgroundCover = editorSetting.InnerBackgroundCover;
             request.outerBackgroundCover = editorSetting.OuterBackgroundCover;
             request.backgroundFitMode = editorSetting.BackgroundFitMode;
+            request.clipBackgroundToRing = editorSetting.ClipBackgroundToRing;
             request.showJudgeInfo = editorSetting.ShowJudgeInfo;
             request.showComboInfo = editorSetting.ShowComboInfo;
             request.showJudgeLine = editorSetting.ShowJudgeLine;
             request.showJudgeText = editorSetting.ShowJudgeText;
+            request.showMineHitFeedback = editorSetting.ShowMineHitFeedback;
             // Hiding the judgment line always hides the judgment area.
             request.showJudgeArea = editorSetting.ShowJudgeArea && editorSetting.ShowJudgeLine;
             request.skin = editorSetting.Skin;
@@ -4273,6 +4861,12 @@ public partial class MainWindow : Window
             request.introBgTheme = editorSetting.ViewIntroStyle;
             request.songDetailStyle = editorSetting.SongDetailStyle;
             request.previewFlow = previewFlow;
+            // Normal playback uses a two-phase handshake: Start only loads/binds
+            // the chart, then Continue publishes a fresh shared clock anchor.
+            // A rapid Pause/Stop can therefore cancel before View starts moving.
+            request.deferPlaybackStart =
+                (request.control == EditorControlMethod.Start && !previewFlow) ||
+                request.control == EditorControlMethod.TimelinePreview;
             request.previewTimelineTime = previewFlow
                 ? (float)flowPreviewStartTime
                 : request.startTime;
@@ -4285,7 +4879,9 @@ public partial class MainWindow : Window
             request.audioSpeed = GetPlaybackSpeed();
             request.mediaAudioVolume = editorSetting.Default_BGM_Level;
             request.smoothSlideAnime = editorSetting!.SmoothSlideAnime;
-            request.editorPlayMethod = editorSetting.editorPlayMethod;
+            request.editorPlayMethod = timelinePreview
+                ? EditorPlayMethod.Disabled
+                : editorSetting.editorPlayMethod;
             request.chartLength = chartLen;
             request.recordFrameRate = playMethod == PlayMethod.Record120 ? 120 : 60;
             // Layered export is temporarily disabled; every recording is one composite out.mp4.
@@ -4300,7 +4896,7 @@ public partial class MainWindow : Window
             }
         });
 
-        if (editorSetting?.SongDetailStyle == 1)
+        if (!timelinePreview && editorSetting?.SongDetailStyle == 1)
         {
             var preBake = songDetailBakeTask;
             if (preBake != null && !preBake.IsCompleted)
@@ -4315,12 +4911,26 @@ public partial class MainWindow : Window
         var response = WebControl.RequestPOST("http://localhost:8013/", json);
         if (response == "ERROR")
         {
-            MessageBox.Show(GetLocalizedString("PortClear"));
+            ReportViewUnreachable();
             return false;
         }
-        lastEditorState = request.control == EditorControlMethod.Record
-            ? EditorControlMethod.Record
-            : EditorControlMethod.Start;
+        if (!controlGeneration.HasValue ||
+            controlGeneration.Value == viewControlGeneration)
+        {
+            lastEditorState = request.control switch
+            {
+                EditorControlMethod.Record => EditorControlMethod.Record,
+                EditorControlMethod.TimelinePreview => EditorControlMethod.Pause,
+                _ => EditorControlMethod.Start
+            };
+            if (request.control != EditorControlMethod.TimelinePreview)
+            {
+                pausedTimelinePreviewActive = false;
+                pausedTimelinePreviewRequested = false;
+                pausedTimelinePreviewNeedsReload = false;
+                pausedTimelinePreviewTime = double.NaN;
+            }
+        }
         return true;
     }
 
@@ -4343,10 +4953,19 @@ public partial class MainWindow : Window
         jsonStruct.diffNum = selectedDifficulty;
         jsonStruct.songDetailStyle = editorSetting?.SongDetailStyle ?? 1;
         jsonStruct.wholeBpm = SimaiProcess.GetWholeBpmText();
+        jsonStruct.utageLabel = pendingRecordOptions?.UtageLabel ??
+            (string.IsNullOrWhiteSpace(editorSetting?.RecordUtageLabel)
+                ? "\u5bb4"
+                : editorSetting.RecordUtageLabel.Trim());
+        jsonStruct.utageCoop = pendingRecordOptions?.UtageCoop ??
+            editorSetting?.RecordUtageCoop == true;
         jsonStruct.svTable = SimaiProcess.svTable;
         jsonStruct.hsTable = SimaiProcess.hsTable;
         jsonStruct.spawnTable = SimaiProcess.spawnTable;
+        jsonStruct.spawnModeTable = SimaiProcess.spawnModeTable;
         jsonStruct.bounceTable = SimaiProcess.bounceTable;
+        jsonStruct.destroyTable = SimaiProcess.destroyTable;
+        jsonStruct.fakeTable = SimaiProcess.fakeTable;
         jsonStruct.colorTable = SimaiProcess.colorTable;
         jsonStruct.sizeTable = SimaiProcess.sizeTable;
         jsonStruct.alphaTable = SimaiProcess.alphaTable;
@@ -4378,13 +4997,19 @@ public partial class MainWindow : Window
                         string.Format(
                             GetLocalizedString("ValidationIssueAtLine"),
                             timing.rawTextPositionY + 1,
-                            LocalizeViewValidationMessage(message).Replace('\n', ' '))));
+                            message.Replace("\n", " / "))));
             }
 
+            void AddException(Exception error)
+                => AddError(LocalizeViewValidationMessage(error));
+
             var notes = timing.getNotes();
+            if (!string.IsNullOrWhiteSpace(timing.noteParseError))
+                AddError(timing.noteParseError);
             if (!string.IsNullOrWhiteSpace(timing.notesContent) && notes.Count == 0)
             {
-                AddError(timing.noteParseError ?? GetLocalizedString("ChartStatementInvalid"));
+                if (string.IsNullOrWhiteSpace(timing.noteParseError))
+                    AddError(GetLocalizedString("ChartStatementInvalid"));
                 continue;
             }
 
@@ -4408,7 +5033,7 @@ public partial class MainWindow : Window
                     }
                     catch (Exception error)
                     {
-                        AddError(error.Message);
+                        AddException(error);
                         break;
                     }
                 }
@@ -4419,34 +5044,49 @@ public partial class MainWindow : Window
         return errors;
     }
 
-    private static string LocalizeViewValidationMessage(string message)
+    // The View-mirroring validators carry a resource key instead of a localized
+    // sentence, so diagnostics are translated by lookup rather than by matching
+    // Chinese substrings of the thrown message.
+    private sealed class ChartValidationException : Exception
     {
-        if (message.Contains("Slide缺少目标键", StringComparison.Ordinal))
-            return GetLocalizedString("SlideTargetMissing");
-        if (message.Contains("组合星星有错误", StringComparison.Ordinal))
-            return GetLocalizedString("SlideChainInvalid");
-        if (message.StartsWith("不存在的Slide形状:", StringComparison.Ordinal))
-            return string.Format(
-                GetLocalizedString("SlideShapeUnknown"),
-                message[(message.IndexOf(':') + 1)..].Trim());
-        if (message.Contains("不允许Wifi Slide", StringComparison.Ordinal))
-            return GetLocalizedString("WifiConnectionSlideUnsupported");
-        if (message.Contains("-星星至少隔开一键", StringComparison.Ordinal))
-            return GetLocalizedString("LineSlideGap");
-        if (message.Contains("V星星拐点只能隔开一键", StringComparison.Ordinal))
-            return GetLocalizedString("VSlideTurnInvalid");
-        if (message.Contains("星星不合法", StringComparison.Ordinal) ||
-            message.Contains("星星尾部错误", StringComparison.Ordinal) ||
-            message.Contains("星星终点不合法", StringComparison.Ordinal))
-            return string.Format(
-                GetLocalizedString("SlideShapeInvalid"),
-                message.Length > 0 ? message[0].ToString() : "?");
-        return message;
+        public ChartValidationException(string resourceKey, params object[] arguments)
+            : base(resourceKey)
+        {
+            ResourceKey = resourceKey;
+            Arguments = arguments;
+        }
+
+        public string ResourceKey { get; }
+
+        public object[] Arguments { get; }
+    }
+
+    private static ChartValidationException ChartError(
+        string resourceKey,
+        params object[] arguments)
+        => new(resourceKey, arguments);
+
+    private static string LocalizeViewValidationMessage(Exception error)
+        => error is ChartValidationException validation
+            ? LocalizeChartError(validation)
+            : error.Message;
+
+    private static string LocalizeChartError(ChartValidationException error)
+    {
+        var text = GetLocalizedString(error.ResourceKey);
+        if (string.IsNullOrEmpty(text))
+            return error.ResourceKey;
+        return error.Arguments.Length == 0
+            ? text
+            : string.Format(text, error.Arguments);
     }
 
     private static bool ContainsInvalidKey(string? noteContent)
     {
         if (string.IsNullOrEmpty(noteContent))
+            return false;
+        if (SlidePathParser.TryParsePath(noteContent, out var path) &&
+            SlideSyntaxValidator.TryValidate(path, out _))
             return false;
 
         var inDuration = false;
@@ -4472,305 +5112,102 @@ public partial class MainWindow : Window
     // Validate every slide through the same chained path used by View.
     private static void ValidateSlideForView(SimaiTimingPoint timing, SimaiNote note)
     {
-        var content = note.noteContent ?? "";
-        if (content.Length == 0 || !char.IsNumber(content[0]))
-            throw new Exception("Slide缺少目标键");
+        var content = note.pathExpression ?? note.noteContent ?? "";
+        SlidePathData path;
+        if (note.slidePath != null && note.slidePath.Count > 0)
+            path = new SlidePathData
+            {
+                source = content,
+                segments = note.slidePath,
+                isTouchPath = note.isTouchSlide
+            };
+        else if (!SlidePathParser.TryParsePath(content, out path))
+            throw ChartError("SlideTargetMissing");
+        if (!SlideSyntaxValidator.TryValidate(path, out var error))
+            throw new Exception(error);
 
-        ValidateSlideChainForView(timing, note);
+        ValidateSlideChainForView(timing, path.segments);
     }
 
-    private static void ValidateSlideChainForView(SimaiTimingPoint timing, SimaiNote note)
+    private static void ValidateSlideChainForView(
+        SimaiTimingPoint timing,
+        IReadOnlyList<SlidePathSegmentData> segments)
     {
-        static int CharIntParse(char c) => c - '0';
         static double GetTimeFromBeats(string noteText, float currentBpm)
         {
             var startIndex = noteText.IndexOf('[');
             var overIndex = noteText.IndexOf(']');
             if (startIndex < 0 || overIndex <= startIndex)
-                throw new Exception("组合星星有错误");
-
-            var innerString = noteText.Substring(startIndex + 1, overIndex - startIndex - 1);
-            var timeOneBeat = 1d / (currentBpm / 60d);
-            if (innerString.Count(o => o == '#') == 1)
-            {
-                var times = innerString.Split('#');
-                if (times[1].Contains(':'))
-                {
-                    innerString = times[1];
-                    timeOneBeat = 1d / (double.Parse(times[0], CultureInfo.InvariantCulture) / 60d);
-                }
-                else
-                {
-                    return double.Parse(times[1], CultureInfo.InvariantCulture);
-                }
-            }
-
-            if (innerString.Count(o => o == '#') == 2)
-            {
-                var times = innerString.Split('#');
-                return double.Parse(times[2], CultureInfo.InvariantCulture);
-            }
-
-            var numbers = innerString.Split(':');
-            var divide = int.Parse(numbers[0], CultureInfo.InvariantCulture);
-            var count = int.Parse(numbers[1], CultureInfo.InvariantCulture);
-            return timeOneBeat * 4d / divide * count;
+                throw ChartError("SlideDurationInvalid");
+            var token = noteText.Substring(
+                startIndex, overIndex - startIndex + 1);
+            if (!SlideSyntaxValidator.TryGetLengthSeconds(
+                    token, currentBpm, out var seconds))
+                throw ChartError("SlideDurationInvalid");
+            return seconds;
         }
 
-        var noteContent = note.noteContent ?? "";
         var subSlide = new List<string>();
-        var latestStartIndex = CharIntParse(noteContent[0]);
-        var ptr = 1;
-        var specTimeFlag = 0;
+        var durationCount = 0;
 
-        while (ptr < noteContent.Length)
+        foreach (var segment in segments)
         {
-            if (char.IsNumber(noteContent[ptr]))
-                throw new Exception("组合星星有错误");
+            var slidePart = segment.ToExpression(includeDZone: false);
+            if (!string.IsNullOrEmpty(segment.duration))
+                durationCount++;
 
-            var slideTypeChar = noteContent[ptr++].ToString();
-            string slidePart;
-            if (slideTypeChar == "V")
+            if (segment.shape == "SC")
             {
-                if (ptr + 1 >= noteContent.Length)
-                    throw new Exception("Slide缺少目标键");
-                var middlePos = noteContent[ptr++];
-                var endPos = noteContent[ptr++];
-                slidePart = latestStartIndex + slideTypeChar + middlePos + endPos;
-                latestStartIndex = CharIntParse(endPos);
-            }
-            else
-            {
-                if (ptr >= noteContent.Length)
-                    throw new Exception("Slide缺少目标键");
-                if (noteContent[ptr] == slideTypeChar[0])
-                    slideTypeChar += noteContent[ptr++];
-                else if (slideTypeChar == "r" && (noteContent[ptr] == 'p' || noteContent[ptr] == 'q'))
-                    slideTypeChar += noteContent[ptr++];
-                if (ptr >= noteContent.Length || !char.IsNumber(noteContent[ptr]))
-                    throw new Exception("Slide缺少目标键");
-                var endPos = noteContent[ptr++];
-                slidePart = latestStartIndex + slideTypeChar + endPos;
-                latestStartIndex = CharIntParse(endPos);
-            }
-
-            if (ptr < noteContent.Length && noteContent[ptr] == '[')
-            {
-                if (specTimeFlag == 0)
-                    specTimeFlag = 2;
-                else if (specTimeFlag == 1)
-                    specTimeFlag = 3;
-                else if (specTimeFlag == 3)
-                    throw new Exception("组合星星有错误");
-
-                while (ptr < noteContent.Length && noteContent[ptr] != ']')
-                    slidePart += noteContent[ptr++];
-                if (ptr >= noteContent.Length)
-                    throw new Exception("组合星星有错误");
-                slidePart += noteContent[ptr++];
-            }
-            else
-            {
-                if (specTimeFlag == 0)
-                    specTimeFlag = 1;
-                else if (specTimeFlag == 2 || specTimeFlag == 3)
-                    throw new Exception("组合星星有错误");
+                subSlide.Add(slidePart);
+                continue;
             }
 
             // Reject shapes absent from View's prefab map.
-            var slideShape = ValidateSlideShapeForView(slidePart);
-            if (slideShape.StartsWith("-", StringComparison.Ordinal))
-                slideShape = slideShape[1..];
-            if (slideShape.StartsWith("r", StringComparison.Ordinal))
-                slideShape = slideShape[1..];
-            if (!ViewSlideShapes.Contains(slideShape))
-                throw new Exception("不存在的Slide形状: " + slideShape);
+            var slideShape = ResolveSlideShapeForView(segment);
+            if (!SlideShapeResolver.IsPrefabKeySupported(slideShape))
+                throw ChartError("SlideShapeUnknown", slidePart);
 
             subSlide.Add(slidePart);
         }
 
-        if (specTimeFlag == 1 || specTimeFlag == 0)
-            throw new Exception("组合星星有错误");
+        if (durationCount != 1 && durationCount != segments.Count)
+            throw ChartError("SlideChainInvalid");
 
         // View does not support Wifi as a connection-slide segment.
-        if (noteContent.Contains('w') && subSlide.Count != 1)
-            throw new Exception("不允许Wifi Slide作为Connection Slide的一部分");
+        if (segments.Any(segment => segment.shape == "w") && subSlide.Count != 1)
+            throw ChartError("WifiConnectionSlideUnsupported");
 
-        if (specTimeFlag != 3)
-        {
-            foreach (var slide in subSlide)
+        foreach (var slide in subSlide)
+            if (slide.Contains('[', StringComparison.Ordinal))
                 _ = GetTimeFromBeats(slide, timing.currentBpm);
-        }
     }
 
-    // Valid normalized shape names from View's slide prefab map.
-    private static readonly HashSet<string> ViewSlideShapes = new()
-    {
-        "line3", "line4", "line5", "line6", "line7",
-        "circle1", "circle2", "circle3", "circle4", "circle5", "circle6", "circle7", "circle8",
-        "v1", "v2", "v3", "v4", "v6", "v7", "v8",
-        "ppqq1", "ppqq2", "ppqq3", "ppqq4", "ppqq5", "ppqq6", "ppqq7", "ppqq8",
-        "pq1", "pq2", "pq3", "pq4", "pq5", "pq6", "pq7", "pq8",
-        "s", "wifi", "L2", "L3", "L4", "L5"
-    };
 
-    private static string ValidateSlideShapeForView(string content)
+    // The prefab a segment resolves to, and every rule View would throw on, come
+    // from the shared resolver. This used to be a third copy of that grammar,
+    // written against the note text, so it disagreed with View on multi-digit
+    // turns and reported the wrong reason.
+    private static string ResolveSlideShapeForView(SlidePathSegmentData segment)
     {
-        static int RelativeEnd(int startPos, int endPos)
-        {
-            endPos -= startPos;
-            if (endPos < 0) endPos += 8;
-            if (endPos > 8) endPos -= 8;
-            return endPos + 1;
-        }
+        if (SlideShapeResolver.TryResolve(
+                segment, out var prefabKey, out var issue, out _))
+            return prefabKey;
 
-        static int MirrorKeys(int key) => key switch
+        var token = segment.ToExpression(false);
+        throw issue switch
         {
-            1 => 1, 2 => 8, 3 => 7, 4 => 6, 5 => 5, 6 => 4, 7 => 3, 8 => 2,
-            _ => throw new Exception("Keys out of range: " + key)
+            SlideShapeIssue.StraightTooClose => ChartError("LineSlideGap"),
+            SlideShapeIssue.SameOrOppositeKey =>
+                ChartError("SlideShapeInvalid", segment.shape),
+            SlideShapeIssue.MustEndOpposite =>
+                ChartError("SlideShapeInvalid", segment.shape),
+            SlideShapeIssue.TurnEndTooClose =>
+                ChartError("SlideShapeInvalid", "V"),
+            SlideShapeIssue.TurnNotTwoKeys => ChartError("VSlideTurnInvalid"),
+            SlideShapeIssue.MissingTurn => ChartError("VSlideTurnInvalid"),
+            _ => ChartError("SlideShapeUnknown", token)
         };
-
-        if (content.Contains('-'))
-        {
-            var str = content.Substring(0, Math.Min(3, content.Length));
-            var digits = str.Split('-');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            var endPos = RelativeEnd(int.Parse(digits[0]), int.Parse(digits[1]));
-            if (endPos < 3 || endPos > 7) throw new Exception("-星星至少隔开一键");
-            return "line" + endPos;
-        }
-
-        if (content.Contains('>'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('>');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            var startPos = int.Parse(digits[0]);
-            var endPos = RelativeEnd(startPos, int.Parse(digits[1]));
-            return IsUpperHalfForView(startPos) ? "circle" + endPos : "-circle" + MirrorKeys(endPos);
-        }
-
-        if (content.Contains('<'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('<');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            var startPos = int.Parse(digits[0]);
-            var endPos = RelativeEnd(startPos, int.Parse(digits[1]));
-            return !IsUpperHalfForView(startPos) ? "circle" + endPos : "-circle" + MirrorKeys(endPos);
-        }
-
-        if (content.Contains('^'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('^');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            var endPos = RelativeEnd(int.Parse(digits[0]), int.Parse(digits[1]));
-            if (endPos is 1 or 5) throw new Exception("^星星不合法");
-            return endPos < 5 ? "circle" + endPos : "-circle" + MirrorKeys(endPos);
-        }
-
-        if (content.Contains('v'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('v');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            var endPos = RelativeEnd(int.Parse(digits[0]), int.Parse(digits[1]));
-            if (endPos == 5) throw new Exception("v星星不合法");
-            return "v" + endPos;
-        }
-
-        if (content.Contains("rp"))
-        {
-            var digits = content.Substring(0, Math.Min(4, content.Length)).Split(new[] { "rp" }, StringSplitOptions.None);
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            return "rppqq" + RelativeEnd(int.Parse(digits[1]), int.Parse(digits[0]));
-        }
-
-        if (content.Contains("rq"))
-        {
-            var digits = content.Substring(0, Math.Min(4, content.Length)).Split(new[] { "rq" }, StringSplitOptions.None);
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            return "-rppqq" + MirrorKeys(RelativeEnd(int.Parse(digits[1]), int.Parse(digits[0])));
-        }
-
-        if (content.Contains("pp"))
-        {
-            var digits = content.Substring(0, Math.Min(4, content.Length)).Split('p');
-            if (digits.Length < 3) throw new Exception("Slide缺少目标键");
-            return "ppqq" + RelativeEnd(int.Parse(digits[0]), int.Parse(digits[2]));
-        }
-
-        if (content.Contains("qq"))
-        {
-            var digits = content.Substring(0, Math.Min(4, content.Length)).Split('q');
-            if (digits.Length < 3) throw new Exception("Slide缺少目标键");
-            return "-ppqq" + MirrorKeys(RelativeEnd(int.Parse(digits[0]), int.Parse(digits[2])));
-        }
-
-        if (content.Contains('p'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('p');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            return "pq" + RelativeEnd(int.Parse(digits[0]), int.Parse(digits[1]));
-        }
-
-        if (content.Contains('q'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('q');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            return "-pq" + MirrorKeys(RelativeEnd(int.Parse(digits[0]), int.Parse(digits[1])));
-        }
-
-        if (content.Contains('s'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('s');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            if (RelativeEnd(int.Parse(digits[0]), int.Parse(digits[1])) != 5)
-                throw new Exception("s星星尾部错误");
-            return "s";
-        }
-
-        if (content.Contains('z'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('z');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            if (RelativeEnd(int.Parse(digits[0]), int.Parse(digits[1])) != 5)
-                throw new Exception("z星星尾部错误");
-            return "-s";
-        }
-
-        if (content.Contains('V'))
-        {
-            if (content.Length < 4) throw new Exception("Slide缺少目标键");
-            var digits = content.Substring(0, 4).Split('V');
-            var startPos = int.Parse(digits[0]);
-            var turnPos = RelativeEnd(startPos, int.Parse(digits[1][0].ToString()));
-            var endPos = RelativeEnd(startPos, int.Parse(digits[1][1].ToString()));
-            if (turnPos == 7)
-            {
-                if (endPos < 2 || endPos > 5) throw new Exception("V星星终点不合法");
-                return "L" + endPos;
-            }
-
-            if (turnPos == 3)
-            {
-                if (endPos < 5) throw new Exception("V星星终点不合法");
-                return "-L" + MirrorKeys(endPos);
-            }
-
-            throw new Exception("V星星拐点只能隔开一键");
-        }
-
-        if (content.Contains('w'))
-        {
-            var digits = content.Substring(0, Math.Min(3, content.Length)).Split('w');
-            if (digits.Length < 2) throw new Exception("Slide缺少目标键");
-            if (RelativeEnd(int.Parse(digits[0]), int.Parse(digits[1])) != 5)
-                throw new Exception("w星星尾部错误");
-            return "wifi";
-        }
-
-        throw new Exception("Slide缺少目标键");
     }
-
-    private static bool IsUpperHalfForView(int key) => key is 7 or 8 or 1 or 2;
 
     // Serialize card baking so rapid difficulty changes cannot write the same PNG concurrently.
     private readonly object songDetailBakeLock = new();
@@ -4866,7 +5303,7 @@ public partial class MainWindow : Window
         };
     }
 
-    // Touch, touch-hold, and Wifi notes identify DX charts.
+    // Touch, touch-hold, and touch-slide notes identify DX charts. Wifi is SD.
     // Standard charts mirror the header tab and use the standard-mode badge.
     private static bool IsDxChart(Majson majson)
     {
@@ -4879,9 +5316,6 @@ public partial class MainWindow : Window
                 if (note.noteType is SimaiNoteType.Touch or SimaiNoteType.TouchHold)
                     return true;
                 if (note.isTouchSlide)
-                    return true;
-                if (note.noteType == SimaiNoteType.Slide &&
-                    note.noteContent != null && note.noteContent.Contains('w'))
                     return true;
             }
         }
@@ -4990,13 +5424,27 @@ public partial class MainWindow : Window
                 if (File.Exists(iconPath))
                     using (var icon = System.Drawing.Image.FromFile(iconPath))
                     {
-                        var iconH = 50f;
+                        const float iconH = 50f;
                         var iconW = icon.Width * iconH / icon.Height;
                         const float bumpCenterX = 89.3f;
-                        var iconCenterX = isUtage ? bumpCenterX
+                        var iconCenterX = isUtage ? bumpCenterX + 7f
                             : isDx ? bumpCenterX + 2f : 341f - bumpCenterX - 2f;
                         graphics.DrawImage(icon,
                             new RectangleF(iconCenterX - iconW / 2f, 20f, iconW, iconH));
+                        if (isUtage && majson.utageCoop)
+                        {
+                            var coopPath = Path.Combine(partsDir, "UI_TST_Infoicon_Utage_2P.png");
+                            if (File.Exists(coopPath))
+                                using (var coop = System.Drawing.Image.FromFile(coopPath))
+                                {
+                                    var coopW = coop.Width * iconH / coop.Height;
+                                    graphics.DrawImage(coop, new RectangleF(
+                                        bumpCenterX + iconW / 2f - 28f,
+                                        20f,
+                                        coopW,
+                                        iconH));
+                                }
+                        }
                     }
 
                 // The information overlay follows the 341x588 source layout.
@@ -5010,8 +5458,13 @@ public partial class MainWindow : Window
                 AddFontIfExists(smallFonts, Path.Combine(fontDir, "Aileron-Regular.otf"));
 
                 if (isUtage)
-                    DrawCondensedText(graphics, "宴", titleFonts, new RectangleF(14, 20, 151, 48),
-                        21f, Color.White, StringAlignment.Center, true);
+                {
+                    DrawCondensedText(graphics,
+                        string.IsNullOrWhiteSpace(majson.utageLabel) ? "宴" : majson.utageLabel,
+                        titleFonts, new RectangleF(20.8f, 20.6f, 151f, 48f),
+                        22f,
+                        Color.White, StringAlignment.Center, true);
+                }
 
                 // Bake the title into the same image as DXSCORE and the other labels.
                 // A live Unity Text layer used to use different font metrics and could
@@ -5021,11 +5474,11 @@ public partial class MainWindow : Window
                 DrawCondensedText(graphics, majson.artist, titleFonts, new RectangleF(8, 443, 325, 38),
                     17f, Color.FromArgb(235, 241, 255), StringAlignment.Center, false);
                 var designerText = string.IsNullOrWhiteSpace(majson.designer) ? "-" : majson.designer;
-                DrawFitText(graphics, designerText, smallFonts, new RectangleF(19, 548, 200, 26),
-                    18f, 10f, Color.FromArgb(28, 34, 62), StringAlignment.Near, false);
+                DrawFitText(graphics, designerText, smallFonts, new RectangleF(21, 548, 200, 26),
+                    18f, 10f, Color.FromArgb(17, 61, 103), StringAlignment.Near, false);
                 // Draw the BPM label and value because the extracted overlay omits them.
                 DrawFitText(graphics, "BPM " + GetBpmTextForCache(majson), smallFonts,
-                    new RectangleF(190, 548, 130, 26),
+                    new RectangleF(188, 546, 130, 26),
                     17f, 9f, Color.FromArgb(28, 34, 62), StringAlignment.Far, false);
 
                 // Draw current/max DXSCORE above the rating row with a shared baseline.
@@ -5054,7 +5507,7 @@ public partial class MainWindow : Window
                     ConfigureCardGraphics(fullGraphics);
                     using (var baseImage = System.Drawing.Image.FromFile(outputPath))
                         fullGraphics.DrawImage(baseImage, new RectangleF(0f, 0f, 341f, 588f));
-                    DrawCover(fullGraphics, coverPath, new Rectangle(41, 96, 260, 262));
+                    DrawCover(fullGraphics, coverPath, new Rectangle(43, 98, 256, 258));
                     using (var overlayImage = System.Drawing.Image.FromFile(overlayOutPath))
                         fullGraphics.DrawImage(overlayImage, new RectangleF(0f, 0f, 341f, 588f));
                     SavePngAtomically(full, fullOutPath);
@@ -5457,7 +5910,7 @@ public partial class MainWindow : Window
     }
 
     // Increment when card rendering changes to invalidate old signatures.
-    private const string SongDetailCacheVersion = "v35";
+    private const string SongDetailCacheVersion = "v47";
 
     // Match View note counting; max DXSCORE is total notes multiplied by three.
     private static int CountTotalNotes(Majson majson)
@@ -5471,11 +5924,12 @@ public partial class MainWindow : Window
             {
                 if (note.noteType == SimaiNoteType.Slide)
                 {
-                    if (!note.isSlideNoHead)
-                            total++;
-                            total++;
+                    if (!note.isSlideNoHead && !note.isFakeHead)
+                        total++;
+                    if (!note.isFakeSlide)
+                        total++;
                 }
-                else
+                else if (!note.isFake)
                 {
                     total++;
                 }
@@ -5508,12 +5962,52 @@ public partial class MainWindow : Window
             majson.designer ?? "",
             majson.level ?? "",
             GetBpmTextForCache(majson),
+            majson.utageLabel ?? "宴",
+            majson.utageCoop.ToString(),
             coverPath ?? "",
             coverTicks.ToString(),
             coverLength.ToString(),
         // Include max DXSCORE so note-count changes trigger a rebake.
             dxMaxScore.ToString()
         });
+    }
+
+    internal string? PrepareSongDetailPreview(
+        string title,
+        string artist,
+        string designer,
+        string level,
+        string bpm,
+        string label,
+        bool coop)
+    {
+        if (selectedDifficulty < 0 || string.IsNullOrWhiteSpace(maidataDir))
+            return null;
+        var majson = BuildSongDetailMajson();
+        majson.songDetailStyle = 1;
+        majson.title = title.Trim();
+        majson.artist = artist.Trim();
+        majson.designer = designer.Trim();
+        majson.level = level.Trim();
+        majson.wholeBpm = bpm.Trim();
+        majson.utageLabel = string.IsNullOrWhiteSpace(label) ? "\u5bb4" : label.Trim();
+        majson.utageCoop = coop;
+        lock (songDetailBakeLock)
+            EnsureSongDetailCache(majson);
+        var stem = GetSongDetailCacheStem(majson.diffNum);
+        var path = stem == null ? null : Path.Combine(maidataDir, stem + "_full.png");
+        return path != null && File.Exists(path) ? path : null;
+    }
+
+    internal string? GetSongDetailPreviewPath()
+    {
+        if (selectedDifficulty < 0 || string.IsNullOrWhiteSpace(maidataDir))
+            return null;
+        var stem = GetSongDetailCacheStem(selectedDifficulty);
+        if (stem == null)
+            return null;
+        var path = Path.Combine(maidataDir, stem + "_full.png");
+        return File.Exists(path) ? path : null;
     }
 
     [DllImport("user32.dll")]

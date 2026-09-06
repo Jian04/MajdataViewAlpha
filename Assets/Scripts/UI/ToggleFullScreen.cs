@@ -4,11 +4,18 @@ using UnityEngine.UI;
 public class ToggleFullScreen : MonoBehaviour
 {
     private Dropdown dd;
+    private int windowedWidth = 512;
+    private int windowedHeight = 512;
 
     public void Start()
     {
         dd = GameObject.Find("ResoDropdown").GetComponent<Dropdown>();
         dd.gameObject.SetActive(false);
+        if (!Screen.fullScreen)
+        {
+            windowedWidth = Screen.width;
+            windowedHeight = Screen.height;
+        }
     }
 
     private void Update()
@@ -22,17 +29,19 @@ public class ToggleFullScreen : MonoBehaviour
         var resolutions = Screen.resolutions;
         if (Screen.fullScreen)
         {
-            var width = 300;
-            var height = 300;
-            Screen.SetResolution(width, height, false);
+            Screen.fullScreenMode = FullScreenMode.Windowed;
+            Screen.SetResolution(Mathf.Max(320, windowedWidth), Mathf.Max(320, windowedHeight), false);
         }
         else
         {
-            Screen.SetResolution(resolutions[resolutions.Length - 1].width, resolutions[resolutions.Length - 1].height,
-                true);
+            windowedWidth = Screen.width;
+            windowedHeight = Screen.height;
+            var target = resolutions.Length > 0
+                ? resolutions[resolutions.Length - 1]
+                : Screen.currentResolution;
+            Screen.fullScreenMode = FullScreenMode.FullScreenWindow;
+            Screen.SetResolution(target.width, target.height, true);
         }
-
-        Screen.fullScreenMode = FullScreenMode.FullScreenWindow;
     }
 
     public void DisplayDropdown()
@@ -45,27 +54,39 @@ public class ToggleFullScreen : MonoBehaviour
     {
         var i = dd.value;
         print(i);
+        var width = Screen.width;
+        var height = Screen.height;
         switch (i)
         {
             case 0:
-                Screen.SetResolution(512, 512, false);
+                width = 512;
+                height = 512;
                 break;
             case 1:
-                Screen.SetResolution(1080, 1080, false);
+                width = 1080;
+                height = 1080;
                 break;
             case 2:
-                Screen.SetResolution(1280, 720, false);
+                width = 1280;
+                height = 720;
                 break;
             case 3:
-                Screen.SetResolution(1920, 1080, false);
+                width = 1920;
+                height = 1080;
                 break;
             case 4:
-                Screen.SetResolution(2560, 1440, false);
+                width = 2560;
+                height = 1440;
                 break;
             case 5:
-                Screen.SetResolution(3840, 2160, false);
+                width = 3840;
+                height = 2160;
                 break;
         }
+
+        windowedWidth = width;
+        windowedHeight = height;
+        Screen.SetResolution(width, height, false);
 
         dd.gameObject.SetActive(false);
     }

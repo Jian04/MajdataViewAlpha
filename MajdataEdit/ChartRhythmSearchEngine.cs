@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using MajdataCore;
 
 namespace MajdataEdit;
 
@@ -16,7 +17,6 @@ internal static class ChartRhythmSearchEngine
     private static readonly Regex LevelRegex = new(@"&lv_(\d+)=(.+?)(?=\n&|\z)", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex HasNoteRegex = new(@"[1-8A-E]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex HasNote0Regex = new(@"[0-8A-E]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private static readonly HashSet<char> SlideTypes = new("-><vqpszVwW");
     private static readonly Dictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly Dictionary<string, string> DifficultyNames = new()
@@ -48,7 +48,7 @@ internal static class ChartRhythmSearchEngine
             if (!exact || positions == null)
                 continue;
 
-            var pos = GetTokenPositions(tokens[item.TokenIndex], includeZero: true);
+            var pos = GetQueryPositions(tokens[item.TokenIndex]);
             if (pos.Count > 0)
                 positions[item.Tick] = pos;
         }
@@ -136,7 +136,7 @@ internal static class ChartRhythmSearchEngine
                 var rel = item.Tick - winStart;
                 windowTicks.Add(rel);
                 if (windowPositions != null)
-                    windowPositions[rel] = GetTokenPositions(chart.Tokens[item.TokenIndex], includeZero: false);
+                    windowPositions[rel] = GetChartPositions(chart.Tokens[item.TokenIndex]);
             }
 
             if (fuzzy)
@@ -251,7 +251,7 @@ internal static class ChartRhythmSearchEngine
             if (tokens.Count == 0)
                 continue;
 
-            var timeline = BuildTimeline(tokens, includeZero: false);
+            var timeline = BuildTimeline(tokens, includeZero: false, fromChart: true);
             var secondsMap = BuildSecondsMap(tokens, bpmList);
             var boundaries = timeline.Items.Select(i => i.Tick).Append(timeline.TotalTicks).ToHashSet();
             var cumulative = new int[tokens.Count + 1];
@@ -264,9 +264,41 @@ internal static class ChartRhythmSearchEngine
         return difficulties.Count == 0 ? null : new ParsedChart(title, artist, levels, difficulties);
     }
 
+    // An Alpha command may hold commas in its arguments, as <Shake*(1,2,8:1)>
+    // does. Splitting those would turn one command into several slots and move
+    // every Note after it, so commands are stepped over the way the chart parser
+    // steps over them.
+    internal static List<string> SplitSlots(string text)
+    {
+        var parts = new List<string>();
+        var slot = new StringBuilder();
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '<' &&
+                AlphaCommandBoundary.TryGetCommand(text, i, out var close))
+            {
+                slot.Append(text, i, close - i + 1);
+                i = close;
+                continue;
+            }
+
+            if (text[i] == ',')
+            {
+                parts.Add(slot.ToString());
+                slot.Clear();
+                continue;
+            }
+
+            slot.Append(text[i]);
+        }
+
+        parts.Add(slot.ToString());
+        return parts;
+    }
+
     private static (List<string> Tokens, List<double?> BpmList) Tokenize(string text)
     {
-        var raw = WhiteSpace.Replace(text, "").Split(',');
+        var raw = SplitSlots(WhiteSpace.Replace(text, ""));
         var tokens = new List<string>();
         var bpmList = new List<double?>();
         double? currentBpm = null;
@@ -276,11 +308,13 @@ internal static class ChartRhythmSearchEngine
             if (rawToken == "E")
                 continue;
 
-            var bpmMatch = BpmRegex.Match(rawToken);
+            // A command carries numbers of its own, so the BPM marker is read
+            // from what is left once the commands are gone.
+            var bpmMatch = BpmRegex.Match(RhythmBody(rawToken));
             if (bpmMatch.Success && double.TryParse(bpmMatch.Groups[1].Value, out var bpm))
                 currentBpm = bpm;
 
-            tokens.Add(BpmRegex.Replace(rawToken, ""));
+            tokens.Add(rawToken);
             bpmList.Add(currentBpm);
         }
 
@@ -293,15 +327,18 @@ internal static class ChartRhythmSearchEngine
         return (tokens, bpmList);
     }
 
-    private static TimelineResult BuildTimeline(IReadOnlyList<string> tokens, bool includeZero)
+    private static TimelineResult BuildTimeline(
+        IReadOnlyList<string> tokens, bool includeZero, bool fromChart = false)
     {
         var currentInv = 4;
         var currentTick = 0;
         var items = new List<TimelineItem>(tokens.Count);
         for (var i = 0; i < tokens.Count; i++)
         {
-            var (newInv, tickDur) = TokenToInv(tokens[i], currentInv);
-            var has = HasNote(StripDiv(tokens[i]), includeZero);
+            var (newInv, tickDur) = TokenToInv(RhythmBody(tokens[i]), currentInv);
+            var has = fromChart
+                ? ChartSlotHasNote(tokens[i])
+                : HasNote(StripDiv(tokens[i]), includeZero);
             items.Add(new TimelineItem(currentTick, has, tickDur, i));
             currentInv = newInv;
             currentTick += tickDur;
@@ -317,7 +354,7 @@ internal static class ChartRhythmSearchEngine
         var times = new List<double>(tokens.Count);
         for (var i = 0; i < tokens.Count; i++)
         {
-            var (newInv, _) = TokenToInv(tokens[i], currentInv);
+            var (newInv, _) = TokenToInv(RhythmBody(tokens[i]), currentInv);
             times.Add(currentTime);
             var bpm = bpmList[i] ?? 120d;
             currentTime += 240d / (newInv * bpm);
@@ -348,9 +385,22 @@ internal static class ChartRhythmSearchEngine
     private static bool HasNote(string body, bool includeZero) =>
         (includeZero ? HasNote0Regex : HasNoteRegex).IsMatch(body);
 
+    // An Alpha command carries letters and digits of its own, so a slot holding
+    // only <SV*slide=1.5> used to look like a slot holding notes.
+    internal static bool ChartSlotHasNote(string token) =>
+        SlotNotes(token).Any(entry => HasNoteRegex.IsMatch(entry.text));
+
     private static string StripDiv(string token) => DivRegex.Replace(token, "");
 
-    private static HashSet<int> GetTokenPositions(string token, bool includeZero)
+    // What is left of a slot once the Alpha commands and the (bpm) marker are
+    // gone: the rhythm and the notes.
+    private static string RhythmBody(string token) =>
+        BpmRegex.Replace(
+            AlphaCommandBoundary.RemoveCommands(token), string.Empty);
+
+    // A query is typed by hand and may use 0 as "any position", so it is not read
+    // as a chart slot.
+    private static HashSet<int> GetQueryPositions(string token)
     {
         var positions = new HashSet<int>();
         foreach (var part in StripDiv(token).Split('/'))
@@ -361,7 +411,7 @@ internal static class ChartRhythmSearchEngine
             if (char.IsDigit(item[0]))
             {
                 var value = item[0] - '0';
-                if ((includeZero ? value >= 0 : value >= 1) && value <= 8)
+                if (value >= 0 && value <= 8)
                     positions.Add(value);
             }
             else if ("ABCDE".Contains(char.ToUpperInvariant(item[0])))
@@ -373,68 +423,93 @@ internal static class ChartRhythmSearchEngine
         return positions;
     }
 
-    private static int CountCombo(string text)
+    internal static HashSet<int> GetChartPositions(string token)
+    {
+        var positions = new HashSet<int>();
+        foreach (var entry in SlotNotes(token))
+        {
+            if (NoteExpressionParser.TryParse(entry.text, out var expression, out _))
+            {
+                positions.Add(
+                    expression.position.IsKey ? expression.position.position : -1);
+                continue;
+            }
+
+            var item = entry.text.Trim();
+            if (item.Length == 0)
+                continue;
+            if (item[0] is >= '1' and <= '8')
+                positions.Add(item[0] - '0');
+            else if ("ABCDE".Contains(char.ToUpperInvariant(item[0])))
+                positions.Add(-1);
+        }
+
+        return positions;
+    }
+
+    internal static int CountCombo(string text)
     {
         var (tokens, _) = Tokenize(text);
         return tokens.Sum(CountComboToken);
     }
 
-    private static int CountComboToken(string token)
+    // The notes of one timing slot, read with the shared splitter so that the
+    // statistics shown here count what the runtime actually plays: "12" is two
+    // Taps, and a same-head group is every one of its branches.
+    internal static List<NoteSlotEntry> SlotNotes(string token)
     {
-        var body = StripDiv(token);
+        var body = StripDiv(RhythmBody(token)).Trim();
         if (string.IsNullOrEmpty(body))
-            return 0;
+            return new List<NoteSlotEntry>();
 
+        if (NoteSlotParser.TrySplit(body, out var entries, out _))
+            return entries;
+
+        // Charts in the library may hold syntax this editor rejects. Counting
+        // what can still be read beats reporting the whole slot as empty.
+        var parts = NoteSlotParser.SplitTopLevel(body);
+        var fallback = new List<NoteSlotEntry>(parts.Count);
+        for (var i = 0; i < parts.Count; i++)
+            fallback.Add(new NoteSlotEntry { text = parts[i], groupIndex = i });
+        return fallback;
+    }
+
+    // What one Note contributes to combo. The rule belongs to the game and lives
+    // in JsonDataLoader.CountNoteSum: every Note counts once, and a Slide adds
+    // its guide star unless the star was removed with ! or ?, or the branch
+    // shares an earlier branch's star.
+    private static int NoteCombo(string note, bool ownsHead)
+    {
+        if (!NoteExpressionParser.TryParse(note, out var expression, out _))
+            return string.IsNullOrWhiteSpace(note) ? 0 : 1;
+        if (expression.kind != NoteExpressionKind.Slide)
+            return 1;
+        return !ownsHead || expression.modifiers.HasAny(NoteModifierFlags.NoHead)
+            ? 1
+            : 2;
+    }
+
+    internal static int CountComboToken(string token)
+    {
         var total = 0;
-        foreach (var part in body.Split('/'))
-        {
-            var item = part.Trim();
-            if (item.Length == 0)
-                continue;
-            if ("ABCDE".Contains(char.ToUpperInvariant(item[0])) && !char.IsDigit(item[0]))
-            {
-                total++;
-                continue;
-            }
-
-            if (!char.IsDigit(item[0]) || item[0] < '1' || item[0] > '8')
-                continue;
-
-            var rest = item[1..];
-            while (rest.Length > 0 && "bxf!".Contains(rest[0]))
-                rest = rest[1..];
-            if (rest.Length == 0 || rest[0] == 'h')
-                total++;
-            else if (SlideTypes.Contains(rest[0]) || rest.StartsWith("pp", StringComparison.Ordinal) || rest.StartsWith("qq", StringComparison.Ordinal))
-                total += 2;
-            else
-                total++;
-        }
-
+        var starOwners = new HashSet<int>();
+        foreach (var entry in SlotNotes(token))
+            total += NoteCombo(
+                entry.text,
+                !entry.fromSameHead || starOwners.Add(entry.groupIndex));
         return total;
     }
 
-    private static int CountStars(string text)
+    internal static int CountStars(string text)
     {
         var (tokens, _) = Tokenize(text);
         var total = 0;
         foreach (var token in tokens)
-        {
-            foreach (var part in StripDiv(token).Split('/'))
-            {
-                var item = part.Trim();
-                if (item.Length == 0 || !char.IsDigit(item[0]) || item[0] < '1' || item[0] > '8')
-                    continue;
-
-                var rest = item[1..];
-                while (rest.Length > 0 && "bxf!".Contains(rest[0]))
-                    rest = rest[1..];
-                if (rest.Length > 0 &&
-                    (SlideTypes.Contains(rest[0]) || rest.StartsWith("pp", StringComparison.Ordinal) || rest.StartsWith("qq", StringComparison.Ordinal)))
-                    total++;
-            }
-        }
-
+        foreach (var entry in SlotNotes(token))
+            if (NoteExpressionParser.TryParse(entry.text, out var expression, out _) &&
+                expression.kind == NoteExpressionKind.Slide &&
+                !expression.isTouchPath)
+                total++;
         return total;
     }
 

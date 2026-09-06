@@ -190,34 +190,33 @@ public partial class AlphaSyntaxHelp : Window
         return paragraph;
     }
 
+    // An omittable argument is written "[,name]" in the help text, and the brackets
+    // are notation rather than something to type, so they are not drawn: the
+    // argument is simply grey and italic, which is how the completion popup has
+    // always shown it. Every other bracket is part of the syntax being described -
+    // a Touch Hold really is written h[duration] - and is left exactly as written.
     private static void AddCodeRuns(Paragraph paragraph, string code, bool styleOptional)
     {
-        if (!styleOptional || !code.Contains('['))
+        if (!styleOptional)
         {
             paragraph.Inlines.Add(new Run(code));
             return;
         }
 
         var start = 0;
-        var optionalDepth = 0;
-        for (var index = 0; index <= code.Length; index++)
+        while (start < code.Length)
         {
-            var boundary = index == code.Length || code[index] is '[' or ']';
-            if (!boundary)
-                continue;
-            if (index > start)
-                paragraph.Inlines.Add(CreateCodeRun(code[start..index], optionalDepth > 0));
-            if (index == code.Length)
+            var open = code.IndexOf("[,", start, StringComparison.Ordinal);
+            var close = open < 0 ? -1 : code.IndexOf(']', open);
+            if (close < 0)
                 break;
-
-            var opening = code[index] == '[';
-            if (opening)
-                optionalDepth++;
-            paragraph.Inlines.Add(CreateCodeRun(code[index].ToString(), true));
-            if (!opening)
-                optionalDepth = Math.Max(0, optionalDepth - 1);
-            start = index + 1;
+            if (open > start)
+                paragraph.Inlines.Add(new Run(code[start..open]));
+            paragraph.Inlines.Add(CreateCodeRun(code[(open + 1)..close], true));
+            start = close + 1;
         }
+        if (start < code.Length)
+            paragraph.Inlines.Add(new Run(code[start..]));
     }
 
     private static Run CreateCodeRun(string text, bool optional)

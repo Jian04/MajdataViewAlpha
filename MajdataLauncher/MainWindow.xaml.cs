@@ -242,7 +242,7 @@ public partial class MainWindow : Window
                 break;
             case "star-combo":
                 Present(L("Reviewing"), string.IsNullOrWhiteSpace(message) ? L("CheckingStarCombo") : message);
-                animator.Play(PetAnimation.Review, false, () => animator.Play(PetAnimation.Idle, true));
+                animator.Play(PetAnimation.Review, true);
                 break;
         }
     }

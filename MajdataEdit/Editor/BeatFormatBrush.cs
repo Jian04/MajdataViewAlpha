@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -5,7 +6,6 @@ namespace MajdataEdit.Editor;
 
 internal static class BeatFormatBrush
 {
-    private const int MeasureUnits = 384;
     private static readonly Regex BeatMarker = new(@"\{(?<beat>\d+)\}", RegexOptions.Compiled);
 
     public static string Transform(string text, int? requestedBeat)
@@ -17,7 +17,9 @@ internal static class BeatFormatBrush
         if (sourceBeat <= 0)
             return text;
 
-        var targetBeat = requestedBeat ?? FindMaxBeat(text);
+        var targetBeat = requestedBeat is > 0
+            ? new BigInteger(requestedBeat.Value)
+            : FindCommonBeat(text, sourceBeat);
         return TransformWithContext(text, sourceBeat, targetBeat);
     }
 
@@ -34,11 +36,13 @@ internal static class BeatFormatBrush
         if (sourceBeat <= 0)
             return selected;
 
-        var targetBeat = requestedBeat ?? new[] { FindMaxBeat(selected), sourceBeat, activeBeat }.Max();
+        var targetBeat = requestedBeat is > 0
+            ? new BigInteger(requestedBeat.Value)
+            : FindCommonBeat(selected, sourceBeat);
         return TransformWithContext(selected, sourceBeat, targetBeat);
     }
 
-    private static string TransformWithContext(string text, int defaultBeat, int targetBeat)
+    private static string TransformWithContext(string text, BigInteger defaultBeat, BigInteger targetBeat)
     {
         if (defaultBeat <= 0 || targetBeat <= 0)
             return text;
@@ -48,188 +52,111 @@ internal static class BeatFormatBrush
             return StripBeatMarkers(text);
 
         var output = new StringBuilder(text.Length);
-        var currentBeat = 0;
-        var emptyUnits = 0;
+        var currentBeat = BigInteger.Zero;
+        var run = new List<CommaToken>();
+        var leadText = string.Empty;
+        var layout = new StringBuilder();
 
-        void SwitchBeat(int beat)
+        void SwitchBeat(BigInteger beat)
         {
             if (beat <= 0 || currentBeat == beat)
                 return;
-            output.Append('{').Append(beat).Append('}');
+            output.Append('{');
+            output.Append(beat);
+            output.Append('}');
             currentBeat = beat;
         }
 
-        void EmitCommasOnly(int units, int preferredBeat)
+        void FlushRun()
         {
-            if (units <= 0)
-                return;
+            var duration = Fraction.Zero;
+            foreach (var slot in run)
+                duration += Fraction.Unit(slot.Beat);
 
-            var preferredUnit = Unit(preferredBeat);
-            if (preferredUnit > 0 && units % preferredUnit == 0)
-            {
-                SwitchBeat(preferredBeat);
-                output.Append(',', units / preferredUnit);
-                return;
-            }
-
-            var defaultUnit = Unit(defaultBeat);
-            if (defaultUnit > 0 && units % defaultUnit == 0)
-            {
-                SwitchBeat(defaultBeat);
-                output.Append(',', units / defaultUnit);
-                return;
-            }
-
-            if (preferredUnit > 0 && units > preferredUnit)
-            {
-                var preferredCount = units / preferredUnit;
-                var consumed = preferredCount * preferredUnit;
-                SwitchBeat(preferredBeat);
-                output.Append(',', preferredCount);
-                EmitCommasOnly(units - consumed, defaultBeat);
-            }
-        }
-
-        void FlushEmpty()
-        {
-            if (emptyUnits <= 0)
-                return;
-            EmitCommasOnly(emptyUnits, targetBeat);
-            emptyUnits = 0;
-        }
-
-        void EmitTextWithCommas(string textPart, int units, int sourceBeat)
-        {
-            if (units <= 0)
-            {
-                output.Append(textPart);
-                return;
-            }
-
-            var targetUnit = Unit(targetBeat);
-            var sourceUnit = Unit(sourceBeat);
-            if (targetUnit > 0 && sourceUnit > 0 && currentBeat != targetBeat)
-            {
-                // Do not emit note{beat}; keep the note visible by leaving the
-                // smallest possible source-beat comma prefix, then switch.
-                for (var sourceCount = 1; sourceCount * sourceUnit <= units; sourceCount++)
-                {
-                    var remaining = units - sourceCount * sourceUnit;
-                    if (remaining == 0 || remaining % targetUnit != 0)
-                        continue;
-
-                    SwitchBeat(sourceBeat);
-                    output.Append(textPart);
-                    output.Append(',', sourceCount);
-                    EmitCommasOnly(remaining, targetBeat);
-                    return;
-                }
-            }
-
-            if (targetUnit > 0 && units % targetUnit == 0)
+            var targetSlots = duration * targetBeat;
+            if (duration.Numerator > 0 && targetSlots.IsInteger)
             {
                 SwitchBeat(targetBeat);
-                output.Append(textPart);
-                output.Append(',', units / targetUnit);
-                return;
+                output.Append(leadText);
+                AppendRepeated(output, ',', targetSlots.Numerator);
             }
-
-            if (sourceUnit > 0)
+            else
             {
-                var sourceCount = units % targetUnit == 0
-                    ? 0
-                    : units % targetUnit / sourceUnit;
-                if (sourceCount > 0 && sourceCount * sourceUnit < units)
+                for (var index = 0; index < run.Count; index++)
                 {
-                    SwitchBeat(sourceBeat);
-                    output.Append(textPart);
-                    output.Append(',', sourceCount);
-                    EmitCommasOnly(units - sourceCount * sourceUnit, targetBeat);
-                    return;
+                    SwitchBeat(run[index].Beat);
+                    if (index == 0)
+                        output.Append(leadText);
+                    output.Append(',');
                 }
-
-                if (units % sourceUnit == 0)
-                {
-                    SwitchBeat(sourceBeat);
-                    output.Append(textPart);
-                    output.Append(',', units / sourceUnit);
-                    return;
-                }
+                if (run.Count == 0)
+                    output.Append(leadText);
             }
 
-            output.Append(textPart);
-            EmitCommasOnly(units, targetBeat);
+            output.Append(layout);
+            layout.Clear();
+            run.Clear();
+            leadText = string.Empty;
         }
 
-        for (var tokenIndex = 0; tokenIndex < tokens.Count; tokenIndex++)
+        foreach (var token in tokens)
         {
-            var token = tokens[tokenIndex];
             var textPart = StripBeatMarkers(token.Text);
-            var commaUnits = token.HasComma ? Unit(token.Beat) : 0;
-
             if (string.IsNullOrWhiteSpace(textPart))
             {
-                emptyUnits += commaUnits;
-                if (!token.HasComma)
+                if (token.HasComma)
+                {
+                    run.Add(token);
+                    layout.Append(textPart);
+                }
+                else
+                {
+                    FlushRun();
                     output.Append(textPart);
+                }
                 continue;
             }
 
-            FlushEmpty();
-            if (token.HasComma)
+            FlushRun();
+            if (!token.HasComma)
             {
-                while (tokenIndex + 1 < tokens.Count)
-                {
-                    var next = tokens[tokenIndex + 1];
-                    var nextText = StripBeatMarkers(next.Text);
-                    if (!next.HasComma || !string.IsNullOrWhiteSpace(nextText))
-                        break;
-                    commaUnits += Unit(next.Beat);
-                    tokenIndex++;
-                }
-                EmitTextWithCommas(textPart, commaUnits, token.Beat);
-            }
-            else
                 output.Append(textPart);
+                continue;
+            }
+
+            leadText = textPart;
+            run.Add(token);
         }
 
-        FlushEmpty();
+        FlushRun();
         return output.ToString();
     }
 
-    private static List<CommaToken> Tokenize(string text, int initialBeat)
+    private static List<CommaToken> Tokenize(string text, BigInteger initialBeat)
     {
         var result = new List<CommaToken>();
         var start = 0;
         var beat = initialBeat;
-        var squareDepth = 0;
-        var angleDepth = 0;
-        var roundDepth = 0;
+        var tracker = new MajdataCore.ChartBracketTracker();
 
         for (var i = 0; i < text.Length; i++)
         {
-            if (squareDepth == 0 && angleDepth == 0 && roundDepth == 0 && text[i] == '{')
+            if (tracker.IsTopLevel && text[i] == '{')
             {
                 var close = text.IndexOf('}', i + 1);
-                if (close > i && int.TryParse(text.Substring(i + 1, close - i - 1), out var parsedBeat))
+                if (close > i &&
+                    BigInteger.TryParse(text.Substring(i + 1, close - i - 1), out var parsedBeat) &&
+                    parsedBeat > 0)
                 {
                     beat = parsedBeat;
                     i = close;
                     continue;
                 }
+                continue;
             }
 
-            switch (text[i])
-            {
-                case '[': squareDepth++; break;
-                case ']': squareDepth = Math.Max(0, squareDepth - 1); break;
-                case '<' when IsAlphaTokenStart(text, i): angleDepth++; break;
-                case '>': angleDepth = Math.Max(0, angleDepth - 1); break;
-                case '(': roundDepth++; break;
-                case ')': roundDepth = Math.Max(0, roundDepth - 1); break;
-            }
-
-            if (text[i] == ',' && squareDepth == 0 && angleDepth == 0 && roundDepth == 0)
+            tracker.Advance(text, i);
+            if (text[i] == ',' && tracker.IsTopLevel)
             {
                 result.Add(new CommaToken(text.Substring(start, i - start), true, beat));
                 start = i + 1;
@@ -240,43 +167,80 @@ internal static class BeatFormatBrush
         return result;
     }
 
-    private static int Unit(int beat) => beat > 0 ? MeasureUnits / beat : 0;
+    private static void AppendRepeated(StringBuilder output, char value, BigInteger count)
+    {
+        const int chunkSize = 1_000_000;
+        while (count > 0)
+        {
+            var chunk = count > chunkSize ? chunkSize : (int)count;
+            output.Append(value, chunk);
+            count -= chunk;
+        }
+    }
 
     private static string StripBeatMarkers(string text) => BeatMarker.Replace(text, "");
 
-    private static int FindFirstBeat(string text)
+    private static BigInteger FindFirstBeat(string text)
     {
         var match = BeatMarker.Match(text);
-        return match.Success && int.TryParse(match.Groups["beat"].Value, out var beat) ? beat : -1;
+        return match.Success &&
+               BigInteger.TryParse(match.Groups["beat"].Value, out var beat) &&
+               beat > 0
+            ? beat
+            : BigInteger.MinusOne;
     }
 
-    private static int FindMaxBeat(string text)
+    private static BigInteger FindCommonBeat(string text, BigInteger inheritedBeat)
     {
-        var max = -1;
+        var common = inheritedBeat > 0 ? inheritedBeat : BigInteger.One;
         foreach (Match match in BeatMarker.Matches(text))
-            if (int.TryParse(match.Groups["beat"].Value, out var beat))
-                max = Math.Max(max, beat);
-        return max;
+        {
+            if (!BigInteger.TryParse(match.Groups["beat"].Value, out var beat) || beat <= 0)
+                continue;
+            common = LeastCommonMultiple(common, beat);
+        }
+        return common;
     }
 
-    private static int FindActiveBeatBefore(string text, int position)
+    private static BigInteger LeastCommonMultiple(BigInteger left, BigInteger right) =>
+        BigInteger.Abs(left / BigInteger.GreatestCommonDivisor(left, right) * right);
+
+    private static BigInteger FindActiveBeatBefore(string text, int position)
     {
         var source = text.Substring(0, Math.Clamp(position, 0, text.Length));
         var matches = BeatMarker.Matches(source);
         if (matches.Count == 0)
-            return -1;
+            return BigInteger.MinusOne;
 
-        return int.TryParse(matches[^1].Groups["beat"].Value, out var beat) ? beat : -1;
+        return BigInteger.TryParse(matches[^1].Groups["beat"].Value, out var beat) && beat > 0
+            ? beat
+            : BigInteger.MinusOne;
     }
 
-    private static bool IsAlphaTokenStart(string text, int index)
+    private readonly record struct CommaToken(string Text, bool HasComma, BigInteger Beat);
+
+    private readonly record struct Fraction(BigInteger Numerator, BigInteger Denominator)
     {
-        if (index + 2 >= text.Length || !char.IsLetter(text[index + 1]))
-            return false;
-        var close = text.IndexOf('>', index + 1);
-        var star = text.IndexOf('*', index + 1);
-        return close > index && star > index && star < close;
-    }
+        public static Fraction Zero => new(BigInteger.Zero, BigInteger.One);
+        public bool IsInteger => Denominator == BigInteger.One;
 
-    private readonly record struct CommaToken(string Text, bool HasComma, int Beat);
+        public static Fraction Unit(BigInteger denominator) =>
+            denominator > 0 ? new Fraction(BigInteger.One, denominator) : Zero;
+
+        public static Fraction operator +(Fraction left, Fraction right) =>
+            Normalize(
+                left.Numerator * right.Denominator + right.Numerator * left.Denominator,
+                left.Denominator * right.Denominator);
+
+        public static Fraction operator *(Fraction value, BigInteger multiplier) =>
+            Normalize(value.Numerator * multiplier, value.Denominator);
+
+        private static Fraction Normalize(BigInteger numerator, BigInteger denominator)
+        {
+            if (numerator.IsZero)
+                return Zero;
+            var divisor = BigInteger.GreatestCommonDivisor(BigInteger.Abs(numerator), denominator);
+            return new Fraction(numerator / divisor, denominator / divisor);
+        }
+    }
 }

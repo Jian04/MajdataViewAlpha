@@ -3,17 +3,11 @@ using UnityEngine;
 #nullable enable
 public class MultTouchHandler : MonoBehaviour
 {
-    private readonly List<TouchDrop>[] touchSlots = new List<TouchDrop>[33]; // C,A1-8,B1-8,D1-8,E1-8
+    private readonly List<TouchDrop>[] touchSlots = new List<TouchDrop>[33];
 
-    // Start is called before the first frame update
     private void Start()
     {
         for (var i = 0; i < 33; i++) touchSlots[i] = new List<TouchDrop>();
-    }
-
-    // Update is called once per frame
-    private void Update()
-    {
     }
 
     private int getAreaIndex(char area, int pos)
@@ -22,7 +16,7 @@ public class MultTouchHandler : MonoBehaviour
         switch (area)
         {
             case 'A':
-                return 0 + pos;
+                return pos;
             case 'B':
                 return 8 + pos;
             case 'D':
@@ -30,7 +24,6 @@ public class MultTouchHandler : MonoBehaviour
             case 'E':
                 return 24 + pos;
         }
-
         return 0;
     }
 
@@ -50,12 +43,8 @@ public class MultTouchHandler : MonoBehaviour
     {
         var areaIndex = getAreaIndex(obj.areaPosition, obj.startPosition);
         var touchSlot = touchSlots[areaIndex];
-
-        // Notes are destroyed out of order when seeking or previewing. Removing the
-        // first element corrupts the stack for every remaining touch in this area.
         if (!touchSlot.Remove(obj))
             return;
-
         foreach (var each in touchSlot) each.layerDown();
     }
 }

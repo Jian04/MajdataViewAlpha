@@ -1,4 +1,4 @@
-﻿<Window x:Name="SoundSettingWindow" x:Class="MajdataEdit.SoundSetting"
+<Window x:Name="SoundSettingWindow" x:Class="MajdataEdit.SoundSetting"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -8,7 +8,7 @@
         lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit"
         lex:ResxLocalizationProvider.DefaultDictionary="Langs"
         mc:Ignorable="d"
-        Title="{lex:Loc Key=SoundSettings}" Height="381" Width="1149" Background="{DynamicResource WindowBackground}" MinHeight="290"
+        Title="{lex:Loc Key=SoundSettings}" Height="381" Width="1274" Background="{DynamicResource WindowBackground}" MinHeight="290"
         MinWidth="646" ResizeMode="NoResize" Loaded="SoundSettingWindow_Loaded" Closing="SoundSettingWindow_Closing">
     <Grid>
         <Grid HorizontalAlignment="Left" Margin="10,10,0,56" Width="120" Background="#FF272727"
@@ -139,6 +139,20 @@
                     TickPlacement="TopLeft" TickFrequency="0.05" IsSnapToTickEnabled="True" Maximum="1" Value="1"
                     Opacity="0.7" />
             <Label Content="Hanabi" Margin="30,21,32,0" VerticalAlignment="Top"
+                   Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
+        </Grid>
+        <Grid HorizontalAlignment="Left" Margin="1135,10,0,56" Width="120" Background="#FF272727"
+              ToolTip="{lex:Loc Key=SoundMineTip}">
+            <Label x:Name="Mine_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
+                   Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
+                   HorizontalContentAlignment="Center" />
+            <ProgressBar x:Name="Mine_Level" HorizontalAlignment="Center" Margin="51,51,51,50" Width="18"
+                         Orientation="Vertical" Maximum="41" Foreground="#FF808080" Opacity="0.69"
+                         Background="{x:Null}" BorderBrush="{x:Null}" />
+            <Slider x:Name="Mine_Slider" Margin="42,51,42,50" Orientation="Vertical" HorizontalAlignment="Center"
+                    TickPlacement="TopLeft" TickFrequency="0.05" IsSnapToTickEnabled="True" Maximum="1" Value="1"
+                    Opacity="0.7" />
+            <Label Content="Mine" Margin="30,21,32,0" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
         <Grid HorizontalAlignment="Center" Margin="0,295,0,10">

@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using Assets.Scripts.Types;
 #nullable enable
 namespace Assets.Scripts
@@ -8,13 +8,28 @@ namespace Assets.Scripts
         public char areaPosition;
         public bool isFirework;
         public bool isBreak;
+        public bool isMine;
         public Material colorOverrideMaterial;
         public float noteScale = 1f;
         public float noteScaleX = 1f;
         public float noteScaleY = 1f;
+        private Vector2? liveScaleDefault;
 
         public GameObject tapEffect;
         public GameObject judgeEffect;
+
+        public override void ApplyLiveScale(Vector2? scale)
+        {
+            liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
+            var previous = new Vector2(noteScaleX, noteScaleY);
+            var value = scale ?? liveScaleDefault.Value;
+            noteScaleX = value.x;
+            noteScaleY = value.y;
+            if (previous.x != 0f && previous.y != 0f)
+                transform.localScale = Vector3.Scale(
+                    transform.localScale,
+                    new Vector3(value.x / previous.x, value.y / previous.y, 1f));
+        }
 
 
         protected Sprite[] judgeText;
@@ -25,7 +40,7 @@ namespace Assets.Scripts
         {
             if (sensor.Type == SensorType.C)
                 return Quaternion.Euler(Vector3.zero);
-            var d = Vector3.zero - transform.position;
+            var d = -GetFixedFeedbackPosition();
             var deg = 180 + Mathf.Atan2(d.x, d.y) * Mathf.Rad2Deg;
 
             return Quaternion.Euler(new Vector3(0, 0, -deg));

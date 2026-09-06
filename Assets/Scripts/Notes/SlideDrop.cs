@@ -1,5 +1,6 @@
-﻿using Assets.Scripts.Interfaces;
+using Assets.Scripts.Interfaces;
 using Assets.Scripts.Types;
+using MajdataCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,11 +20,17 @@ public class SlideDrop : NoteLongDrop, IFlasher
 
     public bool isMirror;
     public bool isDZoneEnd;
+    // The prefab Animator binds its alpha curves to the prefab's own bar children.
+    // D-zone routes are rebuilt in code and may add bars, which the Animator cannot
+    // reach, so those routes drive the fade-in themselves.
+    private bool routeRebuilt;
     public bool isReverse;
     public int rotationPosition = -1;
     public bool isJustR;
     public bool isSpecialFlip; // fixes known star problem
     public bool isBreak;
+    public bool isMine;
+    public bool suppressGuideStarFadeIn;
 
     public float timeStart;
 
@@ -43,13 +50,22 @@ public class SlideDrop : NoteLongDrop, IFlasher
     public Material breakMaterial;
     // ALPHA: set by JsonDataLoader to override fill color
     public Material colorOverrideMaterial;
+    public Material guideStarMaterial;
     public string slideType;
+    public string pathExpression;
+    public SlidePathSegmentData pathSegment;
     public float noteScaleX = 1f;
     public float noteScaleY = 1f;
+    public float guideStarScaleX = 1f;
+    public float guideStarScaleY = 1f;
+    private Vector2? liveScaleDefault;
+    private Vector2? liveGuideStarScaleDefault;
 
     List<SensorType> boundSensors = new();
     List<Sensor> judgeSensors = new();
     List<Sensor> triggerSensors = new(); // AutoPlay; sensors already triggered
+    private readonly List<Sensor> previousTriggerSensors = new();
+    private readonly List<(Sensor Sensor, RectTransform Rect)> sensorGeometry = new();
     List<JudgeArea> judgeQueue = new(); // Judgement queue
     List<JudgeArea> _judgeQueue = new(); // Judgement queue
 
@@ -66,7 +82,10 @@ public class SlideDrop : NoteLongDrop, IFlasher
     public float GetAppearanceStartOffset()
     {
         var fadeLeadScale = 1f - Mathf.Clamp(starSpeed, -1f, 1f);
-        return (-3.926913f / speed) * fadeLeadScale;
+        var motionSpeed = Mathf.Abs(speed);
+        return motionSpeed <= 0.0001f
+            ? 0f
+            : (-3.926913f / motionSpeed) * fadeLeadScale;
     }
     
 
@@ -100,6 +119,52 @@ public class SlideDrop : NoteLongDrop, IFlasher
     bool isInitialized = false; // Prevent duplicate initialization
     bool isDestroying = false; // Prevent duplicate destruction
 
+    public override void ApplyLiveScale(Vector2? scale)
+    {
+        liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
+        var previous = new Vector2(noteScaleX, noteScaleY);
+        var value = scale ?? liveScaleDefault.Value;
+        noteScaleX = value.x;
+        noteScaleY = value.y;
+        if (previous.x == 0f || previous.y == 0f)
+            return;
+
+        var ratio = new Vector3(value.x / previous.x, value.y / previous.y, 1f);
+        foreach (var bar in slideBars)
+            if (bar != null)
+                bar.transform.localScale = Vector3.Scale(bar.transform.localScale, ratio);
+    }
+
+    // COLOR paints a slide's route and leaves the moving guide star to the "star"
+    // category. The live commands have to paint exactly the same thing, and the
+    // route is not a child of the note object, so nothing generic can reach it:
+    // this used to hand back only what the base class found, which is why COLORV
+    // left the arc untouched while COLOR coloured it.
+    protected override IEnumerable<SpriteRenderer> GetLiveVisualRenderers()
+    {
+        foreach (var renderer in base.GetLiveVisualRenderers())
+            if (renderer != null && renderer != spriteRenderer_star)
+                yield return renderer;
+        foreach (var renderer in slideBarRenderers)
+            if (renderer != null)
+                yield return renderer;
+    }
+
+    public override void ApplyLiveGuideStarColor(Color? color) =>
+        ApplyLiveRendererColor(spriteRenderer_star, color);
+
+    public override void ApplyLiveGuideStarAlpha(float? alpha) =>
+        ApplyLiveRendererAlpha(spriteRenderer_star, alpha);
+
+    public override void ApplyLiveGuideStarScale(Vector2? scale)
+    {
+        liveGuideStarScaleDefault ??= new Vector2(
+            guideStarScaleX, guideStarScaleY);
+        var value = scale ?? liveGuideStarScaleDefault.Value;
+        guideStarScaleX = value.x;
+        guideStarScaleY = value.y;
+    }
+
     /// <summary>
     /// Initializes the Slide
     /// </summary>
@@ -109,7 +174,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
             return;
         isInitialized = true;
         slideOK = transform.GetChild(transform.childCount - 1).gameObject; //slideok is the last one        
-        objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
+        if (objectCounter == null) objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
 
         int rotPos = rotationPosition > 0 ? rotationPosition : startPosition;
         if (isMirror)
@@ -143,7 +208,6 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
         AdjustReverseArcJudgeEffectRadius();
         spriteRenderer_star = star_slide.GetComponent<SpriteRenderer>();
-
         if (isBreak)
         {
             spriteRenderer_star.sharedMaterial = breakMaterial;
@@ -187,10 +251,13 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 sr.flipX = true;
         }
 
-        // ALPHA: apply color override to star and all slide bars
+        if (guideStarMaterial != null)
+            spriteRenderer_star.sharedMaterial = guideStarMaterial;
+
+        // The slide override applies to the route only. The moving guide star
+        // follows the "star" visual category.
         if (colorOverrideMaterial != null)
         {
-            spriteRenderer_star.sharedMaterial = colorOverrideMaterial;
             foreach (var renderer in slideBarRenderers)
                 renderer.sharedMaterial = colorOverrideMaterial;
         }
@@ -204,21 +271,23 @@ public class SlideDrop : NoteLongDrop, IFlasher
         fullFadeInTime = Math.Min(fadeInTime + 0.2f, 0);
         var interval = fullFadeInTime - fadeInTime;
         fadeInAnimator = this.GetComponent<Animator>();
-        if (interval > 0.0001f)
+        if (fadeInAnimator != null && interval > 0.0001f && !routeRebuilt)
         {
             fadeInAnimator.speed = 0.2f / interval;
             fadeInAnimator.SetTrigger("slide");
         }
-        else
-        {
+        else if (fadeInAnimator != null)
             fadeInAnimator.enabled = false;
-            setSlideBarAlpha(0f);
-        }
+        setSlideBarAlpha(0f);
 
         var sManagerObj = GameObject.Find("Sensors");
         var count = sManagerObj.transform.childCount;
         for (int i = 0; i < count; i++)
-            sensors.Add(sManagerObj.transform.GetChild(i).gameObject);
+        {
+            var child = sManagerObj.transform.GetChild(i);
+            sensors.Add(child.gameObject);
+            sensorGeometry.Add((child.GetComponent<Sensor>(), child.GetComponent<RectTransform>()));
+        }
         sManager = sManagerObj.GetComponent<SensorManager>();
 
         GetSensors(sensors.Select(x => x.GetComponent<RectTransform>())
@@ -350,11 +419,24 @@ public class SlideDrop : NoteLongDrop, IFlasher
         var startCorrection = start - prefabStart;
         var endCorrection = end - prefabEnd;
         var pathKind = GetDZonePathKind();
+        // A circular route has an exact tangent at every point, so the sprites are
+        // aimed along it. Reusing the prefab's own angles instead meant looking them
+        // up by a rounded bar index, which made the arc of "7^1d" wobble.
+        var useSegmentTangentRotation = pathKind is
+            DZonePathKind.ViaCenter or DZonePathKind.AnchoredMiddle or
+            DZonePathKind.Lightning or DZonePathKind.OuterCircle;
+        var spriteTangentOffset = useSegmentTangentRotation
+            ? GetSpriteTangentOffset(originalRoute, originalDistances, originalRotations)
+            : 0f;
         var deformedRoute = pathKind switch
         {
             DZonePathKind.Line => BuildStraightRoute(originalRoute.Length, start, end),
             DZonePathKind.OuterCircle => BuildOuterCircleRoute(originalRoute, start, end),
-            DZonePathKind.AnchoredMiddle => BuildAnchoredMiddleRoute(originalRoute, start, end),
+            DZonePathKind.AnchoredMiddle => TryGetLargeVTurnPosition(out var turnPosition)
+                ? BuildViaPointRoute(originalRoute.Length, start, turnPosition, end)
+                : BuildAnchoredMiddleRoute(originalRoute, start, end),
+            DZonePathKind.Lightning => BuildLightningRoute(originalRoute, start, end),
+            DZonePathKind.ViaCenter => BuildViaCenterRoute(originalRoute.Length, start, end),
             DZonePathKind.InnerCircle => BuildTangentCircleRoute(
                 originalRoute, start, end, slideType.StartsWith("pq", StringComparison.Ordinal)),
             _ => new Vector3[originalRoute.Length]
@@ -376,6 +458,16 @@ public class SlideDrop : NoteLongDrop, IFlasher
 
         var deformedDistances = BuildCumulativeDistances(deformedRoute);
         var deformedLength = deformedDistances[^1];
+        // The route is geometry, and geometry can come out unusable in ways no
+        // amount of text validation predicts. Saying so is the difference between
+        // a note the author can find and a note that just is not there.
+        if (float.IsNaN(deformedLength) || float.IsInfinity(deformedLength))
+            ReportUnrenderable(
+                $"{pathKind} route came out NaN, the slide cannot be drawn");
+        else if (deformedLength <= 0.0001f)
+            ReportUnrenderable(
+                $"{pathKind} route collapsed to a single point, " +
+                "the slide cannot be drawn");
         AlignDZoneJudgeEffect(
             originalRoute,
             originalDistances,
@@ -390,7 +482,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
         for (var i = 0; i < logicalBarCount; i++)
         {
             var progress = (i + 1f) / (logicalBarCount + 1f);
-            var position = SamplePolyline(deformedRoute, deformedDistances, progress * deformedLength);
+            var position = SamplePolyline(
+                deformedRoute, deformedDistances, progress * deformedLength);
             routeBarPositions.Add(position);
             slidePositions.Add(position);
 
@@ -399,7 +492,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
             var newTangent = SamplePolylineTangent(
                 deformedRoute, deformedDistances, progress * deformedLength);
             var tangentDelta = Vector2.SignedAngle(oldTangent, newTangent);
-            var rotation = Quaternion.AngleAxis(tangentDelta, Vector3.forward) * originalRotations[i];
+            var rotation = useSegmentTangentRotation
+                ? RotationFromTangent(newTangent, spriteTangentOffset)
+                : Quaternion.AngleAxis(tangentDelta, Vector3.forward) * originalRotations[i];
             slideRotations.Add(Quaternion.Euler(
                 rotation.eulerAngles + new Vector3(0f, 0f, 18f)));
         }
@@ -430,8 +525,10 @@ public class SlideDrop : NoteLongDrop, IFlasher
             var newTangent = SamplePolylineTangent(
                 deformedRoute, deformedDistances, progress * deformedLength);
             var tangentDelta = Vector2.SignedAngle(oldTangent, newTangent);
-            bar.transform.rotation = Quaternion.AngleAxis(tangentDelta, Vector3.forward) *
-                                     originalRotations[sourceIndex];
+            bar.transform.rotation = useSegmentTangentRotation
+                ? RotationFromTangent(newTangent, spriteTangentOffset)
+                : Quaternion.AngleAxis(tangentDelta, Vector3.forward) *
+                  originalRotations[sourceIndex];
             bar.transform.localScale = originalScales[sourceIndex];
             visualBars.Add(bar);
         }
@@ -440,6 +537,14 @@ public class SlideDrop : NoteLongDrop, IFlasher
             originalBars[i].SetActive(false);
         slideBars.Clear();
         slideBars.AddRange(visualBars);
+        if (slideBars.Count == 0)
+            ReportUnrenderable(
+                $"{pathKind} route produced no slide bars, nothing will be drawn");
+        // A deformed route builds bars of its own, and a bar that was not there
+        // when the live colour was put on is a bar still wearing the old one -
+        // an arc that stays its original colour while its guide star changes.
+        InvalidateLiveVisual();
+        routeRebuilt = true;
     }
 
     private enum DZonePathKind
@@ -448,7 +553,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
         Line,
         OuterCircle,
         AnchoredMiddle,
-        InnerCircle
+        Lightning,
+        InnerCircle,
+        ViaCenter
     }
 
     private DZonePathKind GetDZonePathKind()
@@ -459,8 +566,12 @@ public class SlideDrop : NoteLongDrop, IFlasher
             return DZonePathKind.Line;
         if (slideType.StartsWith("circle", StringComparison.Ordinal))
             return DZonePathKind.OuterCircle;
-        if (slideType == "s")
+        if (slideType.StartsWith("v", StringComparison.Ordinal))
+            return DZonePathKind.ViaCenter;
+        if (slideType.StartsWith("L", StringComparison.Ordinal))
             return DZonePathKind.AnchoredMiddle;
+        if (slideType == "s")
+            return DZonePathKind.Lightning;
         if (slideType.IndexOf("pq", StringComparison.Ordinal) >= 0)
             return DZonePathKind.InnerCircle;
         return DZonePathKind.DeformedPrefab;
@@ -472,6 +583,64 @@ public class SlideDrop : NoteLongDrop, IFlasher
         for (var i = 0; i < route.Length; i++)
             route[i] = Vector3.Lerp(start, end, i / Math.Max(1f, route.Length - 1f));
         return route;
+    }
+
+    private static Vector3[] BuildViaCenterRoute(int pointCount, Vector3 start, Vector3 end)
+        => BuildViaPointRoute(pointCount, start, Vector3.zero, end);
+
+    private static Vector3[] BuildViaPointRoute(
+        int pointCount,
+        Vector3 start,
+        Vector3 middle,
+        Vector3 end)
+    {
+        var route = new Vector3[pointCount];
+        var firstLength = Vector3.Distance(start, middle);
+        var secondLength = Vector3.Distance(middle, end);
+        var totalLength = firstLength + secondLength;
+        var split = totalLength > 0.0001f
+            ? Mathf.Clamp(
+                Mathf.RoundToInt((pointCount - 1) * firstLength / totalLength),
+                1,
+                Math.Max(1, pointCount - 2))
+            : Math.Max(1, (pointCount - 1) / 2);
+        for (var i = 0; i < pointCount; i++)
+        {
+            route[i] = i <= split
+                ? Vector3.Lerp(start, middle, i / (float)split)
+                : Vector3.Lerp(middle, end, (i - split) / (float)Math.Max(1, pointCount - 1 - split));
+        }
+        return route;
+    }
+
+    private bool TryGetLargeVTurnPosition(out Vector3 turnPosition)
+    {
+        turnPosition = Vector3.zero;
+        if (pathSegment?.hasMiddle == true)
+        {
+            turnPosition = getPositionFromDistance(
+                4.8f,
+                pathSegment.middlePosition +
+                (pathSegment.middleIsDZone ? -0.5f : 0f));
+            return true;
+        }
+        // Without a parsed segment the turn comes from the shared parser rather than
+        // from scanning for 'V' by hand, which mislocated the turn of a D-zone route.
+        if (string.IsNullOrWhiteSpace(pathExpression) ||
+            !SlidePathParser.TryParsePath(pathExpression, out var path))
+            return false;
+
+        foreach (var segment in path.segments)
+        {
+            if (!segment.hasMiddle)
+                continue;
+            turnPosition = getPositionFromDistance(
+                4.8f,
+                segment.middlePosition + (segment.middleIsDZone ? -0.5f : 0f));
+            return true;
+        }
+
+        return false;
     }
 
     private static Vector3[] BuildAnchoredMiddleRoute(
@@ -507,6 +676,42 @@ public class SlideDrop : NoteLongDrop, IFlasher
         route[0] = start;
         route[^1] = end;
         return route;
+    }
+
+    private static Vector3[] BuildLightningRoute(
+        IReadOnlyList<Vector3> originalRoute,
+        Vector3 start,
+        Vector3 end)
+    {
+        var firstCorner = -1;
+        var lastCorner = -1;
+        for (var i = 1; i < originalRoute.Count - 1; i++)
+        {
+            var incoming = originalRoute[i] - originalRoute[i - 1];
+            var outgoing = originalRoute[i + 1] - originalRoute[i];
+            if (incoming.sqrMagnitude <= 0.0001f || outgoing.sqrMagnitude <= 0.0001f)
+                continue;
+            if (Mathf.Abs(Vector2.SignedAngle(incoming, outgoing)) < 30f)
+                continue;
+            if (firstCorner < 0)
+                firstCorner = i;
+            lastCorner = i;
+        }
+
+        if (firstCorner < 1 || lastCorner <= firstCorner ||
+            lastCorner >= originalRoute.Count - 1)
+            return BuildStraightRoute(originalRoute.Count, start, end);
+
+        // Preserve the two authored corners themselves. Resampling this polyline
+        // here can place one route edge across a corner and creates a fourth,
+        // diagonal direction that does not exist in the original s/z route.
+        return new[]
+        {
+            start,
+            originalRoute[firstCorner],
+            originalRoute[lastCorner],
+            end
+        };
     }
 
     private static Vector3[] BuildOuterCircleRoute(
@@ -549,7 +754,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         return route;
     }
 
-    private static Vector3[] BuildTangentCircleRoute(
+    internal static Vector3[] BuildTangentCircleRoute(
         IReadOnlyList<Vector3> originalRoute,
         Vector3 start,
         Vector3 end,
@@ -564,8 +769,12 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 out var radius,
                 out var direction,
                 centerAtOrigin) ||
-            !TryGetTangentPoint(center, radius, start, originalRoute[circleStart], out var entry) ||
-            !TryGetTangentPoint(center, radius, end, originalRoute[circleEnd], out var exit))
+            !TryGetDirectedTangentPoint(
+                center, radius, start, originalRoute[circleStart],
+                direction, true, out var entry) ||
+            !TryGetDirectedTangentPoint(
+                center, radius, end, originalRoute[circleEnd],
+                direction, false, out var exit))
         {
             for (var i = 0; i < route.Length; i++)
                 route[i] = Vector3.Lerp(start, end, i / (float)Math.Max(1, route.Length - 1));
@@ -574,13 +783,26 @@ public class SlideDrop : NoteLongDrop, IFlasher
 
         var startAngle = Mathf.Atan2(entry.y - center.y, entry.x - center.x);
         var endAngle = Mathf.Atan2(exit.y - center.y, exit.x - center.x);
-        var sweep = GetDirectedSweep(startAngle, endAngle, direction);
+        var sourceSweep = MeasureRouteSweep(
+            originalRoute, circleStart, circleEnd, center, direction);
+        var sweep = PreserveRouteTurns(
+            GetDirectedSweep(startAngle, endAngle, direction),
+            sourceSweep,
+            direction);
         var entryLength = Vector3.Distance(start, entry);
         var arcLength = Mathf.Abs(sweep) * radius;
         var exitLength = Vector3.Distance(exit, end);
         var totalLength = entryLength + arcLength + exitLength;
+        // Returning the array as allocated would hand back a route of all zeros,
+        // collapsing the whole slide onto the origin, which reads on screen as the
+        // slide simply not being there. Degenerate geometry falls back to the
+        // straight line, same as when the tangent solve fails above.
         if (totalLength <= 0.0001f)
+        {
+            for (var i = 0; i < route.Length; i++)
+                route[i] = Vector3.Lerp(start, end, i / (float)Math.Max(1, route.Length - 1));
             return route;
+        }
 
         for (var i = 0; i < route.Length; i++)
         {
@@ -617,6 +839,111 @@ public class SlideDrop : NoteLongDrop, IFlasher
         route[0] = start;
         route[^1] = end;
         return route;
+    }
+
+    internal static Vector3[] BuildAdaptiveTangentCircleRoute(
+        IReadOnlyList<Vector3> originalRoute,
+        Vector3 start,
+        Vector3 end,
+        bool centerAtOrigin,
+        float maxStep = 0.08f)
+        => BuildAdaptiveTangentCircleRoute(
+            originalRoute, start, end, centerAtOrigin, null, maxStep);
+
+    internal static Vector3[] BuildAdaptiveTangentCircleRouteAround(
+        IReadOnlyList<Vector3> originalRoute,
+        Vector3 start,
+        Vector3 end,
+        Vector3 center,
+        float maxStep = 0.08f)
+        => BuildAdaptiveTangentCircleRoute(
+            originalRoute, start, end, false, center, maxStep);
+
+    private static Vector3[] BuildAdaptiveTangentCircleRoute(
+        IReadOnlyList<Vector3> originalRoute,
+        Vector3 start,
+        Vector3 end,
+        bool centerAtOrigin,
+        Vector3? requestedCenter,
+        float maxStep)
+    {
+        maxStep = Mathf.Max(0.01f, maxStep);
+        if (!TryFindCircleSection(
+                originalRoute,
+                out var circleStart,
+                out var circleEnd,
+                out var sourceCenter,
+                out var radius,
+                out var direction,
+                centerAtOrigin))
+        {
+            return BuildSampledLine(start, end, maxStep);
+        }
+
+        var center = requestedCenter ?? sourceCenter;
+        var centerOffset = center - sourceCenter;
+        if (
+            !TryGetDirectedTangentPoint(
+                center, radius, start,
+                originalRoute[circleStart] + centerOffset,
+                direction, true, out var entry) ||
+            !TryGetDirectedTangentPoint(
+                center, radius, end,
+                originalRoute[circleEnd] + centerOffset,
+                direction, false, out var exit))
+        {
+            return BuildSampledLine(start, end, maxStep);
+        }
+
+        var points = new List<Vector3>();
+        AppendSampledLine(points, start, entry, maxStep, includeStart: true);
+
+        var startAngle = Mathf.Atan2(entry.y - center.y, entry.x - center.x);
+        var endAngle = Mathf.Atan2(exit.y - center.y, exit.x - center.x);
+        var sourceSweep = MeasureRouteSweep(
+            originalRoute, circleStart, circleEnd, sourceCenter, direction);
+        var sweep = PreserveRouteTurns(
+            GetDirectedSweep(startAngle, endAngle, direction),
+            sourceSweep,
+            direction);
+        var arcLength = Mathf.Abs(sweep) * radius;
+        var arcSegments = Math.Max(1, Mathf.CeilToInt(arcLength / maxStep));
+        for (var i = 1; i <= arcSegments; i++)
+        {
+            var progress = i / (float)arcSegments;
+            var angle = startAngle + sweep * progress;
+            points.Add(new Vector3(
+                center.x + Mathf.Cos(angle) * radius,
+                center.y + Mathf.Sin(angle) * radius,
+                Mathf.Lerp(entry.z, exit.z, progress)));
+        }
+
+        AppendSampledLine(points, exit, end, maxStep, includeStart: false);
+        points[0] = start;
+        points[^1] = end;
+        return points.ToArray();
+    }
+
+    private static Vector3[] BuildSampledLine(
+        Vector3 start, Vector3 end, float maxStep)
+    {
+        var points = new List<Vector3>();
+        AppendSampledLine(points, start, end, maxStep, includeStart: true);
+        return points.ToArray();
+    }
+
+    private static void AppendSampledLine(
+        ICollection<Vector3> points,
+        Vector3 start,
+        Vector3 end,
+        float maxStep,
+        bool includeStart)
+    {
+        var length = Vector3.Distance(start, end);
+        var segments = Math.Max(1, Mathf.CeilToInt(length / maxStep));
+        var first = includeStart ? 0 : 1;
+        for (var i = first; i <= segments; i++)
+            points.Add(Vector3.Lerp(start, end, i / (float)segments));
     }
 
     private static bool TryFindCircleSection(
@@ -752,29 +1079,62 @@ public class SlideDrop : NoteLongDrop, IFlasher
         double g, double h, double i)
         => a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
 
-    private static bool TryGetTangentPoint(
+    private static bool TryGetDirectedTangentPoint(
         Vector3 center,
         float radius,
         Vector3 point,
         Vector3 preferred,
+        float direction,
+        bool entering,
         out Vector3 tangent)
     {
         tangent = preferred;
         var delta = point - center;
         var distanceSquared = delta.x * delta.x + delta.y * delta.y;
         var radiusSquared = radius * radius;
-        if (distanceSquared <= radiusSquared + 0.0001f)
+        if (distanceSquared < radiusSquared - 0.0001f)
             return false;
+        if (Mathf.Abs(distanceSquared - radiusSquared) <= 0.0001f)
+        {
+            tangent = point;
+            tangent.z = preferred.z;
+            return true;
+        }
 
         var baseScale = radiusSquared / distanceSquared;
-        var offsetScale = radius * Mathf.Sqrt(distanceSquared - radiusSquared) / distanceSquared;
+        var offsetScale = radius * Mathf.Sqrt(distanceSquared - radiusSquared) /
+                          distanceSquared;
         var basePoint = center + delta * baseScale;
         var perpendicular = new Vector3(-delta.y, delta.x, 0f);
         var first = basePoint + perpendicular * offsetScale;
         var second = basePoint - perpendicular * offsetScale;
-        tangent = (first - preferred).sqrMagnitude <= (second - preferred).sqrMagnitude
-            ? first
-            : second;
+
+        float Continuity(Vector3 candidate)
+        {
+            var radial = candidate - center;
+            var circleDirection = direction >= 0f
+                ? new Vector3(-radial.y, radial.x, 0f)
+                : new Vector3(radial.y, -radial.x, 0f);
+            var lineDirection = entering
+                ? candidate - point
+                : point - candidate;
+            if (circleDirection.sqrMagnitude <= 0.000001f ||
+                lineDirection.sqrMagnitude <= 0.000001f)
+                return 1f;
+            return Vector3.Dot(
+                circleDirection.normalized,
+                lineDirection.normalized);
+        }
+
+        var firstScore = Continuity(first);
+        var secondScore = Continuity(second);
+        if (Mathf.Abs(firstScore - secondScore) <= 0.0001f)
+            tangent = (first - preferred).sqrMagnitude <=
+                      (second - preferred).sqrMagnitude
+                ? first
+                : second;
+        else
+            tangent = firstScore > secondScore ? first : second;
         tangent.z = preferred.z;
         return true;
     }
@@ -792,6 +1152,42 @@ public class SlideDrop : NoteLongDrop, IFlasher
             while (sweep > 0f)
                 sweep -= Mathf.PI * 2f;
         }
+        return sweep;
+    }
+
+    private static float MeasureRouteSweep(
+        IReadOnlyList<Vector3> route,
+        int start,
+        int end,
+        Vector3 center,
+        float direction)
+    {
+        var sweep = 0f;
+        for (var index = start + 1; index <= end; index++)
+        {
+            var previous = route[index - 1] - center;
+            var current = route[index] - center;
+            if (previous.sqrMagnitude <= 0.000001f ||
+                current.sqrMagnitude <= 0.000001f)
+                continue;
+            var delta = Vector2.SignedAngle(previous, current) * Mathf.Deg2Rad;
+            if (direction >= 0f && delta < 0f)
+                delta += Mathf.PI * 2f;
+            else if (direction < 0f && delta > 0f)
+                delta -= Mathf.PI * 2f;
+            sweep += delta;
+        }
+        return sweep;
+    }
+
+    private static float PreserveRouteTurns(
+        float sweep,
+        float sourceSweep,
+        float direction)
+    {
+        var turn = direction >= 0f ? Mathf.PI * 2f : -Mathf.PI * 2f;
+        while (Mathf.Abs(sweep) + Mathf.PI < Mathf.Abs(sourceSweep))
+            sweep += turn;
         return sweep;
     }
 
@@ -883,9 +1279,32 @@ public class SlideDrop : NoteLongDrop, IFlasher
     {
         if (points.Count < 2)
             return Vector3.right;
-        var sampleDistance = Mathf.Max(0.01f, distances[^1] * 0.005f);
-        return SamplePolyline(points, distances, targetDistance + sampleDistance) -
-               SamplePolyline(points, distances, targetDistance - sampleDistance);
+
+        targetDistance = Mathf.Clamp(targetDistance, 0f, distances[^1]);
+        var upper = 1;
+        while (upper < distances.Count - 1 && distances[upper] < targetDistance)
+            upper++;
+        var tangent = points[upper] - points[upper - 1];
+        return tangent.sqrMagnitude > 0.0001f ? tangent : Vector3.right;
+    }
+
+    private static float GetSpriteTangentOffset(
+        IReadOnlyList<Vector3> route,
+        IReadOnlyList<float> distances,
+        IReadOnlyList<Quaternion> rotations)
+    {
+        if (rotations.Count == 0)
+            return 0f;
+        var sampleDistance = distances[^1] / (rotations.Count + 1f);
+        var tangent = SamplePolylineTangent(route, distances, sampleDistance);
+        var tangentAngle = Mathf.Atan2(tangent.y, tangent.x) * Mathf.Rad2Deg;
+        return Mathf.DeltaAngle(tangentAngle, rotations[0].eulerAngles.z);
+    }
+
+    private static Quaternion RotationFromTangent(Vector3 tangent, float spriteOffset)
+    {
+        var angle = Mathf.Atan2(tangent.y, tangent.x) * Mathf.Rad2Deg;
+        return Quaternion.Euler(0f, 0f, angle + spriteOffset);
     }
 
     private void AdjustReverseArcJudgeEffectRadius()
@@ -916,6 +1335,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
             return;
         judgeQueue.Clear();
     }
+    private void Awake() => HideSlideBarsUntilInitialized(transform);
+
     private void Start()
     {
         Initialize();
@@ -934,10 +1355,13 @@ public class SlideDrop : NoteLongDrop, IFlasher
                                    .Select(x => x.Key);
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
         boundSensors.AddRange(allSensors);
+        // The bars exist now, so whatever live look is current has to be put on
+        // them; LateUpdate does it this same frame.
+        InvalidateLiveVisual();
     }
     private void BindJudgeInputWhenReady()
     {
-        if (previewOnly || isJudgeInputBound || !canCheck)
+        if (JudgmentDisabled || isJudgeInputBound || !canCheck)
             return;
 
         foreach (var sensor in boundSensors)
@@ -957,22 +1381,23 @@ public class SlideDrop : NoteLongDrop, IFlasher
 
     void GetSensors(RectTransform[] sensors)
     {
+        var regions = new List<(Sensor Sensor, Vector3 Position, float RadiusSquared)>();
+        foreach (var rect in sensors)
+        {
+            var sensor = rect.GetComponent<Sensor>();
+            if (IgnoreSensorGroup(sensor.Group))
+                continue;
+            var radius = Math.Max(rect.rect.width * rect.lossyScale.x,
+                rect.rect.height * rect.lossyScale.y) / 2;
+            regions.Add((sensor, rect.position, radius * radius));
+        }
         Sensor lastSensor = null;
         foreach (var pos in routeBarPositions)
         {
-            foreach (var s in sensors)
+            foreach (var region in regions)
             {
-                var sensor = s.GetComponent<Sensor>();
-                if (IgnoreSensorGroup(sensor.Group))
-                    continue;
-
-                var rCenter = s.position;
-                var rWidth = s.rect.width * s.lossyScale.x;
-                var rHeight = s.rect.height * s.lossyScale.y;
-
-                var radius = Math.Max(rWidth, rHeight) / 2;
-
-                if ((pos - rCenter).sqrMagnitude <= radius * radius)
+                var sensor = region.Sensor;
+                if ((pos - region.Position).sqrMagnitude <= region.RadiusSquared)
                 {
                     if(lastSensor is null || sensor != lastSensor)
                     {
@@ -987,7 +1412,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     }
     private void FixedUpdate()
     {
-        if (previewOnly)
+        if (JudgmentDisabled || JudgmentSuspended)
             return;
         if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
             return;
@@ -1043,27 +1468,59 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 DestroySelf();
             return;
         }
+        // A paused preview never judges, so nothing retires a Slide once the clock
+        // is past it. Without this the paused timeline piles up every path and guide
+        // star the caret has already crossed. Tap/Hold/Touch already do the same.
+        if (IsPausedTimelinePreview &&
+            timeProvider.AudioTime > time + Mathf.Max(0f, LastFor))
+        {
+            setSlideBarAlpha(0f);
+            star_slide.SetActive(false);
+            if (slideOK != null)
+                slideOK.SetActive(false);
+            return;
+        }
+        if (JudgmentDisabled)
+            foreach (var bar in slideBars)
+                if (bar != null)
+                    bar.SetActive(true);
         // During Slide fade-in, opacity rises from 0 to 0.55 over 200ms
         var startiming = timeProvider.AudioTime - timeStart;
         if (startiming <= 0f)
         {
+            if (IsPausedTimelinePreview)
+                star_slide.SetActive(false);
             if (fadeInTime >= -0.0001f)
             {
-                fadeInAnimator.enabled = false;
+                if (fadeInAnimator != null)
+                    fadeInAnimator.enabled = false;
                 setSlideBarAlpha(startiming >= 0f ? 1f : 0f);
                 return;
             }
             if (startiming >= -0.05f)
             {
-                fadeInAnimator.enabled = false;
+                if (fadeInAnimator != null)
+                    fadeInAnimator.enabled = false;
                 setSlideBarAlpha(1f);
             }
-            else if (!fadeInAnimator.enabled && startiming >= fadeInTime)
+            else if (routeRebuilt)
+            {
+                var lead = fullFadeInTime - fadeInTime;
+                var progress = lead > 0.0001f
+                    ? Mathf.Clamp01((startiming - fadeInTime) / lead)
+                    : (startiming >= fadeInTime ? 1f : 0f);
+                setSlideBarAlpha(progress * 0.55f);
+            }
+            else if (fadeInAnimator != null &&
+                     !fadeInAnimator.enabled && startiming >= fadeInTime)
+            {
                 fadeInAnimator.enabled = true;
+            }
             return;
             
         }
-        fadeInAnimator.enabled = false;
+        if (fadeInAnimator != null)
+            fadeInAnimator.enabled = false;
         setSlideBarAlpha(1f);
 
         star_slide.SetActive(true);
@@ -1072,7 +1529,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
         {
             canShine = true;
             float alpha;
-            if (ConnectInfo.IsConnSlide && !ConnectInfo.IsGroupPartHead)
+            if (suppressGuideStarFadeIn ||
+                ConnectInfo.IsConnSlide && !ConnectInfo.IsGroupPartHead)
                 alpha = 0;
             else
             {
@@ -1083,7 +1541,10 @@ public class SlideDrop : NoteLongDrop, IFlasher
             }
 
             spriteRenderer_star.color = new Color(1, 1, 1, alpha);
-            star_slide.transform.localScale = new Vector3(alpha + 0.5f, alpha + 0.5f, alpha + 0.5f);
+            star_slide.transform.localScale = new Vector3(
+                (alpha + 0.5f) * guideStarScaleX,
+                (alpha + 0.5f) * guideStarScaleY,
+                1f);
             star_slide.transform.position = slidePositions[0];
             applyStarRotation(slideRotations[0]);
         }
@@ -1094,6 +1555,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
         Check();
     }
+
     public float GetSlideLength()
     {
         float len = 0;
@@ -1111,7 +1573,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     /// </summary>
     public void Check()
     {
-        if (previewOnly)
+        if (JudgmentDisabled || JudgmentSuspended)
             return;
         if (isFinished || !canCheck)
             return;
@@ -1196,11 +1658,13 @@ public class SlideDrop : NoteLongDrop, IFlasher
 
         var starRadius = 0.763736616f;
         var starPos = star_slide.transform.position;
-        var oldList = new List<Sensor>(triggerSensors);
+        previousTriggerSensors.Clear();
+        previousTriggerSensors.AddRange(triggerSensors);
         triggerSensors.Clear();
-        foreach (var s in sensors.Select(x => x.GetComponent<RectTransform>()))
+        foreach (var region in sensorGeometry)
         {
-            var sensor = s.GetComponent<Sensor>();
+            var sensor = region.Sensor;
+            var s = region.Rect;
             if (IgnoreSensorGroup(sensor.Group))
                 continue;
 
@@ -1213,10 +1677,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
             if ((starPos - rCenter).sqrMagnitude <= (radius * radius + starRadius * starRadius))
                 triggerSensors.Add(sensor);
         }
-        var untriggerSensors = oldList.Where(x => !triggerSensors.Contains(x));
-
-        foreach (var s in untriggerSensors)
-            sManager.SetSensorOff(s.Type, guid);
+        foreach (var s in previousTriggerSensors)
+            if (!triggerSensors.Contains(s))
+                sManager.SetSensorOff(s.Type, guid);
         foreach (var s in triggerSensors)
             sManager.SetSensorOn(s.Type, guid);
     }
@@ -1367,7 +1830,10 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 obj.SetActive(false);
 
             if (star_slide != null)
+            {
                 Destroy(star_slide);
+                star_slide = null;
+            }
             Destroy(gameObject);
         }
     }
@@ -1399,7 +1865,12 @@ public class SlideDrop : NoteLongDrop, IFlasher
         if (isJudgeInputBound)
             foreach (var sensor in boundSensors)
                 inputManager?.UnbindSensor(Check, sensor);
-        if (previewOnly || HttpHandler.IsReloding)
+        if (star_slide != null)
+        {
+            Destroy(star_slide);
+            star_slide = null;
+        }
+        if (JudgmentDisabled || HttpHandler.IsReloding)
             return;
         ClearTriggeredSensor();
         if (ConnectInfo.Parent != null)
@@ -1423,7 +1894,10 @@ public class SlideDrop : NoteLongDrop, IFlasher
             objectCounter.ReportResult(this, judgeResult, isBreak);
             if (isBreak && judgeResult == JudgeType.Perfect)
                 slideOK.GetComponent<Animator>().runtimeAnimatorController = judgeBreakShine;
-            slideOK.SetActive(true);
+            if (isMine && !NoteEffectManager.ShowMineHitFeedback)
+                Destroy(slideOK);
+            else
+                slideOK.SetActive(true);
         }
         else
         {
@@ -1438,28 +1912,54 @@ public class SlideDrop : NoteLongDrop, IFlasher
     void UpdateStar()
     {
         spriteRenderer_star.color = Color.white;
-        star_slide.transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
+        star_slide.transform.localScale = new Vector3(
+            1.5f * guideStarScaleX,
+            1.5f * guideStarScaleY,
+            1f);
 
         var process = GetSlidePathProgress(timeProvider.AudioTime);
         var indexProcess = (slidePositions.Count - 1) * process;
         var index = (int)indexProcess;
         var pos = indexProcess - index;
+        // A fake slide is never traced: the star travels but the trail stays put,
+        // exactly like a missed slide. Timeline preview still wipes as it goes.
+        if (previewOnly && process > 0f && areaStep.Count > 0)
+        {
+            var barIndex = areaStep[
+                Mathf.Clamp(
+                    (int)(process * (areaStep.Count - 1)),
+                    0,
+                    areaStep.Count - 1)];
+            HideBar(barIndex);
+        }
 
         if(process == 1)
         {
-            switch (InputManager.Mode)
-            {
-                case AutoPlayMode.Enable:
-                case AutoPlayMode.Random:
-                    var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
-                    HideBar(barIndex);
-                    DestroySelf();
-                    judgeQueue.Clear();
-                    return;
-            }
             star_slide.transform.position = slidePositions.LastOrDefault();
             applyStarRotation(slideRotations.LastOrDefault());
-            if (ConnectInfo.IsConnSlide && !ConnectInfo.IsGroupPartEnd)
+            if (timeProvider.AudioTime < time + LastFor)
+                return;
+            // Auto-play traces the slide on the player's behalf, but a fake slide
+            // is not there to be traced. Hand play already refuses it, so letting
+            // auto-play wipe the trail and retire the note made the same chart
+            // behave two different ways. It ends like a missed slide either way.
+            if (!isFake &&
+                InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
+            {
+                var autoBarIndex = areaStep[(int)(process * (areaStep.Count - 1))];
+                HideBar(autoBarIndex);
+                DestroySelf();
+                judgeQueue.Clear();
+                return;
+            }
+            if (JudgmentDisabled)
+            {
+                star_slide.SetActive(false);
+                return;
+            }
+            if (!JudgmentDisabled &&
+                ConnectInfo.IsConnSlide &&
+                !ConnectInfo.IsGroupPartEnd)
                 DestroySelf(true);
             else if (isFinished && isJudged)
                 DestroySelf();
@@ -1483,25 +1983,24 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 applyStarRotation(newRotation);
             }
         } 
-        switch(InputManager.Mode)
+        if (!isFake &&
+            InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
         {
-            case AutoPlayMode.Enable:
-            case AutoPlayMode.Random:
-                var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
-                RemoveJudgeAreas((int)(process * (judgeQueue.Count - 1)));
-                HideBar(barIndex);
-                break;
+            var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
+            RemoveJudgeAreas((int)(process * (judgeQueue.Count - 1)));
+            HideBar(barIndex);
         }
     }
 
     private float GetSlidePathProgress(float audioTime)
     {
-        return SvController.GetTypedOnlyProgress(time, LastFor, audioTime, "slide");
+        return SvController.GetTypedOnlyProgress(
+            time, LastFor, audioTime, SvController.ForSameStream(scrollType, "slide"));
     }
 
     private float GetTimeProgressForPathProgress(float pathProgress)
     {
-        if (!SvController.HasTypedCurve("slide"))
+        if (!SvController.HasTypedCurve(SvController.ForSameStream(scrollType, "slide")))
             return pathProgress;
 
         var bestTimeProgress = pathProgress;
@@ -1518,6 +2017,16 @@ public class SlideDrop : NoteLongDrop, IFlasher
             bestTimeProgress = timeProgress;
         }
         return bestTimeProgress;
+    }
+
+    private void OnDisable()
+    {
+        // The head disables this component when a paused timeline is dragged back
+        // before the note's reveal window. The guide star is a sibling under
+        // Notes, not a child of this object, so it would otherwise stay visible
+        // while Update is no longer running.
+        if (star_slide != null)
+            star_slide.SetActive(false);
     }
    
     private void setSlideBarAlpha(float alpha)

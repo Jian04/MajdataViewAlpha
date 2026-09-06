@@ -14,7 +14,7 @@ internal sealed class PetAnimator : IDisposable
     private static readonly int[] FrameCounts = { 6, 8, 8, 4, 5, 8, 6, 6, 6 };
     private static readonly int[][] FrameDurations =
     {
-        new[] { 280, 110, 110, 140, 140, 320 },
+        new[] { 3200, 110, 110, 140, 140, 3200 },
         new[] { 120, 120, 120, 120, 120, 120, 120, 220 },
         new[] { 120, 120, 120, 120, 120, 120, 120, 220 },
         new[] { 140, 140, 140, 280 },
@@ -22,7 +22,7 @@ internal sealed class PetAnimator : IDisposable
         new[] { 160, 160, 180, 4000, 180, 180, 220, 400 },
         new[] { 150, 150, 150, 150, 150, 260 },
         new[] { 120, 120, 120, 120, 120, 220 },
-        new[] { 150, 150, 150, 150, 150, 280 }
+        new[] { 2600, 170, 170, 170, 170, 2600 }
     };
 
     private readonly Image previous;

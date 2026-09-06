@@ -5,7 +5,7 @@
         lex:LocalizeDictionary.DesignCulture="zh-CN"
         lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit"
         lex:ResxLocalizationProvider.DefaultDictionary="Langs"
-        Title="{lex:Loc RecordVideo}" Height="560" Width="700" Background="{DynamicResource WindowBackground}"
+        Title="{lex:Loc RecordVideo}" Height="610" Width="700" Background="{DynamicResource WindowBackground}"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         ShowInTaskbar="False" Loaded="RecordVideoWindow_Loaded">
     <Grid Margin="14" Background="{DynamicResource WindowBackground}">
@@ -26,7 +26,7 @@
             <Border Grid.Column="0" Width="180" Height="180" VerticalAlignment="Top"
                     Background="{DynamicResource EditorBackground}" BorderBrush="{DynamicResource MenuSeparator}"
                     BorderThickness="1" CornerRadius="7" Padding="6">
-                <Image x:Name="CoverPreview" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" />
+                <Image x:Name="CoverPreview" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
             </Border>
             <Grid Grid.Column="2">
                 <Grid.RowDefinitions>
@@ -112,8 +112,31 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="{lex:Loc SongCard}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
-                    <ComboBox x:Name="SongDetailStyleBox" Grid.Column="1" Width="180" HorizontalAlignment="Left"><ComboBoxItem Content="{lex:Loc OriginalStyle}" /><ComboBoxItem Content="{lex:Loc OfficialStyleCover}" /></ComboBox>
+                    <Grid Grid.Column="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="180" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="96" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="SongDetailStyleBox" Grid.Column="0">
+                            <ComboBoxItem Content="{lex:Loc OriginalStyle}" />
+                            <ComboBoxItem Content="{lex:Loc OfficialStyleCover}" />
+                        </ComboBox>
+                        <Button x:Name="RefreshPreviewButton" Grid.Column="2" Width="96" Height="28"
+                                Content="{lex:Loc RefreshPreview}" Click="RefreshPreviewButton_Click" />
+                    </Grid>
                 </Grid>
+                <StackPanel x:Name="UtageOptionsPanel" Orientation="Horizontal" Margin="116,4,0,2"
+                            Visibility="Collapsed">
+                    <TextBlock Text="{lex:Loc UtageLabel}" Foreground="{DynamicResource ButtonForeground}"
+                               VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBox x:Name="UtageLabelBox" Width="92" MaxLength="12"
+                             HorizontalContentAlignment="Center" TextWrapping="NoWrap"
+                             HorizontalScrollBarVisibility="Auto" />
+                    <CheckBox x:Name="UtageCoopBox" Content="{lex:Loc UtageCoop}" Margin="14,0,0,0"
+                              VerticalAlignment="Center" />
+                </StackPanel>
                 <Grid Margin="0,4">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="116" />
@@ -128,8 +151,9 @@
                 </Grid>
                 <CheckBox x:Name="SongDetailBox" Content="{lex:Loc ShowSongIntro}" Margin="116,4,0,0" />
                 <CheckBox x:Name="AllPerfectBox" Content="{lex:Loc ShowAllPerfectEnding}" Margin="116,4,0,0" />
-                <TextBlock Text="{lex:Loc RecordingSafeLimit}" Margin="116,4,0,0"
-                           Foreground="{DynamicResource HelperForeground}" FontSize="11" />
+                <TextBlock Text="{lex:Loc RecordingSafeLimit}" Margin="116,4,8,0"
+                           Foreground="{DynamicResource HelperForeground}" FontSize="11"
+                           TextWrapping="Wrap" />
             </StackPanel>
         </Grid>
 

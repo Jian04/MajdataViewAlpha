@@ -1,12 +1,13 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using MajdataCore;
 
 namespace MajdataEdit;
 
 internal static class NotePreviewModule
 {
     private static readonly string[] SlideMarkers =
-        { "pp", "qq", "rp", "rq", "-", "^", "<", ">", "v", "V", "p", "q", "s", "z", "w" };
+        { "pp", "qq", "rp", "rq", "-", "^", "<", ">", "v", "V", "P", "Q", "p", "q", "s", "z", "w" };
 
     public static string? ExtractNoteGroupAtCaret(string text, int caret)
     {
@@ -70,13 +71,18 @@ internal static class NotePreviewModule
 
     private static List<string> ExpandSingleTiming(string cleaned)
     {
-        var branches = cleaned.Split('/');
+        // Same division the player uses, so the preview shows the notes that will
+        // actually be judged. Same-head groups stay whole: their branches share the
+        // head's appearance and are rebuilt below.
+        var branches = NoteSlotParser.SplitTopLevel(cleaned);
         var expandedGroups = new List<string> { "" };
+        var hasPreviewableBranch = false;
         foreach (var branch in branches)
         {
             var candidates = ExpandSingleBranch(branch);
             if (candidates.Count == 0)
-                return new List<string>();
+                continue;
+            hasPreviewableBranch = true;
 
             var next = new List<string>();
             foreach (var prefix in expandedGroups)
@@ -85,7 +91,9 @@ internal static class NotePreviewModule
             expandedGroups = next;
         }
 
-        return expandedGroups;
+        return hasPreviewableBranch
+            ? expandedGroups
+            : new List<string>();
     }
 
     private static List<string> ExpandSingleBranch(string branch)
@@ -93,104 +101,62 @@ internal static class NotePreviewModule
         branch = CleanNoteGroup(branch) ?? "";
         if (branch.Length == 0)
             return new List<string>();
+        if (ContainsMultiLoopMarker(branch) &&
+            !branch.Any(character => character is 'A' or 'B' or 'C' or 'D' or 'E'))
+            return new List<string>();
+        if (branch.Contains('*'))
+            return ExpandSameHeadPreview(branch);
 
-        if (!TryGetIncompleteSlide(branch, out var head, out var marker))
+        // A branch is decided by the same parser used by SimaiProcess and
+        // SyntaxCheck, in its preview mode. Half-typed slide paths are not
+        // completed by guessing endpoints any more; that filled the playfield with
+        // routes nobody typed.
+        var candidate = EnsurePreviewDuration(branch);
+        if (!NoteExpressionParser.TryParse(
+                candidate, out _, out _, forPreview: true))
+            return new List<string>();
+        return new List<string> { candidate };
+    }
+
+    private static List<string> ExpandSameHeadPreview(string branch)
+    {
+        if (!SlidePathParser.TryExpandSameHead(branch, out var branches) ||
+            !SlidePathParser.TryReadPosition(
+                branch, 0, out var head, out _))
+            return new List<string>();
+
+        var headExpression = head.ToExpression();
+        var expandedGroups = new List<string> { "" };
+        for (var index = 0; index < branches.Count; index++)
         {
-            if (IsDanglingVSlide(branch))
+            var candidates = ExpandSingleBranch(branches[index]);
+            if (candidates.Count == 0)
                 return new List<string>();
-            return new List<string> { EnsurePreviewDuration(branch) };
-        }
 
-        var result = new List<string>();
-        for (var end = 1; end <= 8; end++)
-        {
-            if (IsValidPreviewSlideTarget(head[0] - '0', marker, end, out var suffix))
-                result.Add(EnsurePreviewDuration(head + marker + suffix));
-        }
-        return result;
-    }
-
-    private static bool TryGetIncompleteSlide(string note, out string head, out string marker)
-    {
-        head = "";
-        marker = "";
-        if (note.Length < 2 || note[0] < '1' || note[0] > '8')
-            return false;
-
-        foreach (var m in SlideMarkers)
-        {
-            var idx = note.IndexOf(m, 1, StringComparison.Ordinal);
-            if (idx <= 0)
-                continue;
-
-            var rest = note.Substring(idx + m.Length);
-            if (m == "V")
+            var next = new List<string>();
+            foreach (var prefix in expandedGroups)
+            foreach (var candidate in candidates)
             {
-                if (rest.Length == 0)
-                    return false;
-                if (rest.Length == 1 && rest[0] >= '1' && rest[0] <= '8')
+                var suffix = candidate;
+                if (index > 0)
                 {
-                    head = note.Substring(0, idx);
-                    marker = m + rest[0];
-                    return true;
+                    if (!candidate.StartsWith(
+                            headExpression, StringComparison.Ordinal))
+                        continue;
+                    suffix = candidate.Substring(headExpression.Length);
                 }
-                return false;
+                next.Add(index == 0 ? suffix : prefix + "*" + suffix);
             }
-
-            if (IsCompleteTouchEndpoint(rest))
-                return false;
-
-            if (rest.Length > 0 && rest[0] >= '1' && rest[0] <= '8')
-                return false;
-
-            head = note.Substring(0, idx);
-            marker = m;
-            return true;
+            if (next.Count == 0)
+                return new List<string>();
+            expandedGroups = next;
         }
-        return false;
+        return expandedGroups;
     }
 
-    private static bool IsDanglingVSlide(string note)
-    {
-        var idx = note.IndexOf('V', 1);
-        if (idx < 0)
-            return false;
-        var rest = note.Substring(idx + 1);
-        return rest.Length == 0 || rest.All(c => c is 'b' or 'x' or 'm');
-    }
-
-    private static bool IsValidPreviewSlideTarget(int start, string marker, int end, out string suffix)
-    {
-        suffix = end.ToString();
-        if (start < 1 || start > 8 || end < 1 || end > 8 || start == end)
-            return false;
-
-        var opposite = Opposite(start);
-        if (marker.Length == 2 && marker[0] == 'V')
-        {
-            var middle = marker[1] - '0';
-            if (middle < 1 || middle > 8 || middle == start || middle == opposite || end == middle)
-                return false;
-
-            var clockwiseToMiddle = ClockwiseDistance(start, middle);
-            var clockwiseToEnd = ClockwiseDistance(start, end);
-            return clockwiseToMiddle switch
-            {
-                2 => clockwiseToEnd is >= 4 and <= 7,
-                6 => clockwiseToEnd is >= 1 and <= 4,
-                _ => false
-            };
-        }
-
-        return marker switch
-        {
-            "-" => !IsAdjacent(start, end),
-            "s" or "z" or "w" => end == opposite,
-            "^" or "v" => end != opposite,
-            "V" => false,
-            _ => true
-        };
-    }
+    private static bool ContainsMultiLoopMarker(string note)
+        => note.Contains("<<", StringComparison.Ordinal) ||
+           note.Contains(">>", StringComparison.Ordinal);
 
     private static string EnsurePreviewDuration(string note)
     {
@@ -230,15 +196,9 @@ internal static class NotePreviewModule
         if (c == '>')
         {
             var open = text.LastIndexOf('<', index);
-            if (open >= 0)
-            {
-                var lastHardDelimiter = Math.Max(
-                    Math.Max(text.LastIndexOf(',', index), text.LastIndexOf('\n', index)),
-                    Math.Max(text.LastIndexOf('&', index), text.LastIndexOf('@', index)));
-                var star = text.IndexOf('*', open, index - open);
-                if (open > lastHardDelimiter && star > open && IsAlphaTokenStart(text, open))
-                    return true;
-            }
+            if (open >= 0 && AlphaCommandBoundary.TryGetCommand(text, open, out var close) &&
+                close == index)
+                return true;
         }
         return false;
     }
@@ -266,20 +226,10 @@ internal static class NotePreviewModule
         if (AlphaCommandBoundary.IsPotentialStart(text, open))
         {
             var close = text.IndexOf('>', open + 1);
-            return close < 0 || probe <= close + 1;
+            return close < 0 || probe <= close;
         }
 
         return false;
-    }
-
-    private static bool IsCompleteTouchEndpoint(string value)
-    {
-        if (string.IsNullOrEmpty(value))
-            return false;
-        if (value[0] == 'C')
-            return true;
-        return value[0] is 'A' or 'B' or 'D' or 'E' &&
-               value.Length >= 2 && value[1] is >= '1' and <= '8';
     }
 
     private static int LastHardDelimiterBefore(string text, int index)
@@ -319,14 +269,4 @@ internal static class NotePreviewModule
         return false;
     }
 
-    private static int Opposite(int position) => (position + 3) % 8 + 1;
-
-    private static int ClockwiseDistance(int start, int end) => (end - start + 8) % 8;
-
-    private static bool IsAdjacent(int start, int end)
-    {
-        var clockwise = start == 8 ? 1 : start + 1;
-        var counterClockwise = start == 1 ? 8 : start - 1;
-        return end == clockwise || end == counterClockwise;
-    }
 }

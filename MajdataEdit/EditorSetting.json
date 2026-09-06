@@ -2,7 +2,7 @@
   "backgroundCover": 0.6,
   "ShowJudgeArea": true,
   "SongDetailStyle": 1,
-  "EditorBackgroundStyle": "circleplus",
+  "EditorBackgroundStyle": "default",
   "ViewIntroStyle": "circleplus",
   "ShowGeneratedMark": true,
   "EnableVisualChartEditor": true,

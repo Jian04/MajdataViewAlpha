@@ -1,7 +1,4 @@
-// ALPHA: Note color tint shader
-// Replaces hue of colored pixels while preserving outlines (dark, unsaturated pixels).
-// _NoteColor.a == 0  → no override (pass-through)
-// _NoteColor.a == 1  → full tint
+// Recolors note sprites while preserving their brightness detail and dark outlines.
 Shader "Sprites/NoteColorTint"
 {
     Properties
@@ -14,6 +11,7 @@ Shader "Sprites/NoteColorTint"
         _SrcHue ("Break detail mode (-1=off, 0=on)", Range(-1,0)) = -1.0
         _NoteAlpha ("Note Opacity", Range(0,1)) = 1.0
         _Grayscale ("Grayscale", Range(0,1)) = 0
+        _DarkDetail ("Detail kept at the dark end", Range(0,1)) = 0.35
         [MaterialToggle] PixelSnap ("Pixel snap", Float) = 0
     }
 
@@ -59,6 +57,7 @@ Shader "Sprites/NoteColorTint"
             float _SrcHue;
             float _NoteAlpha;
             float _Grayscale;
+            float _DarkDetail;
 
             // ---- HSV helpers ----
             float3 rgb2hsv(float3 c) {
@@ -118,17 +117,8 @@ Shader "Sprites/NoteColorTint"
                 float3 origHSV = rgb2hsv(rgb);
                 float3 tgtHSV  = rgb2hsv(_NoteColor.rgb);
 
-                // Two tinting paths selected by target saturation:
-                //
-                // CHROMATIC path (tgtS > 0.15): hue replacement.
-                //   Colored pixels (satGate): hue → targetH, S and V unchanged.
-                //   White highlights (S≈0) and black outlines (V≈0): untouched.
-                //
-                // ACHROMATIC path (tgtS < 0.05): brightness scaling.
-                //   Uses tgtV as a multiplier: V=0→black (×0), V=0.5→no change (×1), V=1→brighten (×2).
-                //   Applies via darkGuard so very-dark outline pixels stay dark.
-                //   Enables black (#000000), white (#FFFFFF), and gray notes.
-                //
+                // Keep the source texture's value and saturation detail. Only its hue
+                // moves toward the requested note color; outlines and highlights remain intact.
                 float satGate   = smoothstep(0.05, 0.25, origHSV.y);
                 float darkGuard = smoothstep(0.04, 0.16, origHSV.z);
                 float isGray    = 1.0 - smoothstep(0.05, 0.20, tgtHSV.y); // 1 = achromatic target
@@ -140,18 +130,54 @@ Shader "Sprites/NoteColorTint"
                 float sourceLuma = dot(rgb, float3(0.299, 0.587, 0.114));
                 float detailValue = origHSV.z * lerp(0.55, 1.05, saturate(sourceLuma));
                 float tintedValue = lerp(origHSV.z, saturate(detailValue), preserveBreakDetail);
-                // Saturation: keep the source's saturation VARIATION (material/texture
-                // detail) instead of flattening every pixel to the target saturation.
-                // _TintCoverage lerps source->target: 0 = pure source sat (old hue mode,
-                // best material), 1 = flat target sat (washes material). Default 0.6.
-                float tintedSat = saturate(lerp(origHSV.y, tgtHSV.y, _TintCoverage));
-                float3 hueTinted = hsv2rgb(float3(tgtHSV.x, tintedSat, tintedValue));
+                // Only the hue used to survive, so FF2200 and FF0000 came out as the
+                // same red: the requested saturation and value were discarded and the
+                // reachable palette was one ring of pure hues.
+                //
+                // Scaling the texture's own saturation and value by the target's keeps
+                // every relative difference the texture carries, which is what makes
+                // the detail readable. Lerping toward the target instead pulls those
+                // differences to one flat number, and that is what wipes the texture
+                // out.
+                //
+                // Neither scale is given a floor. A floor reads as safety but it makes
+                // every request past it land on one shade, which is the collapse this
+                // is here to undo. Neither scale exceeds one either, so a fully
+                // saturated bright target lands exactly where it always did.
+                float satScale = tgtHSV.y;
+                float valueScale = tgtHSV.z;
+                // Scaling alone cannot survive a dark request: multiplying by a value
+                // near zero takes the texture's differences down with it, so 220000
+                // and 000000 arrived as flat blocks. The darker the request, the more
+                // of the texture's own contrast is added back on top of the scaled
+                // value instead - shading a chart can still see, around a mean that
+                // is still as dark as it asked for. Detail is added, never a floor
+                // under the level, so every step of the dark ramp stays distinct.
+                float detailGain = _DarkDetail * (1.0 - tgtHSV.z);
+                float shapedValue = saturate(
+                    tintedValue * valueScale + detailGain * (tintedValue - 0.5));
+                float tintedSat = saturate(
+                    lerp(origHSV.y * satScale, tgtHSV.y, _TintCoverage));
+                float3 hueTinted = hsv2rgb(
+                    float3(tgtHSV.x, tintedSat, shapedValue));
                 float3 chromaOut = lerp(rgb, hueTinted, darkGuard * strength * satGate);
 
-                // Achromatic path: scale brightness (×2*tgtV, clamped)
-                // V=0→×0 (black), V=0.5→×1 (unchanged), V=1→×2 (brighten)
-                float3 brightened = clamp(rgb * (tgtHSV.z * 2.0), 0.0, 1.0);
-                float3 grayOut    = lerp(rgb, brightened, darkGuard * strength);
+                // An achromatic request has no hue to move toward, so it drives the
+                // grey axis instead: the texture is desaturated to its own brightness
+                // detail and that is scaled to the requested level. FFFFFF therefore
+                // reads as a white Note, 808080 as a plain greyscale one and 000000 as
+                // black, all of them keeping their shading.
+                //
+                // Scaling the colour itself, as this did before, could only ever make
+                // the Note a brighter version of the colour it already was: asking for
+                // white turned a red Note into an overexposed red one.
+                // The same reason as above: a request for black used to multiply the
+                // texture away to nothing, and the note became a silhouette.
+                float3 achromatic = clamp(
+                    sourceLuma.xxx * (tgtHSV.z * 2.0) +
+                    detailGain * (sourceLuma.xxx - 0.5),
+                    0.0, 1.0);
+                float3 grayOut = lerp(rgb, achromatic, darkGuard * strength);
 
                 rgb = lerp(chromaOut, grayOut, isGray);
                 float luma = dot(rgb, float3(0.299, 0.587, 0.114));

@@ -1,4 +1,4 @@
-﻿<Window x:Class="MajdataEdit.EditorSettingPanel"
+<Window x:Class="MajdataEdit.EditorSettingPanel"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -9,7 +9,7 @@
         lex:ResxLocalizationProvider.DefaultDictionary="Langs"
         mc:Ignorable="d"
         Background="{DynamicResource WindowBackground}"
-        Title="{lex:Loc Key=EditorSetting}" SizeToContent="WidthAndHeight" ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        Title="{lex:Loc Key=EditorSetting}" Width="500" SizeToContent="Height" ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
         Topmost="True"
         Loaded="Window_Loaded" Closing="Window_Closing" Height="Auto">
     <Window.Resources>
@@ -51,6 +51,11 @@
                 <Setter Property="Template" Value="{DynamicResource DarkButton}" />
                 <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
                 <Setter Property="Background" Value="{DynamicResource ButtonsBackground}" />
+            </Style>
+            <Style TargetType="{x:Type CheckBox}">
+                <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Margin" Value="0,4,14,4" />
             </Style>
         </Grid.Resources>
 
@@ -289,47 +294,42 @@
         </ComboBox>
 
 
-        <StackPanel Grid.Row="19" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" >
-            <CheckBox x:Name="SmoothSlideAnime" VerticalAlignment="Center" />
-            <Label
-        Content="{lex:Loc Key=EnableSmoothSlideAnime}" />
-            <Label Foreground="{DynamicResource HelperForeground}" Margin="3,0,0,0">
-                <Label.ToolTip>
-                    <ToolTip>
-                        <StackPanel>
-                            <TextBlock Text="{lex:Loc Key=SmoothSlideAnimeTooltip}" />
-                        </StackPanel>
-                    </ToolTip>
-                </Label.ToolTip>
-                <TextBlock TextDecorations="Underline" FontSize="12" Text="{lex:Loc Key=WhatsThis}" />
-            </Label>
-        </StackPanel>
-        
-        <StackPanel Grid.Row="20" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
-            <CheckBox x:Name="ShowJudgeInfo" VerticalAlignment="Center" />
-            <Label Content="{lex:Loc Key=ShowJudgeInfo}" />
-            <CheckBox x:Name="ShowComboInfo" VerticalAlignment="Center" Margin="12,0,0,0" />
-            <Label Content="{lex:Loc Key=ShowComboInfo}" />
-            <CheckBox x:Name="ShowGeneratedMark" VerticalAlignment="Center" Margin="12,0,0,0" />
-            <Label Content="{lex:Loc Key=ShowGeneratedMark}" />
-        </StackPanel>
-
-        <StackPanel Grid.Row="21" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
-            <CheckBox x:Name="ShowJudgeLine" VerticalAlignment="Center"
-                      Checked="ShowJudgeLine_Toggled" Unchecked="ShowJudgeLine_Toggled" />
-            <Label Content="{lex:Loc Key=ShowJudgeLine}" />
-            <CheckBox x:Name="ShowJudgeText" VerticalAlignment="Center" Margin="12,0,0,0" />
-            <Label Content="{lex:Loc Key=ShowJudgeText}" />
-            <CheckBox x:Name="ShowJudgeArea" VerticalAlignment="Center" Margin="12,0,0,0" />
-            <Label Content="{lex:Loc Key=ShowJudgeArea}" />
-        </StackPanel>
-
-        <StackPanel Grid.Row="22" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
-            <CheckBox x:Name="ShowSongDetail" VerticalAlignment="Center" />
-            <Label Content="{lex:Loc Key=ShowSongDetail}" />
-            <CheckBox x:Name="ShowAllPerfect" VerticalAlignment="Center" Margin="12,0,0,0" />
-            <Label Content="{lex:Loc Key=ShowAllPerfect}" />
-        </StackPanel>
+        <!-- One column of boxes per topic, so every box lines up under the one
+             above it. As four horizontal rows these had the window as wide as
+             three long labels laid end to end. -->
+        <Label Grid.Row="19" Grid.Column="0" VerticalAlignment="Top" Margin="0,8,0,0"
+               Content="{lex:Loc Key=DisplaySection}" />
+        <Border Grid.Row="19" Grid.RowSpan="4" Grid.Column="1" Margin="0,0,0,6" Padding="7"
+                CornerRadius="5" BorderThickness="1" BorderBrush="{DynamicResource ButtonsBackground}"
+                Background="{DynamicResource EditorBackground}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="120" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <CheckBox Grid.Row="0" Grid.Column="0" x:Name="ShowJudgeLine" Content="{lex:Loc Key=ShowJudgeLine}"
+                          Checked="ShowJudgeLine_Toggled" Unchecked="ShowJudgeLine_Toggled" />
+                <CheckBox Grid.Row="0" Grid.Column="1" x:Name="ShowJudgeArea" Content="{lex:Loc Key=ShowJudgeArea}" />
+                <CheckBox Grid.Row="1" Grid.Column="0" x:Name="ShowJudgeText" Content="{lex:Loc Key=ShowJudgeText}" />
+                <CheckBox Grid.Row="1" Grid.Column="1" x:Name="ShowMineHitFeedback" Content="{lex:Loc Key=ShowMineHitFeedback}" />
+                <CheckBox Grid.Row="2" Grid.Column="0" x:Name="ShowJudgeInfo" Content="{lex:Loc Key=ShowJudgeInfo}" />
+                <CheckBox Grid.Row="2" Grid.Column="1" x:Name="ShowComboInfo" Content="{lex:Loc Key=ShowComboInfo}" />
+                <CheckBox Grid.Row="3" Grid.Column="0" x:Name="ShowSongDetail" Content="{lex:Loc Key=ShowSongDetail}" />
+                <CheckBox Grid.Row="3" Grid.Column="1" x:Name="ShowAllPerfect" Content="{lex:Loc Key=ShowAllPerfect}" />
+                <CheckBox Grid.Row="4" Grid.Column="0" x:Name="ClipBackgroundToRing" Content="{lex:Loc Key=ClipBackgroundToRing}" />
+                <CheckBox Grid.Row="4" Grid.Column="1" x:Name="ShowGeneratedMark" Content="{lex:Loc Key=ShowGeneratedMark}" />
+                <CheckBox Grid.Row="5" Grid.Column="0" x:Name="SmoothSlideAnime" Content="{lex:Loc Key=EnableSmoothSlideAnime}"
+                          ToolTip="{lex:Loc Key=SmoothSlideAnimeTooltip}" />
+            </Grid>
+        </Border>
 
     </Grid>
     </ScrollViewer>

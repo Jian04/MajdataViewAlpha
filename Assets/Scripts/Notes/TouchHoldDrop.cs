@@ -1,16 +1,38 @@
-﻿using Assets.Scripts.Types;
+using Assets.Scripts.Types;
 using System;
+using MajdataCore;
 using UnityEngine;
+using UnityEngine.Rendering;
 #nullable enable
 public class TouchHoldDrop : NoteLongDrop
 {
     public bool isFirework;
     public char touchArea = 'C';
     public bool isBreak;
+    public bool isMine;
     public Material colorOverrideMaterial;
+    public Material breakProgressMaterial;
+    public Sprite breakProgressSprite;
     public float noteScale = 1f;
     public float noteScaleX = 1f;
     public float noteScaleY = 1f;
+    private Vector2? liveScaleDefault;
+    private Vector3 authoredCenterPointScale;
+    private bool centerPointScaleCaptured;
+
+    public override void ApplyLiveScale(Vector2? scale)
+    {
+        liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
+        var previous = new Vector2(noteScaleX, noteScaleY);
+        var value = scale ?? liveScaleDefault.Value;
+        noteScaleX = value.x;
+        noteScaleY = value.y;
+        if (previous.x != 0f && previous.y != 0f)
+            transform.localScale = Vector3.Scale(
+                transform.localScale,
+                new Vector3(value.x / previous.x, value.y / previous.y, 1f));
+        KeepCenterPointSize();
+    }
     public GameObject tapEffect;
     public GameObject judgeEffect;
 
@@ -23,7 +45,6 @@ public class TouchHoldDrop : NoteLongDrop
     public GameObject[] fans;
     public SpriteMask mask;
     private readonly SpriteRenderer[] fansSprite = new SpriteRenderer[6];
-    private static int _maskSortBase = 100;
     private float displayDuration;
 
     private GameObject firework;
@@ -36,19 +57,25 @@ public class TouchHoldDrop : NoteLongDrop
     Sprite[] judgeText;
     Sprite judgeTextBreak;
 
+    // See NoteDrop.HideSpriteUntilInitialized: Start clears the fans a frame after
+    // they have already been drawn opaque.
+    private void Awake() => HideFansUntilInitialized(fans);
+
     // Start is called before the first frame update
     private void Start()
     {
-        wholeDuration = 3.209385682f * Mathf.Pow(speed, -0.9549621752f);
+        wholeDuration = AlphaVisualTiming.GetTouchMotionDuration(speed);
         moveDuration = 0.8f * wholeDuration;
         displayDuration = 0.2f * wholeDuration;
 
-        objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
+        if (objectCounter == null) objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
         noteEffectManager = GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>();
-        var notes = GameObject.Find("Notes").transform;
-        noteManager = notes.GetComponent<NoteManager>();
+        var notes = noteManager != null ? noteManager.transform : GameObject.Find("Notes").transform;
+        if (noteManager == null) noteManager = notes.GetComponent<NoteManager>();
         var originalHoldEffect = holdEffect;
-        holdEffect = Instantiate(holdEffect, notes);
+        // Keep particles in the same transformed feedback plane as judgement
+        // text so ZOOM/MOVE/ROTATE remain spatially consistent.
+        holdEffect = Instantiate(holdEffect, noteEffectManager.transform);
         holdEffect.SetActive(false);
         originalHoldEffect.SetActive(false);
         foreach (var r in holdEffect.GetComponentsInChildren<ParticleSystemRenderer>(true))
@@ -56,27 +83,28 @@ public class TouchHoldDrop : NoteLongDrop
         foreach (var r in holdEffect.GetComponentsInChildren<SpriteRenderer>(true))
             r.maskInteraction = SpriteMaskInteraction.None;
 
-        timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
+        if (timeProvider == null) timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
 
         firework = GameObject.Find("FireworkEffect");
         fireworkEffect = firework.GetComponent<Animator>();
 
-        int fanSortBase = _maskSortBase;
-        _maskSortBase = (_maskSortBase + 20) % 30000;
         for (var i = 0; i < 6; i++)
-        {
             fansSprite[i] = fans[i].GetComponent<SpriteRenderer>();
-            fansSprite[i].sortingOrder = fanSortBase + i;
-        }
+        var sortingGroup = GetComponent<SortingGroup>() ??
+                           gameObject.AddComponent<SortingGroup>();
+        sortingGroup.sortingLayerID = fansSprite[0].sortingLayerID;
+        sortingGroup.sortingOrder = noteSortOrder;
         mask.isCustomRangeActive = true;
         mask.backSortingLayerID = fansSprite[0].sortingLayerID;
         mask.frontSortingLayerID = fansSprite[0].sortingLayerID;
-        mask.backSortingOrder = fanSortBase - 1;
-        mask.frontSortingOrder = fanSortBase + 7;
+        mask.backSortingOrder = 0;
+        mask.frontSortingOrder = 5;
 
         for (var i = 0; i < 4; i++) fansSprite[i].sprite = TouchHoldSprite[i];
         fansSprite[5].sprite = TouchHoldSprite[4]; // TouchHold Border
         fansSprite[4].sprite = TouchPointSprite;
+        authoredCenterPointScale = fans[4].transform.localScale;
+        centerPointScaleCaptured = true;
 
         SetfanColor(new Color(1f, 1f, 1f, 0f));
         mask.enabled = false;
@@ -85,6 +113,13 @@ public class TouchHoldDrop : NoteLongDrop
         if (colorOverrideMaterial != null)
             for (var fi = 0; fi < 6; fi++)
                 fansSprite[fi].sharedMaterial = colorOverrideMaterial;
+        if (isBreak && !isMine && breakProgressMaterial != null)
+        {
+            fansSprite[5].sprite = breakProgressSprite != null
+                ? breakProgressSprite
+                : TouchHoldSprite[4];
+            fansSprite[5].sharedMaterial = breakProgressMaterial;
+        }
 
         var sensorsRoot = GameObject.Find("Sensors");
         var touchSensor = Assets.Scripts.TouchBase.GetSensor(touchArea, startPosition);
@@ -97,15 +132,16 @@ public class TouchHoldDrop : NoteLongDrop
         }
         transform.localScale = Vector3.Scale(transform.localScale,
             new Vector3(noteScale * noteScaleX, noteScale * noteScaleY, 1f));
+        KeepCenterPointSize();
         var customSkin = GameObject.Find("Outline").GetComponent<CustomSkin>();
         judgeText = customSkin.JudgeText;
         judgeTextBreak = customSkin.JudgeText_Break;
-        if (!previewOnly)
+        if (!JudgmentDisabled)
             inputManager.BindSensor(Check, touchSensor);
     }
     void Check(object sender, InputEventArgs arg)
     {
-        if (previewOnly)
+        if (JudgmentDisabled || JudgmentSuspended)
             return;
         if (isJudged || !noteManager.CanJudge(gameObject, sensor.Type))
             return;
@@ -166,7 +202,7 @@ public class TouchHoldDrop : NoteLongDrop
     }
     private void FixedUpdate()
     {
-        if (previewOnly)
+        if (JudgmentDisabled || JudgmentSuspended)
             return;
         var remainingTime = GetRemainingTime();
         var timing = GetJudgeTiming();
@@ -237,10 +273,50 @@ public class TouchHoldDrop : NoteLongDrop
             objectCounter.NextTouch(sensor.Type);
         }
     }
+    /// <summary>
+    /// Puts the note back to how it looked before it ever appeared, for the same
+    /// reason as <see cref="TouchDrop"/>: outside its window nothing rewrites
+    /// the fans, the mask or the hold effect.
+    /// </summary>
+    private void RewindVisualState()
+    {
+        SetfanColor(Color.clear);
+        fans[5].SetActive(false);
+        mask.enabled = false;
+        mask.gameObject.SetActive(false);
+        if (holdEffect != null)
+            holdEffect.SetActive(false);
+    }
     // Update is called once per frame
     private void Update()
     {
-        var timing = GetJudgeTiming();
+        if (ClockMovedBackwards())
+            RewindVisualState();
+        if (IsPausedTimelinePreview &&
+            timeProvider.AudioTime > time + Mathf.Max(0f, LastFor))
+        {
+            SetfanColor(Color.clear);
+            fans[5].SetActive(false);
+            mask.enabled = false;
+            mask.gameObject.SetActive(false);
+            if (holdEffect != null)
+                holdEffect.SetActive(false);
+            return;
+        }
+        // Keep hold judgement duration on the audio clock, while allowing the
+        // Touch head's appearance to follow global or typed Touch SV.
+        var timing = GetTouchVisualTiming();
+        // Scroll sits on whichever side of the note the SV integral puts it: a
+        // negative integral brings a Touch in from the far side, where this timing
+        // reads positive. That side used to be read as "already landed", so such a
+        // Touch stayed shut for its whole approach and then snapped. It is mirrored
+        // instead while the note is still ahead of the audio clock, so the petals
+        // open out of the centre and close back into it either way round. Past the
+        // note's own moment the far side still reads as landed, so a Touch that was
+        // missed does not puff back open on its way out.
+        if (timeProvider.AudioTime < time)
+            timing = -Mathf.Abs(timing);
+        var judgeTiming = GetJudgeTiming();
         var pow = -Mathf.Exp(8 * (timing * 0.4f / moveDuration) - 0.85f) + 0.42f;
         var distance = Mathf.Clamp(pow, 0f, 0.4f);
 
@@ -257,16 +333,16 @@ public class TouchHoldDrop : NoteLongDrop
             mask.gameObject.SetActive(true);
             mask.enabled = true;
             SetfanColor(Color.white);
-            mask.alphaCutoff = Mathf.Clamp(0.91f * (1 - (LastFor - timing) / LastFor), 0f, 1f);
+            mask.alphaCutoff = Mathf.Clamp(
+                0.91f * (1 - (LastFor - judgeTiming) / LastFor),
+                0f,
+                1f);
         }
 
         if (float.IsNaN(distance)) distance = 0f;
 
         for (var i = 0; i < 4; i++)
-        {
-            var pos = transform.position + (0.226f + distance) * GetAngle(i);
-            fans[i].transform.position = pos;
-        }
+            fans[i].transform.localPosition = LeafPosition(i, distance);
     }
     private void OnDestroy()
     {
@@ -274,7 +350,9 @@ public class TouchHoldDrop : NoteLongDrop
             inputManager.UnbindSensor(Check, sensor.Type);
         if (manager != null && sensor != null)
             manager.SetSensorOff(sensor.Type, guid);
-        if (previewOnly || HttpHandler.IsReloding || !gameObject.scene.isLoaded)
+        if (holdEffect != null && gameObject.scene.isLoaded)
+            Destroy(holdEffect);
+        if (JudgmentDisabled || HttpHandler.IsReloding || !gameObject.scene.isLoaded)
             return;
         var realityHT = LastFor - 0.45f - (judgeDiff / 1000f);
         var percent = MathF.Min(1, (realityHT - playerIdleTime) / realityHT);
@@ -336,30 +414,58 @@ public class TouchHoldDrop : NoteLongDrop
         if (isFirework && result != JudgeType.Miss)
         {
             fireworkEffect.SetTrigger("Fire");
-            firework.transform.position = transform.position;
+            PlaceInFeedbackPlane(
+                firework.transform,
+                firework.transform.parent,
+                GetFixedFeedbackPosition());
         }
         PlayJudgeEffect(result);
     }
 
     protected override void PlayHoldEffect()
     {
-        holdEffect.transform.position = transform.position;
-        base.PlayHoldEffect();
+        PlaceInFeedbackPlane(
+            holdEffect.transform,
+            noteEffectManager != null ? noteEffectManager.transform : null,
+            GetFixedFeedbackPosition(),
+            GetFixedFeedbackRotation());
+        if (!isMine || NoteEffectManager.ShowMineHitFeedback)
+            base.PlayHoldEffect();
+        else
+            holdEffect.SetActive(false);
         boarder.sprite = touchHoldBoard;
     }
     void PlayJudgeEffect(JudgeType judgeResult)
     {
         if (judgeEffect == null || noteEffectManager == null)
             return;
-        var obj = Instantiate(judgeEffect, Vector3.zero, transform.rotation);
-        var _obj = Instantiate(judgeEffect, Vector3.zero, transform.rotation);
+        if (isMine && !NoteEffectManager.ShowMineHitFeedback)
+            return;
+        var feedbackPosition = GetFixedFeedbackPosition();
+        var feedbackRotation = GetFixedFeedbackRotation();
+        var plane = noteEffectManager.transform;
+        var obj = Instantiate(judgeEffect, plane);
+        var _obj = Instantiate(judgeEffect, plane);
+        PlaceInFeedbackPlane(obj.transform, plane, Vector3.zero, feedbackRotation);
+        PlaceInFeedbackPlane(_obj.transform, plane, Vector3.zero, feedbackRotation);
         var judgeObj = obj.transform.GetChild(0);
         var flObj = _obj.transform.GetChild(0);
 
-        judgeObj.transform.position = transform.position + new Vector3(0, -0.6f, 0);
-        flObj.transform.position = transform.position + new Vector3(0, -1.08f, 0);
-        flObj.GetChild(0).transform.rotation = Quaternion.Euler(Vector3.zero);
-        judgeObj.GetChild(0).transform.rotation = Quaternion.Euler(Vector3.zero);
+        var judgeRotation = GetJudgeRotation();
+        if (sensor.Group != SensorGroup.C)
+        {
+            PlaceInFeedbackPlane(judgeObj, plane, GetJudgePosition(-0.46f));
+            PlaceInFeedbackPlane(flObj, plane, GetJudgePosition(-0.92f));
+        }
+        else
+        {
+            PlaceInFeedbackPlane(judgeObj, plane, new Vector3(0, -0.6f, 0));
+            PlaceInFeedbackPlane(flObj, plane, new Vector3(0, -1.08f, 0));
+        }
+        RotateInFeedbackPlane(flObj.GetChild(0), plane, judgeRotation);
+        RotateInFeedbackPlane(judgeObj.GetChild(0), plane, judgeRotation);
+        if (judgeObj.childCount > 1)
+            RotateInFeedbackPlane(judgeObj.GetChild(1), plane, judgeRotation);
         var anim = obj.GetComponent<Animator>();
 
         var effects = noteEffectManager.gameObject;
@@ -376,7 +482,10 @@ public class TouchHoldDrop : NoteLongDrop
             case JudgeType.LateGood:
             case JudgeType.FastGood:
                 judgeObj.GetChild(0).gameObject.GetComponent<SpriteRenderer>().sprite = judgeText[1];
-                effect = Instantiate(effects.transform.GetChild(3).GetChild(0), transform.position, transform.rotation).gameObject;
+                effect = Instantiate(
+                    effects.transform.GetChild(3).GetChild(0), plane).gameObject;
+                PlaceInFeedbackPlane(
+                    effect.transform, plane, feedbackPosition, feedbackRotation);
                 effect.SetActive(true);
                 break;
             case JudgeType.LateGreat:
@@ -386,7 +495,10 @@ public class TouchHoldDrop : NoteLongDrop
             case JudgeType.FastGreat1:
             case JudgeType.FastGreat:
                 judgeObj.GetChild(0).gameObject.GetComponent<SpriteRenderer>().sprite = judgeText[2];
-                effect = Instantiate(effects.transform.GetChild(2).GetChild(0), transform.position, transform.rotation).gameObject;
+                effect = Instantiate(
+                    effects.transform.GetChild(2).GetChild(0), plane).gameObject;
+                PlaceInFeedbackPlane(
+                    effect.transform, plane, feedbackPosition, feedbackRotation);
                 effect.SetActive(true);
                 effect.gameObject.GetComponent<Animator>().SetTrigger("great");
                 break;
@@ -395,9 +507,17 @@ public class TouchHoldDrop : NoteLongDrop
             case JudgeType.LatePerfect1:
             case JudgeType.FastPerfect1:
                 judgeObj.GetChild(0).gameObject.GetComponent<SpriteRenderer>().sprite = judgeText[3];
+                if (tapEffect != null)
+                    PlaceInFeedbackPlane(
+                        Instantiate(tapEffect, plane).transform, plane,
+                        feedbackPosition, feedbackRotation);
                 break;
             case JudgeType.Perfect:
                 judgeObj.GetChild(0).gameObject.GetComponent<SpriteRenderer>().sprite = judgeText[4];
+                if (tapEffect != null)
+                    PlaceInFeedbackPlane(
+                        Instantiate(tapEffect, plane).transform, plane,
+                        feedbackPosition, feedbackRotation);
                 break;
             case JudgeType.Miss:
                 judgeObj.GetChild(0).gameObject.GetComponent<SpriteRenderer>().sprite = judgeText[0];
@@ -429,10 +549,44 @@ public class TouchHoldDrop : NoteLongDrop
         base.StopHoldEffect();
         boarder.sprite = touchHoldBoard_Miss;
     }
+    private Vector3 LeafPosition(int index, float distance) =>
+        (0.226f + distance) * GetAngle(index);
+
+    private void KeepCenterPointSize()
+    {
+        if (!centerPointScaleCaptured || fans == null || fans.Length <= 4 ||
+            fans[4] == null)
+            return;
+        var scaleX = Mathf.Max(
+            0.0001f, Mathf.Abs(noteScale * noteScaleX));
+        var scaleY = Mathf.Max(
+            0.0001f, Mathf.Abs(noteScale * noteScaleY));
+        fans[4].transform.localScale = new Vector3(
+            authoredCenterPointScale.x / scaleX,
+            authoredCenterPointScale.y / scaleY,
+            authoredCenterPointScale.z);
+    }
     private Vector3 GetAngle(int index)
     {
         var angle = Mathf.PI / 4 + index * (Mathf.PI / 2);
         return new Vector3(Mathf.Sin(angle), Mathf.Cos(angle));
+    }
+    private Quaternion GetJudgeRotation()
+    {
+        if (sensor.Group == SensorGroup.C)
+            return Quaternion.identity;
+
+        var direction = -GetFixedFeedbackPosition();
+        var degrees = 180f + Mathf.Atan2(direction.x, direction.y) * Mathf.Rad2Deg;
+        return Quaternion.Euler(0f, 0f, -degrees);
+    }
+    private Vector3 GetJudgePosition(float offset)
+    {
+        var feedbackPosition = GetFixedFeedbackPosition();
+        var radius = feedbackPosition.magnitude;
+        if (radius <= Mathf.Epsilon)
+            return feedbackPosition;
+        return feedbackPosition * (Mathf.Max(0f, radius + offset) / radius);
     }
     private static Vector3 GetAreaPos(int index, char area)
     {
@@ -462,6 +616,7 @@ public class TouchHoldDrop : NoteLongDrop
 
     private void SetfanColor(Color color)
     {
-        foreach (var fan in fansSprite) fan.color = color;
+        for (var i = 0; i < fansSprite.Length; i++)
+            fansSprite[i].color = color;
     }
 }

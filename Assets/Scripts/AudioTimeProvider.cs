@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using UnityEngine;
 
 public class AudioTimeProvider : MonoBehaviour
@@ -12,6 +12,7 @@ public class AudioTimeProvider : MonoBehaviour
     public float offset;
     private float speed;
     private bool previewFixedTime;
+    private bool scheduledStart;
 
     private float startTime;
     private long ticks;
@@ -45,6 +46,14 @@ public class AudioTimeProvider : MonoBehaviour
         if (previewFixedTime)
             return;
 
+        if (scheduledStart &&
+            Time.realtimeSinceStartup >= startTime)
+        {
+            scheduledStart = false;
+            isStart = true;
+            IsPaused = false;
+        }
+
         if (isStart)
         {
             if (isRecord)
@@ -62,7 +71,13 @@ public class AudioTimeProvider : MonoBehaviour
 
         return _audioTime / 16.6667f;
     }
-    public void SetStartTime(long _ticks, float _offset, float _speed, bool _isRecord = false, int recordFrameRate = 30)
+    public void SetStartTime(
+        long _ticks,
+        float _offset,
+        float _speed,
+        bool _isRecord = false,
+        int recordFrameRate = 30,
+        bool keepVisibleWhileScheduled = false)
     {
         previewFixedTime = false;
         IsPaused = false;
@@ -75,6 +90,7 @@ public class AudioTimeProvider : MonoBehaviour
         speed = _speed;
         if (_isRecord)
         {
+            scheduledStart = false;
             // ScreenRecorder starts the recording clock after resize, encoder setup,
             // and render warmup have completed.
             startTime = Time.time;
@@ -83,13 +99,18 @@ public class AudioTimeProvider : MonoBehaviour
         else
         {
             startTime = Time.realtimeSinceStartup + (float)seconds;
+            scheduledStart = Time.realtimeSinceStartup < startTime;
             Application.targetFrameRate = PlaybackFrameRate;
             Time.captureFramerate = 0;
         }
 
         // Recording stays frozen while the window resize, ffmpeg launch, and named-pipe
         // handshake complete. ScreenRecorder starts this clock with the first captured frame.
-        isStart = !_isRecord;
+        isStart = !_isRecord && !scheduledStart;
+        // Continue is scheduled slightly in the future so audio and video restart
+        // together. Keep the paused visual state until that instant; otherwise
+        // every NoteDrop sees !isStart && !IsPaused and vanishes for one frame.
+        IsPaused = keepVisibleWhileScheduled && scheduledStart;
     }
 
     public void BeginRecordingCapture(float introDuration)
@@ -110,6 +131,7 @@ public class AudioTimeProvider : MonoBehaviour
         startTime = Time.time + introDuration;
         AudioTime = offset - introDuration;
         isStart = true;
+        scheduledStart = false;
     }
 
     public void ResetStartTime()
@@ -118,6 +140,7 @@ public class AudioTimeProvider : MonoBehaviour
         IsPaused = false;
         offset = 0f;
         isStart = false;
+        scheduledStart = false;
         RestoreFrameRate();
     }
 
@@ -128,6 +151,7 @@ public class AudioTimeProvider : MonoBehaviour
         IsPaused = false;
         isRecord = false;
         isStart = true;
+        scheduledStart = false;
         offset = previewTime;
         AudioTime = previewTime;
         speed = 1f;
@@ -135,9 +159,16 @@ public class AudioTimeProvider : MonoBehaviour
         Application.targetFrameRate = PlaybackFrameRate;
     }
 
+    public void SetPausedTimelineTime(float timelineTime)
+    {
+        SetPreviewTime(timelineTime);
+        IsPaused = true;
+    }
+
     public void PausePlayback()
     {
         isStart = false;
+        scheduledStart = false;
         IsPaused = true;
     }
 

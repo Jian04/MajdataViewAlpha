@@ -1,12 +1,16 @@
-﻿using Assets.Scripts.Types;
+using Assets.Scripts.Types;
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 #nullable enable
 public class HoldDrop : NoteLongDrop
 {
+    /// <summary>The tail crosses its own spawn ring, so it remembers separately.</summary>
+    private MajdataCore.SpawnCrossingMemo tailSpawnCrossingMemo;
     public bool isEX;
     public bool isBreak;
     public bool isFirework;
+    public bool isMine;
 
     public Sprite tapSpr;
     public Sprite holdOnSpr;
@@ -38,6 +42,15 @@ public class HoldDrop : NoteLongDrop
     public float noteScale = 1f;
     public float noteScaleX = 1f;
     public float noteScaleY = 1f;
+    private Vector2? liveScaleDefault;
+
+    public override void ApplyLiveScale(Vector2? scale)
+    {
+        liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
+        var value = scale ?? liveScaleDefault.Value;
+        noteScaleX = value.x;
+        noteScaleY = value.y;
+    }
 
     private SpriteRenderer exSpriteRender;
     private bool holdAnimStart;
@@ -46,15 +59,37 @@ public class HoldDrop : NoteLongDrop
 
     private SpriteRenderer spriteRenderer;
     private MaterialPropertyBlock brightnessProperties;
-    private bool hasLeftSpawn;
-    private bool hasTailLeftSpawn;
+    private bool? holdOnOppositeSide;
 
+    protected override IEnumerable<SpriteRenderer> GetLiveVisualRenderers()
+    {
+        foreach (var renderer in base.GetLiveVisualRenderers())
+            if (renderer != null)
+                yield return renderer;
+        if (lineSpriteRender != null)
+            yield return lineSpriteRender;
+    }
+
+
+    private void Awake()
+    {
+        HideSpriteUntilInitialized(transform);
+        // That covers the note and its EX layer, but a hold also has an end cap on
+        // child 1, shipped enabled, and Start does not switch it off until a frame
+        // later. Until then it draws at the object's untouched transform, which is
+        // the origin: a hold built mid-chart flashes its tail in the middle of the
+        // playfield. Update recomputes this by 'enabled' every frame, so clearing
+        // it the same way cannot leave the cap hidden for good.
+        if (transform.childCount > 1 &&
+            transform.GetChild(1).TryGetComponent<SpriteRenderer>(out var endCap))
+            endCap.enabled = false;
+    }
 
     private void Start()
     {
-        var notes = GameObject.Find("Notes").transform;
-        objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
-        noteManager = notes.GetComponent<NoteManager>();
+        var notes = noteManager != null ? noteManager.transform : GameObject.Find("Notes").transform;
+        if (objectCounter == null) objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
+        if (noteManager == null) noteManager = notes.GetComponent<NoteManager>();
         holdEffect = Instantiate(holdEffect, notes);
         holdEffect.SetActive(false);
 
@@ -65,7 +100,7 @@ public class HoldDrop : NoteLongDrop
 
         exSpriteRender = transform.GetChild(0).GetComponent<SpriteRenderer>();
 
-        timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
+        if (timeProvider == null) timeProvider = GameObject.Find("AudioTimeProvider").GetComponent<AudioTimeProvider>();
         spriteRenderer = GetComponent<SpriteRenderer>();
         brightnessProperties = new MaterialPropertyBlock();
 
@@ -86,16 +121,22 @@ public class HoldDrop : NoteLongDrop
         if (isEach)
         {
             spriteRenderer.sprite = eachSpr;
-            lineSpriteRender.sprite = eachLine;
-            holdEndRender.sprite = holdEachEnd;
+            if (!isMine)
+            {
+                lineSpriteRender.sprite = eachLine;
+                holdEndRender.sprite = holdEachEnd;
+            }
             if (isEX) exSpriteRender.color = exEffectEach;
         }
 
         if (isBreak)
         {
             spriteRenderer.sprite = breakSpr;
-            lineSpriteRender.sprite = breakLine;
-            holdEndRender.sprite = holdBreakEnd;
+            if (!isMine)
+            {
+                lineSpriteRender.sprite = breakLine;
+                holdEndRender.sprite = holdBreakEnd;
+            }
             if (isEX) exSpriteRender.color = exEffectBreak;
             spriteRenderer.sharedMaterial = breakMaterial;
         }
@@ -126,12 +167,12 @@ public class HoldDrop : NoteLongDrop
         inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
         sensorPos = (SensorType)SensorChildIndex;
-        if (!previewOnly)
+        if (!JudgmentDisabled)
             BindJudgeInput(Check);
     }
     private void FixedUpdate()
     {
-        if (previewOnly)
+        if (JudgmentDisabled || JudgmentSuspended)
             return;
         var timing = GetJudgeTiming();
         var remainingTime = GetRemainingTime();
@@ -192,7 +233,7 @@ public class HoldDrop : NoteLongDrop
                 StopHoldEffect();
             }
         }
-        else if (timing > 0.15f && !isJudged) // Missed head
+        else if (timing > MissWindow && !isJudged) // Missed head
         {
             judgeDiff = 150;
             judgeResult = JudgeType.Miss;
@@ -202,7 +243,7 @@ public class HoldDrop : NoteLongDrop
     }
     void Check(object sender, InputEventArgs arg)
     {
-        if (previewOnly)
+        if (JudgmentDisabled || JudgmentSuspended)
             return;
         if (arg.Type != sensor.Type)
             return;
@@ -278,16 +319,30 @@ public class HoldDrop : NoteLongDrop
         PlayHoldEffect();
     }
     // The animator may replace the hold material during Update.
-    private void LateUpdate()
+    protected override void LateUpdate()
     {
-        if (holdAnimStart && colorOverrideMaterial != null)
+        base.LateUpdate();
+        if (!holdAnimStart || ReapplyLiveVisual(spriteRenderer))
+            return;
+        if (colorOverrideMaterial != null)
             spriteRenderer.sharedMaterial = colorOverrideMaterial;
     }
 
     // Update is called once per frame
     private void Update()
     {
-        if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < 0f)
+        if ((!timeProvider.isStart && !timeProvider.IsPaused) || timeProvider.AudioTime < GameplayRevealTime)
+        {
+            spriteRenderer.forceRenderingOff = true;
+            exSpriteRender.forceRenderingOff = true;
+            holdEndRender.enabled = false;
+            tapLine.SetActive(false);
+            if (holdEffect != null)
+                holdEffect.SetActive(false);
+            return;
+        }
+        if (IsPausedTimelinePreview &&
+            timeProvider.AudioTime > time + Mathf.Max(0f, LastFor))
         {
             spriteRenderer.forceRenderingOff = true;
             exSpriteRender.forceRenderingOff = true;
@@ -298,8 +353,7 @@ public class HoldDrop : NoteLongDrop
             return;
         }
 
-        var judgeOffset = GetJudgeTiming();
-        if (IsBeforeBounceWindow(judgeOffset))
+        if (IsBeforeBounceWindow())
         {
             spriteRenderer.forceRenderingOff = true;
             exSpriteRender.forceRenderingOff = true;
@@ -308,18 +362,23 @@ public class HoldDrop : NoteLongDrop
             return;
         }
 
-        var isBouncing = IsBounceActive(judgeOffset);
-        var distance = isBouncing ? GetBounceDistance(judgeOffset) : GetSvDistance();
-        var destScale = GetSpawnScale(distance);
+        var isBouncing = IsBounceActive();
+        var distance = isBouncing ? GetBounceDistance() : GetSvDistance();
         if (isBouncing)
         {
+            State = NoteStatus.Running;
             spriteRenderer.forceRenderingOff = false;
             if (isEX)
                 exSpriteRender.forceRenderingOff = false;
 
-            var bodyLength = speed * (float)(
-                SvController.GetCumulativeScroll((double)time + LastFor, scrollType) -
+            var bounceTailScrollPosition =
+                SvController.GetCumulativeScroll((double)time + LastFor, scrollType);
+            var pathDirection = SvController.GetPathDirection(spawnRadius, destroyRadius);
+            var fullBodyLength = pathDirection * speed * (float)(bounceTailScrollPosition -
                 SvController.GetCumulativeScroll(time, scrollType));
+            var visibleBodyLimit = Mathf.Abs(destroyRadius - spawnRadius);
+            var bodyLength = Mathf.Sign(fullBodyLength) *
+                             Mathf.Min(Mathf.Abs(fullBodyLength), visibleBodyLimit);
             var tailDistance = distance - bodyLength;
             var bodyCenter = (distance + tailDistance) * 0.5f;
             var bodySize = Mathf.Abs(distance - tailDistance) + 1.4f;
@@ -333,16 +392,20 @@ public class HoldDrop : NoteLongDrop
                 noteScale * noteScaleY,
                 1f);
 
-            var bounceLineScale = Mathf.Clamp01(distance / 4.8f);
-            tapLine.SetActive(distance > 0.001f && distance <= 4.8f);
+            var absoluteBounceDistance = Mathf.Abs(distance);
+            var bounceLineScale = absoluteBounceDistance / DefaultDestroyRadius;
+            tapLine.SetActive(absoluteBounceDistance > 0.001f);
             tapLine.transform.localScale = new Vector3(
                 bounceLineScale, bounceLineScale, 1f);
+            UpdateVisualRotation(distance);
             return;
         }
-        if (!hasLeftSpawn)
-            hasLeftSpawn = HasLeftSpawnAtCurrentTime(noteScrollPos);
-        if (!hasLeftSpawn && destScale < 0f)
+
+        var headPresentation = GetSpawnPresentation(
+            distance, noteScrollPos, ref spawnCrossingMemo);
+        if (!headPresentation.Visible)
         {
+            State = NoteStatus.Initialized;
             spriteRenderer.forceRenderingOff = true;
             exSpriteRender.forceRenderingOff = true;
             holdEndRender.enabled = false;
@@ -352,28 +415,37 @@ public class HoldDrop : NoteLongDrop
 
         spriteRenderer.forceRenderingOff = false;
         if (isEX) exSpriteRender.forceRenderingOff = false;
+        State = headPresentation.Running
+            ? NoteStatus.Running
+            : NoteStatus.Pending;
 
         spriteRenderer.size = new Vector2(1.22f, 1.4f);
 
         var holdTime = GetJudgeTiming() - LastFor;
-        var holdDistance = 4.8f - speed * (float)(
-            SvController.GetCumulativeScroll((double)time + LastFor, scrollType) -
-            SvController.GetCumulativeScroll(timeProvider.AudioTime, scrollType));
-        if (!hasTailLeftSpawn)
-            hasTailLeftSpawn = HasLeftSpawnAtCurrentTime(
-                SvController.GetCumulativeScroll((double)time + LastFor, scrollType));
+        var holdDistance = SvController.GetVisualRadius(
+            SvController.GetCumulativeScroll((double)time + LastFor, scrollType),
+            speed,
+            timeProvider.AudioTime,
+            spawnRadius,
+            destroyRadius,
+            scrollType);
+        var tailScrollPosition = SvController.GetCumulativeScroll(
+            (double)time + LastFor, scrollType);
+        var tailPresentation = GetSpawnPresentation(
+            holdDistance, tailScrollPosition, ref tailSpawnCrossingMemo);
         if (holdTime >= 0)
         {
             tapLine.SetActive(false);
             tapLine.transform.localScale = new Vector3(1f, 1f, 1f);
-            transform.position = getPositionFromDistance(4.8f);
+            transform.position = getPositionFromDistance(destroyRadius);
+            UpdateVisualRotation(destroyRadius);
             return;
         }
 
 
         // Judgement remains on the original key even when SV moves the note body
         // to the opposite side.
-        holdEffect.transform.position = getPositionFromDistance(4.8f);
+        holdEffect.transform.position = getPositionFromDistance(destroyRadius);
 
         if (isBreak &&
             !holdAnimStart && 
@@ -385,31 +457,40 @@ public class HoldDrop : NoteLongDrop
             spriteRenderer.SetPropertyBlock(brightnessProperties);
         }
 
+        distance = headPresentation.Distance;
+        var absoluteDistance = Mathf.Abs(distance);
+        tapLine.SetActive(
+            headPresentation.Running
+                ? absoluteDistance > 0.001f
+                : headPresentation.Scale > 0.3f);
 
-        tapLine.SetActive(distance > 0.001f && distance <= 4.8f && destScale > 0.3f);
-
-        if (!hasLeftSpawn)
+        if (!headPresentation.Running)
         {
             transform.localScale = new Vector3(
-                destScale * noteScale * noteScaleX,
-                destScale * noteScale * noteScaleY,
+                headPresentation.Scale * noteScale * noteScaleX,
+                headPresentation.Scale * noteScale * noteScaleY,
                 1f);
             spriteRenderer.size = new Vector2(1.22f, 1.42f);
-            distance = spawnRadius;
-            var pos = getPositionFromDistance(distance);
-            transform.position = pos;
+            transform.position = getPositionFromDistance(spawnRadius);
+            holdEndRender.enabled = false;
         }
         else
         {
             // The head reaches the judgement line by time, not by radial distance.
             // This lets negative SV move through the centre without being clamped.
             if (GetJudgeTiming() >= 0f)
-                distance = 4.8f;
+                distance = destroyRadius;
 
-            if (hasTailLeftSpawn)
+            if (tailPresentation.Running)
+            {
                 holdEndRender.enabled = true;
+                holdDistance = tailPresentation.Distance;
+            }
             else
+            {
+                holdEndRender.enabled = false;
                 holdDistance = spawnRadius;
+            }
 
             var dis = (distance - holdDistance) / 2 + holdDistance;
             transform.position = getPositionFromDistance(dis);
@@ -422,19 +503,33 @@ public class HoldDrop : NoteLongDrop
                 1f);
         }
 
-        var lineScale = Mathf.Abs(distance / 4.8f);
-        lineScale = lineScale >= 1f ? 1f : lineScale;
+        var lineScale = Mathf.Abs(distance / DefaultDestroyRadius);
         tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
+        UpdateVisualRotation(
+            headPresentation.Running ? distance : spawnRadius);
         exSpriteRender.size = spriteRenderer.size;
     }
 
     private void ApplyBaseRotation()
     {
+        holdOnOppositeSide = null;
+        UpdateVisualRotation(spawnRadius);
+    }
+
+    private void UpdateVisualRotation(float visualDistance)
+    {
+        var opposite = visualDistance < 0f;
+        if (holdOnOppositeSide == opposite)
+            return;
+        holdOnOppositeSide = opposite;
         var dZoneOffset = isDZone ? 22.5f : 0f;
-        var rotation = Quaternion.Euler(
-            0f, 0f, -22.5f + -45f * (startPosition - 1) + dZoneOffset);
-        transform.rotation = rotation;
-        tapLine.transform.rotation = rotation;
+        var baseAngle = -22.5f + -45f * (startPosition - 1) + dZoneOffset;
+        var reversePath = SvController.GetPathDirection(
+            spawnRadius, destroyRadius) < 0f;
+        transform.rotation = Quaternion.Euler(
+            0f, 0f, baseAngle + (opposite != reversePath ? 180f : 0f));
+        tapLine.transform.rotation = Quaternion.Euler(
+            0f, 0f, baseAngle + (opposite ? 180f : 0f));
     }
     private void OnDestroy()
     {
@@ -444,7 +539,7 @@ public class HoldDrop : NoteLongDrop
             inputManager.UnbindArea(Check, sensorPos);
         if (manager != null && sensor != null)
             manager.SetSensorOff(sensor.Type, guid);
-        if (previewOnly || HttpHandler.IsReloding)
+        if (JudgmentDisabled || HttpHandler.IsReloding)
             return;
         var realityHT = LastFor - 0.3f - (judgeDiff / 1000f);
         var percent = MathF.Min(1, (realityHT - playerIdleTime) / realityHT);
@@ -500,9 +595,13 @@ public class HoldDrop : NoteLongDrop
                 break;
         }
         var effectManager = GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
-        if (effectManager == null) return;
-        effectManager.PlayEffect(JudgeQueueKey, isBreak, result, noteTintColor);
-        effectManager.PlayFastLate(JudgeQueueKey, result);
+        if (effectManager != null &&
+            (!isMine || NoteEffectManager.ShowMineHitFeedback))
+        {
+            effectManager.PlayEffect(
+                JudgeQueueKey, destroyRadius, isBreak, result, noteTintColor);
+            effectManager.PlayFastLate(JudgeQueueKey, destroyRadius, result);
+        }
         if (isFirework && result != JudgeType.Miss)
         {
             var firework = GameObject.Find("FireworkEffect");
@@ -521,7 +620,10 @@ public class HoldDrop : NoteLongDrop
     }
     protected override void PlayHoldEffect()
     {
-        base.PlayHoldEffect();
+        if (!isMine || NoteEffectManager.ShowMineHitFeedback)
+            base.PlayHoldEffect();
+        else if (holdEffect != null)
+            holdEffect.SetActive(false);
         GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>()?.ResetEffect(JudgeQueueKey);
         if (LastFor <= 0.3)
             return;

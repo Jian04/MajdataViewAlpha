@@ -1,12 +1,48 @@
-﻿using System.IO;
+using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using System.Text;
+using Newtonsoft.Json;
 
 namespace MajdataEdit;
 
 internal static class WebControl
 {
+    private const int ProtocolVersion = 1;
+    public static string? LastError { get; private set; }
+
+    private sealed class ViewResponse
+    {
+        public bool ok;
+        public int protocolVersion;
+        public string? error;
+        public DroppedBeat[]? droppedBeats;
+    }
+
+    /// <summary>
+    /// A beat View accepted as text but could not turn into a note. Validation
+    /// runs on the chart text and View builds the note, so a legal beat can still
+    /// go missing; these carry the position back so it can be marked in the editor
+    /// the same way a syntax error is.
+    /// </summary>
+    internal sealed class DroppedBeat
+    {
+        public int line;
+        public int column;
+        public double time;
+        public string? content;
+        public string? reason;
+    }
+
+    /// <summary>
+    /// Beats the last request reported as unbuildable. Empty after a request that
+    /// built everything, so a stale report never keeps marking a fixed beat.
+    /// </summary>
+    public static IReadOnlyList<DroppedBeat> LastDroppedBeats { get; private set; } =
+        Array.Empty<DroppedBeat>();
+
     // Do not set Timeout; keep HttpClient's 100-second default to match upstream 440.
     // After View receives a request, httpListen waits for the main-thread Update to finish, so response time equals View processing time.
     // Recording and OP synchronously instantiate the entire chart in View via LoadJsonImmediate; an initial cold load can take many seconds.
@@ -28,22 +64,48 @@ internal static class WebControl
         return new HttpClient(handler);
     }
 
+    /// <summary>
+    /// Set while the editor is closing so in-flight timers stop dialing View.
+    /// </summary>
+    public static bool IsShuttingDown;
+
     public static string RequestPOST(string url, string data = "")
     {
+        LastError = null;
+        if (IsShuttingDown)
+            return "ERROR";
         try
         {
-            var webRequest = new HttpRequestMessage(HttpMethod.Post, url)
+            using var webRequest = new HttpRequestMessage(HttpMethod.Post, url)
             {
                 Content = new StringContent(data, Encoding.UTF8)
             };
 
-            var response = SharedClient.Send(webRequest);
+            using var response = SharedClient.Send(webRequest);
             using var reader = new StreamReader(response.Content.ReadAsStream());
-
-            return reader.ReadToEnd();
+            var body = reader.ReadToEnd();
+            var result = JsonConvert.DeserializeObject<ViewResponse>(body);
+            LastDroppedBeats = result?.droppedBeats ?? Array.Empty<DroppedBeat>();
+            if (!response.IsSuccessStatusCode)
+            {
+                LastError = result?.error ??
+                            $"View returned HTTP {(int)response.StatusCode}.";
+                return "ERROR";
+            }
+            if (result is
+            {
+                ok: true,
+                protocolVersion: ProtocolVersion
+            })
+                return body;
+            LastError = result?.protocolVersion != ProtocolVersion
+                ? $"View protocol {result?.protocolVersion ?? 0} does not match Edit protocol {ProtocolVersion}."
+                : result?.error ?? "View rejected the request.";
+            return "ERROR";
         }
-        catch
+        catch (System.Exception exception)
         {
+            LastError = exception.Message;
             return "ERROR";
         }
     }

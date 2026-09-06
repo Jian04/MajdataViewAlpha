@@ -1,9 +1,10 @@
-﻿using Assets.Scripts.Types;
+using Assets.Scripts.Types;
 using UnityEngine;
 #nullable enable
 public class NoteEffectManager : MonoBehaviour
 {
     public static float JudgeTextAlpha { get; private set; } = 1f;
+    public static bool ShowMineHitFeedback { get; set; } = true;
     
     public Sprite hex;
     public Sprite star;
@@ -26,6 +27,23 @@ public class NoteEffectManager : MonoBehaviour
     private readonly GameObject[] fastLateEffects = new GameObject[16];
     private CustomSkin customSkin;
     Sprite[] judgeText;
+
+    private GameObject[][] feedbackGroups;
+    private FeedbackPose[][] feedbackBasePoses;
+    private bool[][] feedbackPoseCaptured;
+    private bool[] feedbackSlotMoved;
+
+    private readonly struct FeedbackPose
+    {
+        public FeedbackPose(Vector3 position, Quaternion rotation)
+        {
+            Position = position;
+            Rotation = rotation;
+        }
+
+        public Vector3 Position { get; }
+        public Quaternion Rotation { get; }
+    }
 
     private static GameObject CloneForDZone(GameObject source)
     {
@@ -82,8 +100,25 @@ public class NoteEffectManager : MonoBehaviour
             tapEffects[i].SetActive(false);
         }
 
+        PrepareFeedbackGroups();
         LoadSkin();
         ApplyJudgeTextAlpha(JudgeTextAlpha);
+    }
+
+    private void PrepareFeedbackGroups()
+    {
+        feedbackGroups = new[]
+        {
+            judgeEffects, fastLateEffects, tapEffects, greatEffects, goodEffects
+        };
+        feedbackBasePoses = new FeedbackPose[feedbackGroups.Length][];
+        feedbackPoseCaptured = new bool[feedbackGroups.Length][];
+        for (var group = 0; group < feedbackGroups.Length; group++)
+        {
+            feedbackBasePoses[group] = new FeedbackPose[16];
+            feedbackPoseCaptured[group] = new bool[16];
+        }
+        feedbackSlotMoved = new bool[16];
     }
 
     /// <summary>
@@ -104,9 +139,15 @@ public class NoteEffectManager : MonoBehaviour
     }
 
     // Update is called once per frame
-    public void PlayEffect(int position, bool isBreak, JudgeType judge = JudgeType.Perfect, Color noteColor = default)
+    public void PlayEffect(
+        int position,
+        float radius,
+        bool isBreak,
+        JudgeType judge = JudgeType.Perfect,
+        Color noteColor = default)
     {
         var pos = position - 1;
+        PositionFeedbackAtRadius(pos, radius);
 
         // COLOR only affects notes. These objects are reused, so also clear any
         // tint left by an earlier colored note.
@@ -183,14 +224,67 @@ public class NoteEffectManager : MonoBehaviour
         else
             judgeAnimators[pos].SetTrigger("perfect");
     }
+
+    private void PositionFeedbackAtRadius(int index, float radius)
+    {
+        if (feedbackGroups == null || index < 0 || index >= 16)
+            return;
+
+        var distance = radius - NoteDrop.DefaultDestroyRadius;
+        var flipped = radius < 0f;
+        var moves = flipped || Mathf.Abs(distance) >= 0.0001f;
+        // A chart without DESTROY or BOUNCE leaves every slot on the default ring.
+        // Writing even an unchanged pose would pin the slot to whatever it looked
+        // like when this component started and override the skin and the scene,
+        // so an unmoved slot is left untouched entirely.
+        if (!moves && !feedbackSlotMoved[index])
+            return;
+
+        // The slot is authored on the default ring, so only the delta from that
+        // ring is applied; an absolute radial position would count the authored
+        // offset twice and throw the judgement text off the playfield.
+        var keyPosition = index < 8 ? index + 1f : index - 7.5f;
+        var angle = (keyPosition * -2f + 5f) * 0.125f * Mathf.PI;
+        var direction = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
+        var offset = direction * distance;
+        var flip = flipped
+            ? Quaternion.Euler(0f, 0f, 180f)
+            : Quaternion.identity;
+
+        for (var group = 0; group < feedbackGroups.Length; group++)
+        {
+            var target = feedbackGroups[group][index];
+            if (target == null)
+                continue;
+            // Captured on first use rather than at startup, so the pose is the one
+            // the skin and the scene actually settled on.
+            if (!feedbackPoseCaptured[group][index])
+            {
+                feedbackBasePoses[group][index] = new FeedbackPose(
+                    target.transform.localPosition,
+                    target.transform.localRotation);
+                feedbackPoseCaptured[group][index] = true;
+            }
+
+            var pose = feedbackBasePoses[group][index];
+            target.transform.localPosition = new Vector3(
+                pose.Position.x + offset.x,
+                pose.Position.y + offset.y,
+                pose.Position.z);
+            target.transform.localRotation = pose.Rotation * flip;
+        }
+
+        feedbackSlotMoved[index] = moves;
+    }
     /// <summary>
     /// Tap，Hold，Star
     /// </summary>
     /// <param name="position"></param>
     /// <param name="judge"></param>
-    public void PlayFastLate(int position,JudgeType judge)
+    public void PlayFastLate(int position, float radius, JudgeType judge)
     {
         var pos = position - 1;
+        PositionFeedbackAtRadius(pos, radius);
         if ((int)judge is (0 or 7))
         {
             fastLateEffects[pos].SetActive(false);
@@ -206,6 +300,7 @@ public class NoteEffectManager : MonoBehaviour
         fastLateAnims[pos].SetTrigger("perfect");
 
     }
+
     /// <summary>
     /// Touch，TouchHold
     /// </summary>
@@ -241,6 +336,7 @@ public class NoteEffectManager : MonoBehaviour
     {
         for (var i = 0; i < 16; i++)
         {
+            PositionFeedbackAtRadius(i, NoteDrop.DefaultDestroyRadius);
             tapEffects[i].SetActive(false);
             greatEffects[i].SetActive(false);
             goodEffects[i].SetActive(false);

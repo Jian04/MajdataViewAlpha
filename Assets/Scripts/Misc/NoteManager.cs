@@ -53,7 +53,11 @@ public class NoteManager : MonoBehaviour
             else if (touch != null)
                 touchOrder[touch.gameObject] = touchIndex[touch.GetSensor()]++;
             else if(touchHold != null)
-                touchOrder[touchHold.gameObject] = touchIndex[SensorType.C]++;
+            {
+                var touchHoldSensor = Assets.Scripts.TouchBase.GetSensor(
+                    touchHold.touchArea, touchHold.startPosition);
+                touchOrder[touchHold.gameObject] = touchIndex[touchHoldSensor]++;
+            }
 
             notes.Add(child.gameObject);
         }

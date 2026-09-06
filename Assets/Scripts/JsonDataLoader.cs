@@ -1,4 +1,4 @@
-﻿using Assets.Scripts.Types;
+using Assets.Scripts.Types;
 using Assets.Scripts.Notes;
 using Newtonsoft.Json;
 using System;
@@ -9,7 +9,9 @@ using UnityEngine.UI;
 using System.Threading.Tasks;
 using System.Collections;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Assets.Scripts;
+using MajdataCore;
 
 public class JsonDataLoader : MonoBehaviour
 {
@@ -40,11 +42,64 @@ public class JsonDataLoader : MonoBehaviour
     Majson loadedData = null;
     float ignoreOffset = 0;
     bool previewOnly = false;
+    bool includeActiveSustainsAtOffset = false;
     Coroutine noteParserTask = null;
     private int runtimeBindingReadyFrame = -1;
-    private const float InitialPlaybackHorizon = 0.5f;
     private int reloadGeneration;
     public bool RuntimeBindingsReady => runtimeBindingReadyFrame < 0;
+
+    /// <summary>
+    /// A beat the view could not build. Validation runs on the chart text, but the
+    /// note itself is assembled here, so a beat can be legal and still fail to
+    /// appear. Recording where it happened is what lets the editor mark it instead
+    /// of leaving the note silently missing.
+    /// </summary>
+    public readonly struct DroppedBeat
+    {
+        public DroppedBeat(int line, int column, double time, string content, string reason)
+        {
+            Line = line;
+            Column = column;
+            Time = time;
+            Content = content;
+            Reason = reason;
+        }
+
+        public int Line { get; }
+        public int Column { get; }
+        public double Time { get; }
+        public string Content { get; }
+        public string Reason { get; }
+    }
+
+    private readonly List<DroppedBeat> droppedBeats = new();
+    private readonly List<(GameObject Object, int NoteKey, SensorType Sensor, bool IsTouch)>
+        beatJudgeRegistrations = new();
+    public IReadOnlyList<DroppedBeat> DroppedBeats => droppedBeats;
+
+    private int currentBeatLine;
+    private int currentBeatColumn;
+    private double currentBeatTime;
+    private string currentBeatContent = string.Empty;
+
+    /// <summary>
+    /// Reported by a note that was built but cannot be drawn - degenerate
+    /// geometry, no bars, a route that came back as NaN. Text validation cannot
+    /// see any of this, so without a report the note is simply invisible and the
+    /// chart looks correct. Deduplicated: this can be reached from Update.
+    /// </summary>
+    public void ReportUnrenderable(
+        int line, int column, double time, string content, string reason)
+    {
+        foreach (var existing in droppedBeats)
+            if (existing.Line == line &&
+                existing.Column == column &&
+                existing.Reason == reason)
+                return;
+        droppedBeats.Add(new DroppedBeat(line, column, time, content, reason));
+        UnityEngine.Debug.LogWarning(
+            $"[ChartLoader] Unrenderable note at t={time:F3} '{content}': {reason}");
+    }
     Dictionary<int, int> noteIndex = new();
         Dictionary<SensorType, int> touchIndex = new();
 
@@ -495,6 +550,7 @@ public class JsonDataLoader : MonoBehaviour
                 loadedData = jsonLoaderTask.Result;
                 if (!previewOnly)
                 {
+                    ObjectCounter.ResetForChart();
                     if (diffText != null) diffText.text = loadedData.difficulty;
                     if (levelText != null) levelText.text = loadedData.level;
                     if (titleText != null) titleText.text = loadedData.title;
@@ -514,6 +570,7 @@ public class JsonDataLoader : MonoBehaviour
                     }
 
                     CountNoteSum(loadedData);
+                    ObjectCounter.CompleteChartInitialization();
                 }
 
                 if (loadedData?.timingList == null || loadedData.timingList.Count == 0)
@@ -526,7 +583,9 @@ public class JsonDataLoader : MonoBehaviour
                 SvController.Load(loadedData.svTable, 0d);
                 BuildHSpeedTimeline(loadedData.hsTable);
                 BuildSpawnTimeline(loadedData.spawnTable);
+                BuildSpawnModeTimeline(loadedData.spawnModeTable);
                 BuildBounceTimeline(loadedData.bounceTable);
+                BuildDestroyTimeline(loadedData.destroyTable);
                 BuildColorTimeline(loadedData.colorTable);
                 BuildSizeTimeline(loadedData.sizeTable);
                 BuildAlphaTimeline(loadedData.alphaTable);
@@ -579,33 +638,56 @@ public class JsonDataLoader : MonoBehaviour
         sw.Start();
         foreach (var timing in timingList)
         {
-            // Playback can begin once the notes around the current timeline position
-            // have bound their sensors. Continue streaming the rest of the chart after
-            // that point instead of delaying audio until every later note exists.
-            if (!previewOnly && runtimeBindingReadyFrame == int.MaxValue &&
-                timing.time > ignoreOffset + InitialPlaybackHorizon)
-            {
-                runtimeBindingReadyFrame = Time.frameCount + 1;
-            }
-
-            // Keep loading incremental. A larger negative-time budget blocks
-            // the main thread exactly when the cover transition is playing.
-            if (sw.ElapsedMilliseconds >= 2)
+            // Every note built below inherits this, so a note that turns out
+            // unrenderable can name the beat it came from instead of failing
+            // silently somewhere the editor cannot see.
+            currentBeatLine = timing.rawTextPositionY;
+            currentBeatColumn = timing.rawTextPositionX;
+            currentBeatTime = timing.time;
+            currentBeatContent = timing.notesContent ?? string.Empty;
+            var timingIsEach = BeatIsEach(timing);
+            var timingStateIsEach = timing.isEachInStream ?? timingIsEach;
+            // Keep the editor responsive while preloading, but do not start playback
+            // until every note path is built. Constructing D-zone routes during audio
+            // playback causes a visible one-frame partial route and a main-thread hitch.
+            //
+            // Yielding this often stretches the build to roughly eight times its own
+            // cost in wall-clock time, which is the wait before a paused preview
+            // starts following the drag. Nothing is playing during a preview, so
+            // there is no audio to protect and the author is sitting there waiting:
+            // take most of the frame instead of a sliver of it.
+            if (sw.ElapsedMilliseconds >= (previewOnly ? 12 : 2))
             {
                 yield return 0;
                 sw.Restart();
             }
+            // A beat is built object by object, so a throw halfway through used to
+            // leave everything built so far in the scene: a star head with no
+            // slide to follow, drifting on its own and taking a miss. A beat that
+            // fails has to leave nothing behind.
+            var beatObjectCount = notes.transform.childCount;
+            beatJudgeRegistrations.Clear();
             try
             {
+                var beatNotes = timing.noteList;
+                var restoringActiveSustain = false;
                 if (timing.time < ignoreOffset)
                 {
                     CountNoteCount(timing.noteList);
-                    continue;
+                    if (!includeActiveSustainsAtOffset)
+                        continue;
+
+                    beatNotes = timing.noteList.FindAll(note =>
+                        RemainsVisibleAt(note, timing.time, ignoreOffset));
+                    if (beatNotes.Count == 0)
+                        continue;
+                    restoringActiveSustain = true;
                 }
                 List<TouchDrop> members = new();
-                for (var i = 0; i < timing.noteList.Count; i++)
+                for (var i = 0; i < beatNotes.Count; i++)
                 {
-                    var note = timing.noteList[i];
+                    var note = beatNotes[i];
+                    NormalizeBorrowedTrajectory(timing, note);
                     if (note.noteType is SimaiNoteType.Tap or SimaiNoteType.Hold or SimaiNoteType.Slide &&
                         (note.startPosition < 1 || note.startPosition > 8))
                     {
@@ -624,25 +706,36 @@ public class JsonDataLoader : MonoBehaviour
                         if (note.isForceStar)
                         {
                             GOnote = Instantiate(starPrefab, notes.transform);
-                            var _NDCompo = PrepareNote<StarDrop>(GOnote);
+                            var _NDCompo = PrepareNote<StarDrop>(GOnote, note);
                             _NDCompo.tapSpr = customSkin.Star;
                             _NDCompo.eachSpr = customSkin.Star_Each;
                             _NDCompo.breakSpr = customSkin.Star_Break;
                             _NDCompo.exSpr = customSkin.Star_Ex;
+                            if (note.isMineHead)
+                            {
+                                _NDCompo.eachSpr = customSkin.Star;
+                                _NDCompo.breakSpr = customSkin.Star;
+                            }
                             _NDCompo.tapLine = starLine;
                             _NDCompo.isFakeStarRotate = note.isFakeRotate;
                             _NDCompo.isFakeStar = true;
+                            _NDCompo.isMine = note.isMineHead;
                             NDCompo = _NDCompo;
                         }
                         else
                         {
                             GOnote = Instantiate(tapPrefab, notes.transform);
-                            NDCompo = PrepareNote<TapDrop>(GOnote);
+                            NDCompo = PrepareNote<TapDrop>(GOnote, note);
                             // Custom note style
                             NDCompo.tapSpr = customSkin.Tap;
                             NDCompo.breakSpr = customSkin.Tap_Break;
                             NDCompo.eachSpr = customSkin.Tap_Each;
                             NDCompo.exSpr = customSkin.Tap_Ex;
+                            if (note.isMineHead)
+                            {
+                                NDCompo.breakSpr = customSkin.Tap;
+                                NDCompo.eachSpr = customSkin.Tap;
+                            }
                         }
                         AddJudgeNote(GOnote, note);
                         // Note layer order
@@ -651,30 +744,46 @@ public class JsonDataLoader : MonoBehaviour
 
                         NDCompo.BreakShine = BreakShine;
 
-                        if (timing.noteList.Count > 1) NDCompo.isEach = true;
+                        if (timingIsEach) NDCompo.isEach = true;
+                        NDCompo.isEachInStream = timingStateIsEach;
                         NDCompo.isBreak = note.isBreak;
                         NDCompo.isEX = note.isEx;
                         NDCompo.isFirework = note.isHanabi;
+                        NDCompo.isMine = note.isMineHead;
                         NDCompo.isDZone = note.isDZone;
                         NDCompo.time = (float)timing.time;
                         NDCompo.startPosition = note.startPosition;
                         var tapType = note.isForceStar ? "star" : "tap";
-                        var tapIsEach = timing.noteList.Count > 1;
+                        var tapIsEach = timingStateIsEach;
+                        var tapIsMine = note.isMineHead;
                         NDCompo.speed = noteSpeed * GetHSpeedAt(
-                            tapType, timing.time, timing.HSpeed, note.isBreak, tapIsEach);
-                        NDCompo.scrollType = ResolveSvType(tapType, note.isBreak, tapIsEach);
+                            tapType, timing.time, timing.HSpeed, note.isBreak, tapIsEach,
+                            timing.streamIndex, tapIsMine);
+                        NDCompo.scrollType = ResolveSvType(
+                            tapType, note.isBreak, tapIsEach, timing.streamIndex, tapIsMine);
                         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(
                             timing.time, NDCompo.scrollType);
                         NDCompo.spawnRadius = GetSpawnRadiusAt(
-                            tapType, timing.time, note.isBreak, tapIsEach);
+                            tapType, timing.time, note.isBreak, tapIsEach,
+                            timing.streamIndex, tapIsMine);
+                        NDCompo.spawnMode = GetSpawnModeAt(
+                            tapType, timing.time, note.isBreak, tapIsEach,
+                            timing.streamIndex, tapIsMine);
+                        NDCompo.destroyRadius = GetDestroyRadiusAt(
+                            tapType, timing.time, note.isBreak, tapIsEach,
+                            timing.streamIndex, tapIsMine);
                         NDCompo.bounceDuration = GetBounceDurationAt(
-                            tapType, timing.time, note.isBreak, tapIsEach);
+                            tapType, timing.time, note.isBreak, tapIsEach,
+                            timing.streamIndex, tapIsMine);
+                        NDCompo.ConfigureBounce(NDCompo.speed / noteSpeed);
                         var tapMat = note.isForceStar
-                            ? GetStarMaterial(note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead)
-                            : GetTapMaterial(note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
+                            ? GetStarMaterial(note.isBreak, timingStateIsEach, timing.time, note.isMineHead, timing.streamIndex)
+                            : GetTapMaterial(note.isBreak, timingStateIsEach, timing.time, note.isMineHead, timing.streamIndex);
                         NDCompo.colorOverrideMaterial = tapMat;
                         if (tapMat != null) NDCompo.noteTintColor = tapMat.GetColor("_NoteColor");
-                        var tapSize = GetSizeAt(tapType, timing.time, note.isBreak, tapIsEach);
+                        var tapSize = GetSizeAt(
+                            tapType, timing.time, note.isBreak, tapIsEach,
+                            timing.streamIndex, tapIsMine);
                         NDCompo.noteScaleX = tapSize.x;
                         NDCompo.noteScaleY = tapSize.y;
                     }
@@ -682,7 +791,7 @@ public class JsonDataLoader : MonoBehaviour
                     {
                         var GOnote = Instantiate(holdPrefab, notes.transform);
                         AddJudgeNote(GOnote, note);
-                        var NDCompo = PrepareNote<HoldDrop>(GOnote);
+                        var NDCompo = PrepareNote<HoldDrop>(GOnote, note);
 
                         // Note layer order
                         NDCompo.noteSortOrder = noteSortOrder;
@@ -696,33 +805,56 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.exSpr = customSkin.Hold_Ex;
                         NDCompo.breakSpr = customSkin.Hold_Break;
                         NDCompo.breakHoldOnSpr = customSkin.Hold_Break_On;
+                        if (note.isMineHead)
+                        {
+                            NDCompo.eachSpr = customSkin.Hold;
+                            NDCompo.eachHoldOnSpr = customSkin.Hold_On;
+                            NDCompo.breakSpr = customSkin.Hold;
+                            NDCompo.breakHoldOnSpr = customSkin.Hold_On;
+                        }
 
                         NDCompo.HoldShine = HoldShine;
                         NDCompo.BreakShine = BreakShine;
 
-                        if (timing.noteList.Count > 1) NDCompo.isEach = true;
+                        if (timingIsEach) NDCompo.isEach = true;
+                        NDCompo.isEachInStream = timingStateIsEach;
                         NDCompo.time = (float)timing.time;
                         NDCompo.LastFor = (float)note.holdTime;
                         NDCompo.startPosition = note.startPosition;
-                        var holdIsEach = timing.noteList.Count > 1;
+                        var holdIsEach = timingStateIsEach;
+                        var holdIsMine = note.isMineHead;
                         NDCompo.speed = noteSpeed * GetHSpeedAt(
-                            "hold", timing.time, timing.HSpeed, note.isBreak, holdIsEach);
-                        NDCompo.scrollType = ResolveSvType("hold", note.isBreak, holdIsEach);
+                            "hold", timing.time, timing.HSpeed, note.isBreak, holdIsEach,
+                            timing.streamIndex, holdIsMine);
+                        NDCompo.scrollType = ResolveSvType(
+                            "hold", note.isBreak, holdIsEach, timing.streamIndex, holdIsMine);
                         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(
                             timing.time, NDCompo.scrollType);
                         NDCompo.spawnRadius = GetSpawnRadiusAt(
-                            "hold", timing.time, note.isBreak, holdIsEach);
+                            "hold", timing.time, note.isBreak, holdIsEach,
+                            timing.streamIndex, holdIsMine);
+                        NDCompo.spawnMode = GetSpawnModeAt(
+                            "hold", timing.time, note.isBreak, holdIsEach,
+                            timing.streamIndex, holdIsMine);
+                        NDCompo.destroyRadius = GetDestroyRadiusAt(
+                            "hold", timing.time, note.isBreak, holdIsEach,
+                            timing.streamIndex, holdIsMine);
                         NDCompo.bounceDuration = GetBounceDurationAt(
-                            "hold", timing.time, note.isBreak, holdIsEach);
+                            "hold", timing.time, note.isBreak, holdIsEach,
+                            timing.streamIndex, holdIsMine);
+                        NDCompo.ConfigureBounce(NDCompo.speed / noteSpeed);
                         NDCompo.isEX = note.isEx;
                         NDCompo.isBreak = note.isBreak;
                         NDCompo.isFirework = note.isHanabi;
+                        NDCompo.isMine = note.isMineHead;
                         NDCompo.isDZone = note.isDZone;
                         var holdMat = GetHoldMaterial(
-                            note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
+                            note.isBreak, timingStateIsEach, timing.time, note.isMineHead, timing.streamIndex);
                         NDCompo.colorOverrideMaterial = holdMat;
                         if (holdMat != null) NDCompo.noteTintColor = holdMat.GetColor("_NoteColor");
-                        var holdSize = GetSizeAt("hold", timing.time, note.isBreak, holdIsEach);
+                        var holdSize = GetSizeAt(
+                            "hold", timing.time, note.isBreak, holdIsEach,
+                            timing.streamIndex, holdIsMine);
                         NDCompo.noteScaleX = holdSize.x;
                         NDCompo.noteScaleY = holdSize.y;
                     }
@@ -730,8 +862,9 @@ public class JsonDataLoader : MonoBehaviour
                     {
                         var touchSensor = Assets.Scripts.TouchBase.GetSensor(note.touchArea, note.startPosition);
                         var GOnote = Instantiate(touchHoldPrefab, notes.transform);
-                        AddJudgeTouch(GOnote, touchSensor);
-                        var NDCompo = PrepareNote<TouchHoldDrop>(GOnote);
+                        AddJudgeTouch(GOnote, touchSensor, note);
+                        var NDCompo = PrepareNote<TouchHoldDrop>(GOnote, note);
+                        NDCompo.isEachInStream = timingStateIsEach;
 
                         // Note layer order
                         NDCompo.noteSortOrder = noteSortOrder;
@@ -741,34 +874,65 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.startPosition = note.startPosition;
                         NDCompo.time = (float)timing.time;
                         NDCompo.LastFor = (float)note.holdTime;
-                        var touchHoldIsEach = timing.noteList.Count > 1;
+                        var touchHoldIsEach = timingStateIsEach;
+                        var touchHoldIsMine = note.isMineHead;
                         NDCompo.speed = touchSpeed * GetHSpeedAt(
-                            "touchhold", timing.time, timing.HSpeed, note.isBreak, touchHoldIsEach);
-                        NDCompo.scrollType = ResolveSvType("touchhold", note.isBreak, touchHoldIsEach);
+                            "touchhold", timing.time, timing.HSpeed, note.isBreak, touchHoldIsEach,
+                            timing.streamIndex, touchHoldIsMine);
+                        NDCompo.scrollType = ResolveSvType(
+                            "touchhold", note.isBreak, touchHoldIsEach, timing.streamIndex,
+                            touchHoldIsMine);
                         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(
                             timing.time, NDCompo.scrollType);
                         NDCompo.isFirework = note.isHanabi;
                         NDCompo.isBreak = note.isBreak;
-                        // Mine notes remain grayscale even when a color override is active.
-                        var thMat = note.isMonoHead
-                            ? CreateTintMaterial(null, GetAlphaAt("touchhold", timing.time), grayscale: true)
-                            : CreateTintMaterial(GetColorAt("touchhold", timing.time), GetAlphaAt("touchhold", timing.time));
+                        NDCompo.isMine = note.isMineHead;
+                        // A mine stays grey unless the chart named a colour for mines.
+                        var thMat = touchHoldIsMine
+                            ? MineMaterial(
+                                timing.time, timing.streamIndex,
+                                GetAlphaAt("touchhold", timing.time, timing.streamIndex,
+                                    note.isBreak, touchHoldIsEach, isMine: true))
+                            : CreateTintMaterial(
+                                GetColorAt("touchhold", timing.time, timing.streamIndex,
+                                    note.isBreak, touchHoldIsEach),
+                                GetAlphaAt("touchhold", timing.time, timing.streamIndex,
+                                    note.isBreak, touchHoldIsEach));
                         NDCompo.colorOverrideMaterial = thMat;
-                        if (thMat != null && !note.isMonoHead) NDCompo.noteTintColor = thMat.GetColor("_NoteColor");
+                        if (thMat != null && !note.isMineHead) NDCompo.noteTintColor = thMat.GetColor("_NoteColor");
+                        NDCompo.breakProgressMaterial = note.isBreak && !note.isMineHead
+                            ? CreateTintMaterial("FF6538", 1f, 0f)
+                            : null;
+                        if (NDCompo.breakProgressMaterial != null &&
+                            NDCompo.breakProgressMaterial.HasProperty("_Brightness"))
+                            NDCompo.breakProgressMaterial.SetFloat("_Brightness", 1.12f);
+                        NDCompo.breakProgressSprite = note.isBreak && !note.isMineHead
+                            ? customSkin.TouchHold[4]
+                            : null;
                         var touchHoldSize = GetSizeAt(
-                            "touchhold", timing.time, note.isBreak, touchHoldIsEach);
+                            "touchhold", timing.time, note.isBreak, touchHoldIsEach,
+                            timing.streamIndex, touchHoldIsMine);
                         NDCompo.noteScaleX = touchHoldSize.x;
                         NDCompo.noteScaleY = touchHoldSize.y;
 
-                        // Break touch-holds use dedicated skin sprites instead of runtime tinting.
-                        Array.Copy(note.isBreak ? customSkin.TouchHold_Break : customSkin.TouchHold, NDCompo.TouchHoldSprite, 5);
-                        NDCompo.TouchPointSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint;
+                        Array.Copy(note.isMineHead
+                            ? customSkin.TouchHold
+                            : note.isBreak ? customSkin.TouchHold_Break : customSkin.TouchHold,
+                            NDCompo.TouchHoldSprite, 5);
+                        NDCompo.TouchPointSprite = note.isMineHead
+                            ? customSkin.TouchPoint
+                            : note.isBreak
+                                ? customSkin.TouchPoint_Break
+                                : touchHoldIsEach
+                                    ? customSkin.TouchPoint_Each
+                                    : customSkin.TouchPoint;
                     }
                     else if (note.noteType == SimaiNoteType.Touch)
                     {
                         var GOnote = Instantiate(touchPrefab, notes.transform);
-                        AddJudgeTouch(GOnote, TouchBase.GetSensor(note.touchArea, note.startPosition));
-                        var NDCompo = PrepareNote<TouchDrop>(GOnote);
+                        AddJudgeTouch(GOnote, TouchBase.GetSensor(note.touchArea, note.startPosition), note);
+                        var NDCompo = PrepareNote<TouchDrop>(GOnote, note);
+                        NDCompo.isEachInStream = timingStateIsEach;
 
                         // Note layer order
                         NDCompo.noteSortOrder = noteSortOrder;
@@ -777,42 +941,67 @@ public class JsonDataLoader : MonoBehaviour
                         NDCompo.time = (float)timing.time;
                         NDCompo.areaPosition = note.touchArea;
                         NDCompo.startPosition = note.startPosition;
+                        // "~[distance]" moves where the Note is drawn; the sensor
+                        // that judges it stays the one the area named.
+                        NDCompo.customRadius = note.touchRadius;
 
                         // Break touches use dedicated skin sprites, including each notes.
                         NDCompo.fanNormalSprite = note.isBreak ? customSkin.Touch_Break : customSkin.Touch;
                         NDCompo.fanEachSprite = note.isBreak ? customSkin.Touch_Break : customSkin.Touch_Each;
                         NDCompo.pointNormalSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint;
                         NDCompo.pointEachSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint_Each;
+                        if (note.isMineHead)
+                        {
+                            NDCompo.fanNormalSprite = customSkin.Touch;
+                            NDCompo.fanEachSprite = customSkin.Touch;
+                            NDCompo.pointNormalSprite = customSkin.TouchPoint;
+                            NDCompo.pointEachSprite = customSkin.TouchPoint;
+                        }
                         NDCompo.justSprite = customSkin.TouchJust;
                         Array.Copy(customSkin.TouchBorder, NDCompo.multTouchNormalSprite, 2);
                         Array.Copy(customSkin.TouchBorder_Each, NDCompo.multTouchEachSprite, 2);
 
-                        if (timing.noteList.Count > 1)
+                        if (timingIsEach)
                         {
                             NDCompo.isEach = true;
                             members.Add(NDCompo);
                         }
-                        var touchIsEach = timing.noteList.Count > 1;
+                        var touchIsEach = timingStateIsEach;
+                        var touchIsMine = note.isMineHead;
                         NDCompo.speed = touchSpeed * GetHSpeedAt(
-                            "touch", timing.time, timing.HSpeed, note.isBreak, touchIsEach);
-                        NDCompo.scrollType = ResolveSvType("touch", note.isBreak, touchIsEach);
+                            "touch", timing.time, timing.HSpeed, note.isBreak, touchIsEach,
+                            timing.streamIndex, touchIsMine);
+                        NDCompo.scrollType = ResolveSvType(
+                            "touch", note.isBreak, touchIsEach, timing.streamIndex, touchIsMine);
                         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(
                             timing.time, NDCompo.scrollType);
                         NDCompo.isFirework = note.isHanabi;
                         NDCompo.isBreak = note.isBreak;
+                        NDCompo.isMine = note.isMineHead;
                         NDCompo.GroupInfo = null;
-                        // Mine notes remain grayscale even when a color override is active.
-                        NDCompo.colorOverrideMaterial = note.isMonoHead
-                            ? CreateTintMaterial(null, GetAlphaAt("touch", timing.time), grayscale: true)
-                            : CreateTintMaterial(GetColorAt("touch", timing.time), GetAlphaAt("touch", timing.time));
-                        var touchSize = GetSizeAt("touch", timing.time, note.isBreak, touchIsEach);
+                        // A mine stays grey unless the chart named a colour for mines.
+                        NDCompo.colorOverrideMaterial = touchIsMine
+                            ? MineMaterial(
+                                timing.time, timing.streamIndex,
+                                GetAlphaAt("touch", timing.time, timing.streamIndex,
+                                    note.isBreak, touchIsEach, isMine: true))
+                            : CreateTintMaterial(
+                                GetColorAt("touch", timing.time, timing.streamIndex,
+                                    note.isBreak, touchIsEach),
+                                GetAlphaAt("touch", timing.time, timing.streamIndex,
+                                    note.isBreak, touchIsEach));
+                        var touchSize = GetSizeAt(
+                            "touch", timing.time, note.isBreak, touchIsEach,
+                            timing.streamIndex, touchIsMine);
                         NDCompo.noteScaleX = touchSize.x;
                         NDCompo.noteScaleY = touchSize.y;
                     }
 
                     else if (note.noteType == SimaiNoteType.Slide)
                     {
-                        if (note.isTouchSlide)
+                        if (note.isTrajectoryOnly)
+                            InstantiateTrajectoryCarrier(timing, note);
+                        else if (note.isTouchSlide)
                             InstantiateTouchSlide(timing, note, members);
                         else
                             InstantiateStarGroup(timing, note, i, lastNoteTime); // Star group
@@ -864,9 +1053,9 @@ public class JsonDataLoader : MonoBehaviour
                         member.GroupInfo = touchGroups.Find(x => x.Members.Any(y => y == member));
                 }
 
-                var eachNotes = timing.noteList.FindAll(o =>
+                var eachNotes = beatNotes.FindAll(o =>
                     o.noteType != SimaiNoteType.Touch && o.noteType != SimaiNoteType.TouchHold);
-                if (eachNotes.Count > 1) // Multiple non-Touch notes
+                if (!restoringActiveSustain && eachNotes.Count > 1) // Multiple non-Touch notes
                 {
                     var startPos = eachNotes[0].startPosition;
                     var endPos = eachNotes[1].startPosition;
@@ -876,14 +1065,25 @@ public class JsonDataLoader : MonoBehaviour
                     var line = Instantiate(eachLine, notes.transform);
                     var lineDrop = line.GetComponent<EachLineDrop>();
 
+                    lineDrop.previewOnly = previewOnly;
                     lineDrop.time = (float)timing.time;
                     lineDrop.speed = noteSpeed * GetHSpeedAt(
-                        "tap", timing.time, timing.HSpeed, isEach: true);
-                    lineDrop.scrollType = ResolveSvType("tap", false, true);
+                        "tap", timing.time, timing.HSpeed, isEach: true,
+                        streamIndex: timing.streamIndex);
+                    lineDrop.scrollType = ResolveSvType("tap", false, true, timing.streamIndex);
                     lineDrop.noteScrollPos = SvController.GetCumulativeScroll(
                         timing.time, lineDrop.scrollType);
                     lineDrop.spawnRadius = GetSpawnRadiusAt(
-                        "tap", timing.time, isEach: true);
+                        "tap", timing.time, isEach: true, streamIndex: timing.streamIndex);
+                    lineDrop.spawnMode = GetSpawnModeAt(
+                        "tap", timing.time, isEach: true, streamIndex: timing.streamIndex);
+                    lineDrop.destroyRadius = GetDestroyRadiusAt(
+                        "tap", timing.time, isBreak: false, isEach: true,
+                        streamIndex: timing.streamIndex);
+                    lineDrop.bounceDuration = GetBounceDurationAt(
+                        "tap", timing.time, isBreak: false, isEach: true,
+                        streamIndex: timing.streamIndex);
+                    lineDrop.ConfigureBounce(lineDrop.speed / noteSpeed);
 
                     endPos = endPos < 0 ? endPos + 8 : endPos;
                     endPos = endPos > 8 ? endPos - 8 : endPos;
@@ -902,19 +1102,41 @@ public class JsonDataLoader : MonoBehaviour
                     lineDrop.startPosition = startPos;
                     lineDrop.curvLength = endPos - 1;
                 }
+
             }
             catch (Exception e)
             {
-                if (previewOnly)
+                // The try covers the whole beat, so one note that cannot be built
+                // takes every note sharing its beat. Name the beat: this message
+                // is the only trace left behind. Syntax feedback belongs in the
+                // editor, and logging as an error would trip Unity's Error Pause
+                // and deadlock synchronous editor requests, so this stays a
+                // warning - which in a built player means it reaches Player.log
+                // and nothing else. A bare stack trace there leaves the note
+                // simply absent, with nothing to search the chart for.
+                RollBackBeatJudgeRegistrations();
+                for (var i = notes.transform.childCount - 1; i >= beatObjectCount; i--)
                 {
-                    UnityEngine.Debug.LogWarning(e);
-                    continue;
+                    var partial = notes.transform.GetChild(i).gameObject;
+                    // Nothing judged this note and nothing should score it on the
+                    // way out; previewOnly is what its own OnDestroy reads to know
+                    // it was never part of the played chart.
+                    var drop = partial.GetComponent<NoteDrop>();
+                    if (drop != null)
+                        drop.previewOnly = true;
+                    Destroy(partial);
                 }
-
-                // Do not write parser errors to the View overlay. Syntax feedback
-                // belongs in the editor; logging as an exception also triggers
-                // Unity's Error Pause and deadlocks synchronous editor requests.
-                UnityEngine.Debug.LogWarning(e);
+                UnityEngine.Debug.LogWarning(
+                    $"[ChartLoader] Dropped beat at t={timing.time:F3} " +
+                    $"'{timing.notesContent}'{(previewOnly ? " (preview)" : "")}: {e}");
+                droppedBeats.Add(new DroppedBeat(
+                    timing.rawTextPositionY,
+                    timing.rawTextPositionX,
+                    timing.time,
+                    timing.notesContent ?? string.Empty,
+                    e.Message));
+                if (previewOnly)
+                    continue;
             }
         }
         if (!previewOnly && runtimeBindingReadyFrame == int.MaxValue)
@@ -923,45 +1145,151 @@ public class JsonDataLoader : MonoBehaviour
         yield break;
     }
 
-    private T PrepareNote<T>(GameObject noteObject) where T : NoteDrop
+    /// <summary>
+    /// Whether this beat is an "each", the pairing that draws its notes yellow and
+    /// selects the each variants of size, scroll type and spawn radius.
+    /// </summary>
+    /// <remarks>
+    /// The rule itself is <see cref="EachRule"/>, shared with the editor's timeline,
+    /// because the two used to decide this differently.
+    /// </remarks>
+    private static bool BeatIsEach(SimaiTimingPoint timing) =>
+        EachRule.IsEach(
+            timing.isEach,
+            timing.noteList.Count(
+                note => EachRule.CountsTowardEach(note.isSlideNoHead)));
+
+    /// <summary>
+    /// Whether this beat's slide trails are drawn yellow, which is a different question
+    /// from <see cref="BeatIsEach"/>: a same-head pair is one struck head and two
+    /// trails, so the head stays plain while both trails turn.
+    /// </summary>
+    private static bool BeatTrailsAreEach(SimaiTimingPoint timing) =>
+        EachRule.TrailsAreEach(
+            timing.noteList.Count(note => note.noteType == SimaiNoteType.Slide));
+
+    /// <summary>
+    /// How many of this beat's slides leave <paramref name="startPosition"/>. More than
+    /// one means they share a head, which is drawn with the double star.
+    /// </summary>
+    private static int BeatSlidesFrom(SimaiTimingPoint timing, int startPosition) =>
+        timing.noteList.Count(
+            note => note.noteType == SimaiNoteType.Slide &&
+                    note.startPosition == startPosition);
+
+    private T PrepareNote<T>(
+        GameObject noteObject,
+        SimaiNote note,
+        bool? fakeOverride = null) where T : NoteDrop
     {
+        var isFake = fakeOverride ?? note.isFake;
         var component = noteObject.GetComponent<T>();
+        component.BindSceneContext(timeProvider, ObjectCounter, noteManager);
+        component.isFake = isFake;
+        component.renderReporter = this;
+        component.sourceLine = currentBeatLine;
+        component.sourceColumn = currentBeatColumn;
+        component.sourceTime = currentBeatTime;
+        component.sourceContent = currentBeatContent;
+        component.customSkin = note.noteSkin ?? string.Empty;
+        // Fake notes disable judgement, but they are still live-chart objects and
+        // must expire normally. Only timeline/standby previews are reversible.
         component.previewOnly = previewOnly;
+        if (isFake)
+            AttachFakeLifetime(noteObject);
+        if (component is StarDrop star)
+            star.usePinkStarExColor = customSkin.PinkStarEnabled;
         return component;
     }
 
-    private void AddJudgeNote(GameObject noteObject, SimaiNote note)
+    private void AddJudgeNote(GameObject noteObject, SimaiNote note, bool? fakeOverride = null)
     {
-        if (previewOnly)
+        if (previewOnly || (fakeOverride ?? note.isFake))
             return;
         var key = note.isDZone ? note.startPosition + 8 : note.startPosition;
         noteManager.AddNote(noteObject, noteIndex[key]++);
+        beatJudgeRegistrations.Add((noteObject, key, default, false));
     }
 
-    private void AddJudgeTouch(GameObject noteObject, SensorType sensorType)
+    private void AddJudgeTouch(
+        GameObject noteObject,
+        SensorType sensorType,
+        SimaiNote note,
+        bool? fakeOverride = null)
     {
-        if (previewOnly)
+        if (previewOnly || (fakeOverride ?? note.isFake))
             return;
         noteManager.AddTouch(noteObject, touchIndex[sensorType]++);
+        beatJudgeRegistrations.Add((noteObject, 0, sensorType, true));
     }
 
-    public void LoadJson(string json, float ignoreOffset, bool previewOnly = false)
+    /// <summary>
+    /// Takes back the judgement slots a failed beat had already claimed.
+    /// </summary>
+    /// <remarks>
+    /// Judgement runs in the order notes were handed out per key, and a note only
+    /// advances that order by being judged. A note that was registered and then
+    /// removed from the scene never judges, so leaving its slot behind would stall
+    /// the key it sat on and quietly make every later note there unjudgeable.
+    /// Slots are handed out in order, so undoing them in reverse restores the count.
+    /// </remarks>
+    private void RollBackBeatJudgeRegistrations()
+    {
+        for (var i = beatJudgeRegistrations.Count - 1; i >= 0; i--)
+        {
+            var (noteObject, key, sensorType, isTouch) = beatJudgeRegistrations[i];
+            if (isTouch)
+            {
+                noteManager.touchOrder.Remove(noteObject);
+                touchIndex[sensorType]--;
+            }
+            else
+            {
+                noteManager.noteOrder.Remove(noteObject);
+                noteIndex[key]--;
+            }
+        }
+        beatJudgeRegistrations.Clear();
+    }
+
+    private static void AttachFakeLifetime(GameObject noteObject)
+    {
+        if (noteObject.GetComponent<FakeNoteLifetime>() == null)
+            noteObject.AddComponent<FakeNoteLifetime>();
+    }
+
+    public void LoadJson(
+        string json,
+        float ignoreOffset,
+        bool previewOnly = false,
+        bool preserveTintCache = false)
     {
         runtimeBindingReadyFrame = previewOnly ? -1 : int.MaxValue;
-        ClearTintMaterialCache();
+        droppedBeats.Clear();
+        if (!preserveTintCache)
+            ClearTintMaterialCache();
         jsonLoaderTask = Task.Run(() => JsonConvert.DeserializeObject<Majson>(json));
         State = NoteLoaderStatus.LodingJson;
         this.ignoreOffset = ignoreOffset;
         this.previewOnly = previewOnly;
+        includeActiveSustainsAtOffset = false;
     }
 
-    public void LoadJsonImmediate(string json, float ignoreOffset, bool previewOnly = false)
+    public void LoadJsonImmediate(
+        string json,
+        float ignoreOffset,
+        bool previewOnly = false,
+        bool preserveTintCache = false,
+        bool includeActiveSustains = false)
     {
         runtimeBindingReadyFrame = -1;
-        ClearTintMaterialCache();
+        droppedBeats.Clear();
+        if (!preserveTintCache)
+            ClearTintMaterialCache();
         loadedData = JsonConvert.DeserializeObject<Majson>(json);
         this.ignoreOffset = ignoreOffset;
         this.previewOnly = previewOnly;
+        includeActiveSustainsAtOffset = includeActiveSustains;
         if (loadedData == null || loadedData.timingList.Count == 0)
         {
             State = NoteLoaderStatus.Finished;
@@ -970,6 +1298,7 @@ public class JsonDataLoader : MonoBehaviour
 
         if (!previewOnly)
         {
+            ObjectCounter.ResetForChart();
             if (diffText != null) diffText.text = loadedData.difficulty;
             if (levelText != null) levelText.text = loadedData.level;
             if (titleText != null) titleText.text = loadedData.title;
@@ -989,12 +1318,15 @@ public class JsonDataLoader : MonoBehaviour
             }
 
             CountNoteSum(loadedData);
+            ObjectCounter.CompleteChartInitialization();
         }
 
         SvController.Load(loadedData.svTable, 0d);
         BuildHSpeedTimeline(loadedData.hsTable);
         BuildSpawnTimeline(loadedData.spawnTable);
+        BuildSpawnModeTimeline(loadedData.spawnModeTable);
         BuildBounceTimeline(loadedData.bounceTable);
+        BuildDestroyTimeline(loadedData.destroyTable);
         BuildColorTimeline(loadedData.colorTable);
         BuildSizeTimeline(loadedData.sizeTable);
         BuildAlphaTimeline(loadedData.alphaTable);
@@ -1010,6 +1342,7 @@ public class JsonDataLoader : MonoBehaviour
 
     public void ClearLoadedNotes(bool immediate = false)
     {
+        PreviewReplacementInProgress = false;
         UnityEngine.Debug.Log($"[MajdataView] ClearLoadedNotes(immediate={immediate}): clearing input bindings and judge queues.");
         if (noteParserTask != null)
         {
@@ -1047,6 +1380,103 @@ public class JsonDataLoader : MonoBehaviour
         StartCoroutine(ResetReloadFlagNextFrame(generation));
     }
 
+    public void CancelPendingLoad()
+    {
+        if (noteParserTask != null)
+        {
+            StopCoroutine(noteParserTask);
+            noteParserTask = null;
+        }
+        jsonLoaderTask = null;
+        State = NoteLoaderStatus.Idle;
+        runtimeBindingReadyFrame = -1;
+    }
+
+    public void ClearPreviewNotes()
+    {
+        if (notes == null)
+            return;
+
+        var previewObjects = new HashSet<GameObject>();
+        foreach (var note in notes.GetComponentsInChildren<NoteDrop>(true))
+            if (note != null && note.previewOnly)
+                previewObjects.Add(note.gameObject);
+        foreach (var line in notes.GetComponentsInChildren<EachLineDrop>(true))
+            if (line != null && line.previewOnly)
+                previewObjects.Add(line.gameObject);
+
+        foreach (var previewObject in previewObjects)
+        {
+            if (previewObject == null)
+                continue;
+            previewObject.SetActive(false);
+            Destroy(previewObject);
+        }
+    }
+
+    public GameObject[] BeginPreviewReplacement()
+    {
+        CancelPendingLoad();
+        HttpHandler.IsReloding = true;
+        reloadGeneration++;
+        PreviewReplacementInProgress = true;
+
+        var previous = new List<GameObject>();
+        if (notes != null)
+            for (var i = 0; i < notes.transform.childCount; i++)
+            {
+                var previousObject = notes.transform.GetChild(i).gameObject;
+                foreach (var note in
+                         previousObject.GetComponentsInChildren<NoteDrop>(true))
+                    note.previewOnly = true;
+                foreach (var line in
+                         previousObject.GetComponentsInChildren<EachLineDrop>(true))
+                    line.previewOnly = true;
+                foreach (var behaviour in
+                         previousObject.GetComponentsInChildren<MonoBehaviour>(true))
+                    behaviour.enabled = false;
+                previous.Add(previousObject);
+            }
+
+        noteManager?.Clear();
+        (GameObject.Find("Input") ?? GameObject.Find("InputManager"))
+            ?.GetComponent<InputManager>()
+            ?.ResetInputState(true);
+        GameObject.Find("Sensors")?.GetComponent<SensorManager>()?.ResetAllSensors();
+        GameObject.Find("MultTouchHandler")?.GetComponent<MultTouchHandler>()?.clearSlots();
+        slideLayer = -1;
+        noteSortOrder = 0;
+        return previous.ToArray();
+    }
+
+    public void CompletePreviewReplacement(GameObject[] previous)
+    {
+        StartCoroutine(RetirePreviousPreviewAtEndOfFrame(
+            previous, reloadGeneration));
+    }
+
+    private IEnumerator RetirePreviousPreviewAtEndOfFrame(
+        GameObject[] previous,
+        int generation)
+    {
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        if (generation != reloadGeneration)
+            yield break;
+        if (previous != null)
+            foreach (var previousObject in previous)
+            {
+                if (previousObject == null)
+                    continue;
+                previousObject.SetActive(false);
+                Destroy(previousObject);
+            }
+        PreviewReplacementInProgress = false;
+        HttpHandler.IsReloding = false;
+    }
+
+    public bool PreviewReplacementInProgress { get; private set; }
+
     private IEnumerator ResetReloadFlagNextFrame(int generation)
     {
         yield return null;
@@ -1060,16 +1490,21 @@ public class JsonDataLoader : MonoBehaviour
         foreach (var timing in json.timingList)
             foreach (var note in timing.noteList)
             {
+                if (note.isFake && note.noteType != SimaiNoteType.Slide)
+                    continue;
                 if (note.isTouchSlide)
                 {
-                    if (!note.isSlideNoHead)
+                    if (!note.isSlideNoHead && !note.isFakeHead)
                     {
                         if (note.isBreak) ObjectCounter.breakSum++;
                         else if (note.touchArea == 'K') ObjectCounter.tapSum++;
                         else ObjectCounter.touchSum++;
                     }
-                    if (note.isSlideBreak) ObjectCounter.breakSum++;
-                    else ObjectCounter.slideSum++;
+                    if (!note.isFakeSlide)
+                    {
+                        if (note.isSlideBreak) ObjectCounter.breakSum++;
+                        else ObjectCounter.slideSum++;
+                    }
                     continue;
                 }
                 if (!note.isBreak)
@@ -1080,22 +1515,28 @@ public class JsonDataLoader : MonoBehaviour
                     if (note.noteType == SimaiNoteType.Touch) ObjectCounter.touchSum++;
                     if (note.noteType == SimaiNoteType.Slide)
                     {
-                        if (!note.isSlideNoHead) ObjectCounter.tapSum++;
-                        if (note.isSlideBreak)
-                            ObjectCounter.breakSum++;
-                        else
-                            ObjectCounter.slideSum++;
+                        if (!note.isSlideNoHead && !note.isFakeHead) ObjectCounter.tapSum++;
+                        if (!note.isFakeSlide)
+                        {
+                            if (note.isSlideBreak)
+                                ObjectCounter.breakSum++;
+                            else
+                                ObjectCounter.slideSum++;
+                        }
                     }
                 }
                 else
                 {
                     if (note.noteType == SimaiNoteType.Slide)
                     {
-                        if (!note.isSlideNoHead) ObjectCounter.breakSum++;
-                        if (note.isSlideBreak)
-                            ObjectCounter.breakSum++;
-                        else
-                            ObjectCounter.slideSum++;
+                        if (!note.isSlideNoHead && !note.isFakeHead) ObjectCounter.breakSum++;
+                        if (!note.isFakeSlide)
+                        {
+                            if (note.isSlideBreak)
+                                ObjectCounter.breakSum++;
+                            else
+                                ObjectCounter.slideSum++;
+                        }
                     }
                     else
                     {
@@ -1109,16 +1550,21 @@ public class JsonDataLoader : MonoBehaviour
     {
         foreach (var note in timing)
         {
+            if (note.isFake && note.noteType != SimaiNoteType.Slide)
+                continue;
             if (note.isTouchSlide)
             {
-                if (!note.isSlideNoHead)
+                if (!note.isSlideNoHead && !note.isFakeHead)
                 {
                     if (note.isBreak) ObjectCounter.breakCount++;
                     else if (note.touchArea == 'K') ObjectCounter.tapCount++;
                     else ObjectCounter.touchCount++;
                 }
-                if (note.isSlideBreak) ObjectCounter.breakCount++;
-                else ObjectCounter.slideCount++;
+                if (!note.isFakeSlide)
+                {
+                    if (note.isSlideBreak) ObjectCounter.breakCount++;
+                    else ObjectCounter.slideCount++;
+                }
                 continue;
             }
             if (!note.isBreak)
@@ -1129,22 +1575,28 @@ public class JsonDataLoader : MonoBehaviour
                 if (note.noteType == SimaiNoteType.Touch) ObjectCounter.touchCount++;
                 if (note.noteType == SimaiNoteType.Slide)
                 {
-                    if (!note.isSlideNoHead) ObjectCounter.tapCount++;
-                    if (note.isSlideBreak)
-                        ObjectCounter.breakCount++;
-                    else
-                        ObjectCounter.slideCount++;
+                    if (!note.isSlideNoHead && !note.isFakeHead) ObjectCounter.tapCount++;
+                    if (!note.isFakeSlide)
+                    {
+                        if (note.isSlideBreak)
+                            ObjectCounter.breakCount++;
+                        else
+                            ObjectCounter.slideCount++;
+                    }
                 }
             }
             else
             {
                 if (note.noteType == SimaiNoteType.Slide)
                 {
-                    if (!note.isSlideNoHead) ObjectCounter.breakCount++;
-                    if (note.isSlideBreak)
-                        ObjectCounter.breakCount++;
-                    else
-                        ObjectCounter.slideCount++;
+                    if (!note.isSlideNoHead && !note.isFakeHead) ObjectCounter.breakCount++;
+                    if (!note.isFakeSlide)
+                    {
+                        if (note.isSlideBreak)
+                            ObjectCounter.breakCount++;
+                        else
+                            ObjectCounter.slideCount++;
+                    }
                 }
                 else
                 {
@@ -1154,132 +1606,217 @@ public class JsonDataLoader : MonoBehaviour
         }
     }
 
-    private void InstantiateStarGroup(SimaiTimingPoint timing, SimaiNote note, int sort, double lastNoteTime)
+    private static bool RemainsVisibleAt(
+        SimaiNote note,
+        double beatTime,
+        double offset)
     {
-        int charIntParse(char c)
+        return note.noteType switch
         {
-            return c - '0';
+            SimaiNoteType.Hold or SimaiNoteType.TouchHold =>
+                beatTime + Math.Max(0d, note.holdTime) > offset,
+            SimaiNoteType.Slide =>
+                note.slideStartTime + Math.Max(0d, note.slideTime) > offset,
+            _ => false
+        };
+    }
+
+    private List<SlidePathSegmentData> ResolveSlidePath(
+        SimaiNote note,
+        bool isConnectedSegment = false)
+    {
+        // A segment of a connected slide has already been parsed and validated as
+        // part of its parent path, and these are the very objects that parse
+        // produced. Sending it back through the whole-note validator asks it to
+        // stand on its own, and under total-duration syntax every segment but the
+        // last carries no duration - so "1-3-5[8:1]" was rejected on its first
+        // segment for a duration the note does have. That threw halfway through
+        // building, after the star head was already in the scene: the slide never
+        // appeared and the orphaned head stayed behind with nothing to follow.
+        if (isConnectedSegment && note.slidePath is { Count: > 0 })
+            return note.slidePath;
+
+        var serialized = note.slidePath;
+        if (serialized != null && serialized.Count != 0)
+        {
+            if (!SlideSyntaxValidator.TryValidateSegments(
+                    serialized, out var serializedError))
+                throw new Exception(
+                    string.IsNullOrEmpty(serializedError)
+                        ? SlideSyntaxValidator.Diagnose(
+                            "谱面里保存的星星路径不合法",
+                            "STORED SLIDE PATH IS INVALID",
+                            note.noteContent ?? string.Empty)
+                        : serializedError);
+            return serialized;
         }
 
+        // Current editor snapshots already carry the shared AST. Re-parsing the
+        // authored wrapper first breaks forms whose path is nested inside other
+        // syntax, notably 1~[2-5[8:1]]; the wrapper is not itself a slide path.
+        if (!string.IsNullOrEmpty(note.pathExpression))
+            return ParseSlideExpression(
+                note, note.pathExpression);
+
+        if (string.IsNullOrEmpty(note.noteContent))
+            throw new Exception(
+                SlideSyntaxValidator.Diagnose(
+                    "星星没有任何内容",
+                    "SLIDE HAS NO CONTENT",
+                    string.Empty));
+        return ParseSlideExpression(
+            note, note.noteContent);
+    }
+
+    private static void NormalizeBorrowedTrajectory(
+        SimaiTimingPoint timing,
+        SimaiNote note)
+    {
+        if (note.isTrajectoryOnly || string.IsNullOrWhiteSpace(note.pathExpression) ||
+            !NoteExpressionParser.TryParse(
+                note.pathExpression, out var expression, out _) ||
+            expression.trajectory == null)
+            return;
+
+        var path = expression.trajectory;
+        var end = path.segments[^1].end;
+        note.isTrajectoryOnly = true;
+        note.isFake = true;
+        note.isFakeHead = true;
+        note.isFakeSlide = true;
+        note.isSlideNoHead = true;
+        note.noteType = SimaiNoteType.Slide;
+        note.trajectoryCarrierPosition = expression.position.position;
+        note.trajectoryCarrierIsDZone = expression.position.isDZone;
+        note.trajectoryCarrierType = expression.kind switch
+        {
+            NoteExpressionKind.Hold => SimaiNoteType.Hold,
+            NoteExpressionKind.Touch => SimaiNoteType.Touch,
+            NoteExpressionKind.TouchHold => SimaiNoteType.TouchHold,
+            _ => SimaiNoteType.Tap
+        };
+        note.isBreak = expression.modifiers.HasHead(NoteModifierFlags.Break);
+        note.isEx = expression.modifiers.HasAny(NoteModifierFlags.Ex);
+        note.isHanabi = expression.modifiers.HasAny(NoteModifierFlags.Firework);
+        note.isMineHead = expression.modifiers.HasHead(NoteModifierFlags.Mine);
+        note.isForceStar = expression.modifiers.HasAny(NoteModifierFlags.ForceStar);
+        note.isFakeRotate = expression.modifiers.HasAny(NoteModifierFlags.FakeRotate);
+        note.slidePath = path.segments;
+        note.startPosition = path.segments[0].start.position;
+        note.touchEndPosition = end.position;
+        note.isDZone = path.segments[0].start.isDZone;
+        note.isDZoneEnd = end.isDZone;
+        note.isTouchSlide = expression.isTouchPath;
+        if (expression.isTouchPath)
+        {
+            note.touchArea = path.segments[0].start.area;
+            note.touchEndArea = end.area;
+            note.touchSlideShape = path.segments[0].shape[0];
+        }
+
+        double duration = 0d;
+        foreach (var segment in path.segments)
+            if (!string.IsNullOrEmpty(segment.duration) &&
+                SlideSyntaxValidator.TryGetLengthSeconds(
+                    segment.duration, timing.currentBpm, out var seconds))
+                duration += seconds;
+        if (duration > 0d)
+            note.slideTime = duration;
+
+        note.slideStartTime = timing.time;
+    }
+
+    private List<SlidePathSegmentData> ParseSlideExpression(
+        SimaiNote note,
+        string expression)
+    {
+        if (!SlidePathParser.TryParsePath(expression, out var path))
+            throw new Exception(
+                SlideSyntaxValidator.Diagnose(
+                    "星星路径无法解析",
+                    "SLIDE PATH CANNOT BE PARSED",
+                    expression));
+        if (!SlideSyntaxValidator.TryValidate(path, out var error))
+            throw new Exception(
+                string.IsNullOrEmpty(error)
+                    ? SlideSyntaxValidator.Diagnose(
+                        "星星路径不合法",
+                        "SLIDE PATH IS INVALID",
+                        expression)
+                    : error);
+        if (!NoteModifierParser.TryParse(
+                expression, path.segments, out _))
+            throw new Exception(
+                SlideSyntaxValidator.Diagnose(
+                    "修饰符位置错误：星星主体只能写「b」或「m」，其余修饰符要写在头部",
+                    "INVALID SLIDE MODIFIER POSITION: THE BODY ALLOWS ONLY 'b' OR 'm'",
+                    expression));
+        note.slidePath = path.segments;
+        return path.segments;
+    }
+
+    private void InstantiateStarGroup(SimaiTimingPoint timing, SimaiNote note, int sort, double lastNoteTime)
+    {
         var subSlide = new List<SimaiNote>();
         var subBarCount = new List<int>();
         var sumBarCount = 0;
+        var parsedSegments = ResolveSlidePath(note);
 
-        var noteContent = note.noteContent;
-        var latestStartIndex = charIntParse(noteContent[0]); // Previous Slide endpoint and next Slide start
-        var ptr = 1; // Current character
+        var durationCount = 0;
 
-        var specTimeFlag = 0; // Whether this chain specifies total duration or each segment duration
-        // 0=none read; 1=segment without duration; 2=segment with duration; 3=expected final duration read
-
-        while (ptr < noteContent.Length)
-            if (!char.IsNumber(noteContent[ptr]))
+        foreach (var segment in parsedSegments)
+        {
+            var slidePart = new SimaiNote
             {
-                // Read a shape character
-                var slideTypeChar = noteContent[ptr++].ToString();
+                noteType = SimaiNoteType.Slide,
+                startPosition = segment.startPosition,
+                isDZone = segment.startIsDZone,
+                isDZoneEnd = segment.endIsDZone,
+                noteContent = segment.ToExpression(includeDZone: false),
+                pathExpression = segment.ToExpression(includeDZone: true),
+                slidePath = new List<SlidePathSegmentData> { segment }
+            };
 
-                var slidePart = new SimaiNote();
-                slidePart.noteType = SimaiNoteType.Slide;
-                slidePart.startPosition = latestStartIndex;
-                if (slideTypeChar == "V")
-                {
-                    // Turning Star
-                    var middlePos = noteContent[ptr++];
-                    var endPos = noteContent[ptr++];
+            if (!string.IsNullOrEmpty(segment.duration))
+                durationCount++;
 
-                    slidePart.noteContent = latestStartIndex + slideTypeChar + middlePos + endPos;
-                    latestStartIndex = charIntParse(endPos);
-                }
-                else
-                {
-                    // Other regular Stars
-                    // Also check pp, qq, rp, and rq
-                    if (ptr >= noteContent.Length)
-                        throw new Exception("Slide缺少目标键\nSLIDE TARGET MISSING");
-                    if (noteContent[ptr] == slideTypeChar[0])
-                        slideTypeChar += noteContent[ptr++]; // pp or qq
-                    else if (slideTypeChar == "r" && (noteContent[ptr] == 'p' || noteContent[ptr] == 'q'))
-                        slideTypeChar += noteContent[ptr++]; // rp or rq
-                    if (ptr >= noteContent.Length || !char.IsNumber(noteContent[ptr]))
-                        throw new Exception("Slide缺少目标键\nSLIDE TARGET MISSING");
-                    var endPos = noteContent[ptr++];
-
-                    slidePart.noteContent = latestStartIndex + slideTypeChar + endPos;
-                    latestStartIndex = charIntParse(endPos);
-                }
-
-                if (ptr < noteContent.Length && noteContent[ptr] == '[')
-                {
-                    // A duration is specified
-                    if (specTimeFlag == 0)
-                        // Nothing read previously
-                        specTimeFlag = 2;
-                    else if (specTimeFlag == 1)
-                        // Prior segments had no durations; mark this as the expected final duration
-                        specTimeFlag = 3;
-                    else if (specTimeFlag == 3)
-                        // Another duration after the expected final duration is invalid
-                        throw new Exception("组合星星有错误\nSLIDE CHAIN ERROR");
-
-                    while (ptr < noteContent.Length && noteContent[ptr] != ']')
-                        slidePart.noteContent += noteContent[ptr++];
-                    slidePart.noteContent += noteContent[ptr++];
-                }
-                else
-                {
-                    // No duration is specified
-                    if (specTimeFlag == 0)
-                        // Nothing read previously
-                        specTimeFlag = 1;
-                    else if (specTimeFlag == 2 || specTimeFlag == 3)
-                        // Mixing segments with and without durations is invalid
-                        throw new Exception("组合星星有错误\nSLIDE CHAIN ERROR");
-                }
-
-                string slideShape = detectShapeFromText(slidePart.noteContent);
-                if (slideShape.StartsWith("-"))
-                    slideShape = slideShape.Substring(1);
-                if (slideShape.StartsWith("r"))
-                    slideShape = slideShape.Substring(1);
-                int slideIndex = SLIDE_PREFAB_MAP[slideShape];
-                if (slideIndex < 0) slideIndex = -slideIndex;
-
-                var barCount = slidePrefab[slideIndex].transform.childCount;
-                subBarCount.Add(barCount);
-                sumBarCount += barCount;
-
-                subSlide.Add(slidePart);
-            }
-            else
-            {
-                // A number cannot appear here and indicates invalid syntax
-                throw new Exception("组合星星有错误\nwSLIDE CHAIN ERROR");
-            }
+            var slideShape = DetectShape(segment);
+            if (slideShape.StartsWith("-"))
+                slideShape = slideShape.Substring(1);
+            if (slideShape.StartsWith("r"))
+                slideShape = slideShape.Substring(1);
+            var slideIndex = Math.Abs(SLIDE_PREFAB_MAP[slideShape]);
+            var barCount = slidePrefab[slideIndex].transform.childCount;
+            subBarCount.Add(barCount);
+            sumBarCount += barCount;
+            subSlide.Add(slidePart);
+        }
 
         for (var i = 0; i < subSlide.Count; i++)
         {
             var o = subSlide[i];
-            // The parser stores D-zone ownership on the complete slide. Once the
-            // slide is split into render/judge segments, retain it on the first and
-            // last segment so a simple 1d-5d slide reaches SlideDrop unchanged.
-            o.isDZone = i == 0 && note.isDZone;
-            o.isDZoneEnd = i == subSlide.Count - 1 && note.isDZoneEnd;
             o.isBreak = note.isBreak;
             o.isEx = note.isEx;
             o.isHanabi = i == 0 && note.isHanabi; // Fireworks belong only to the Star head
-            o.isMonoHead = i == 0 && note.isMonoHead;
-            o.isSlideMono = note.isSlideMono;
+            o.isMineHead = i == 0 && note.isMineHead;
+            o.isMineSlide = note.isMineSlide;
             o.isSlideBreak = note.isSlideBreak;
+            o.isFakeHead = i == 0 && note.isFakeHead;
+            o.isFakeSlide = note.isFakeSlide;
+            o.isFake = o.isFakeHead && o.isFakeSlide;
             o.isSlideNoHead = true;
+            o.suppressSlideGuideStarFade = note.suppressSlideGuideStarFade;
         }
         subSlide[0].isSlideNoHead = note.isSlideNoHead;
 
-        if (specTimeFlag == 1 || specTimeFlag == 0)
-            // Flag 1 at the end means no duration was specified
-            throw new Exception("组合星星有错误\nwSLIDE CHAIN ERROR");
-        // Flag 2 means per-segment syntax; flag 3 means total-duration syntax
+        if (durationCount != 1 && durationCount != parsedSegments.Count)
+            throw new Exception(
+                SlideSyntaxValidator.Diagnose(
+                    $"组合星星只能写一个总时长，或每段各写一个时长（现在写了 {durationCount} 个，共 {parsedSegments.Count} 段）",
+                    "CONNECTED SLIDE NEEDS ONE TOTAL DURATION OR ONE PER SEGMENT",
+                    note.noteContent ?? string.Empty));
 
-        if (specTimeFlag == 3)
+        if (durationCount == 1)
         {
             // Total-duration syntax uses slideTime for calculation
             var tempBarCount = 0;
@@ -1293,47 +1830,19 @@ public class JsonDataLoader : MonoBehaviour
         else
         {
             // Per-segment syntax
-
-            // Local helper to obtain duration
-            double getTimeFromBeats(string noteText, float currentBpm)
-            {
-                var startIndex = noteText.IndexOf('[');
-                var overIndex = noteText.IndexOf(']');
-                var innerString = noteText.Substring(startIndex + 1, overIndex - startIndex - 1);
-                var timeOneBeat = 1d / (currentBpm / 60d);
-                if (innerString.Count(o => o == '#') == 1)
-                {
-                    var times = innerString.Split('#');
-                    if (times[1].Contains(':'))
-                    {
-                        innerString = times[1];
-                        timeOneBeat = 1d / (double.Parse(times[0]) / 60d);
-                    }
-                    else
-                    {
-                        return double.Parse(times[1]);
-                    }
-                }
-
-                if (innerString.Count(o => o == '#') == 2)
-                {
-                    var times = innerString.Split('#');
-                    return double.Parse(times[2]);
-                }
-
-                var numbers = innerString.Split(':');
-                var divide = int.Parse(numbers[0]);
-                var count = int.Parse(numbers[1]);
-
-
-                return timeOneBeat * 4d / divide * count;
-            }
-
             double tempSlideTime = 0;
             for (var i = 0; i < subSlide.Count; i++)
             {
+                var duration = parsedSegments[i].duration;
+                if (!SlideSyntaxValidator.TryGetLengthSeconds(
+                        duration, timing.currentBpm, out var slideTime))
+                    throw new Exception(
+                        SlideSyntaxValidator.Diagnose(
+                            "星星时长写法错误",
+                            "INVALID SLIDE DURATION",
+                            duration));
                 subSlide[i].slideStartTime = note.slideStartTime + tempSlideTime;
-                subSlide[i].slideTime = getTimeFromBeats(subSlide[i].noteContent, timing.currentBpm);
+                subSlide[i].slideTime = slideTime;
                 tempSlideTime += subSlide[i].slideTime;
             }
         }
@@ -1375,24 +1884,77 @@ public class JsonDataLoader : MonoBehaviour
         subSlides.ForEach(s => s.ConnectInfo.TotalSlideLen = totalSlideLen);
     }
 
+    private void InstantiateTrajectoryCarrier(
+        SimaiTimingPoint timing,
+        SimaiNote note)
+    {
+        var segments = ResolveSlidePath(note);
+        var isEach = timing.isEachInStream ?? BeatIsEach(timing);
+        var carrierObject = Instantiate(star_slidePrefab, notes.transform);
+        carrierObject.name =
+            $"TrajectoryCarrier_{note.pathExpression ?? note.noteContent}";
+        carrierObject.AddComponent<TrajectoryCarrierDrop>();
+        var carrier = PrepareNote<TrajectoryCarrierDrop>(
+            carrierObject, note, fakeOverride: false);
+        carrier.carrierVisualType = GetTrajectoryCarrierVisualType(note);
+        carrier.bodyBreak = note.isBreak;
+        carrier.bodyMine = note.isMineHead;
+        carrier.isEach = isEach;
+        carrier.isEachInStream = isEach;
+        carrier.startPosition = note.startPosition;
+        carrier.scrollType = ResolveSvType(
+            "slide", note.isSlideBreak, isEach,
+            timing.streamIndex, note.isMineSlide);
+        var carrierScale = GetSizeAt(
+            carrier.carrierVisualType,
+            timing.time,
+            note.isBreak,
+            isEach,
+            timing.streamIndex,
+            note.isMineHead);
+        carrier.Configure(
+            this,
+            segments,
+            GetTrajectoryCarrierSprite(note, isEach),
+            GetTrajectoryCarrierMaterial(
+                note, isEach, timing.time, timing.streamIndex),
+            carrierScale,
+            (float)timing.time,
+            (float)timing.time,
+            (float)note.slideTime,
+            slideLayer--);
+    }
+
     private void InstantiateTouchSlide(
         SimaiTimingPoint timing,
         SimaiNote note,
         List<TouchDrop> touchMembers)
     {
-        var isEach = timing.noteList.Count > 1;
+        var parsedSegments = ResolveSlidePath(note);
+        var isEach = BeatIsEach(timing);
+        // The trail asks a different question than the head; see BeatTrailsAreEach.
+        // Key slides have always drawn the two apart, touch slides used to tie both to
+        // the head, which drew a same-head touch pair with a yellow head and, once the
+        // head count was corrected, a plain trail.
+        var trailIsEach = BeatTrailsAreEach(timing);
+        var stateIsEach = timing.isEachInStream ?? isEach;
         var slideObject = new GameObject(
             $"TouchSlide_{note.touchArea}{note.startPosition}{note.touchSlideShape}" +
             $"{note.touchEndArea}{note.touchEndPosition}");
         slideObject.transform.SetParent(notes.transform, false);
-        var component = slideObject.AddComponent<TouchSlideDrop>();
-        component.previewOnly = previewOnly;
+        slideObject.AddComponent<TouchSlideDrop>();
+        var component = PrepareNote<TouchSlideDrop>(
+            slideObject, note, note.isFakeSlide);
+        component.isEachInStream = stateIsEach;
         component.timeStart = (float)timing.time;
         component.time = (float)note.slideStartTime;
         component.duration = Mathf.Max(0.01f, (float)note.slideTime);
-        component.speed = noteSpeed * GetHSpeedAt(
-            "slide", timing.time, timing.HSpeed, false, isEach);
-        component.starSpeed = starSpeed;
+        component.speed = noteSpeed * ResolveSlideAppearanceSpeed(
+            timing.time, timing.streamIndex);
+        component.scrollType = ResolveSvType(
+            "slide", note.isSlideBreak, stateIsEach, timing.streamIndex,
+            note.isMineSlide);
+        component.starSpeed = note.suppressSlideGuideStarFade ? 1f : starSpeed;
         component.startArea = note.touchArea;
         component.endArea = note.touchEndArea;
         component.startPosition = note.startPosition;
@@ -1400,39 +1962,61 @@ public class JsonDataLoader : MonoBehaviour
         component.isDZone = note.isDZone;
         component.isDZoneEnd = note.isDZoneEnd;
         component.shape = note.touchSlideShape;
-        component.pathExpression = note.noteContent;
+        component.pathExpression = note.pathExpression ?? note.noteContent;
+        component.pathSegments = parsedSegments;
         component.bodyBreak = note.isSlideBreak;
-        component.pathSprite = note.isSlideBreak
+        component.bodyMine = note.isMineSlide;
+        component.suppressGuideStarFadeIn = note.suppressSlideGuideStarFade;
+        component.pathSprite = note.isMineSlide
+            ? customSkin.Slide
+            : note.isSlideBreak
             ? customSkin.Slide_Break
-            : isEach ? customSkin.Slide_Each : customSkin.Slide;
+            : trailIsEach ? customSkin.Slide_Each : customSkin.Slide;
         component.barTemplate =
             slidePrefab[SLIDE_PREFAB_MAP["line3"]].transform.GetChild(0).gameObject;
+        var judgeSource = slidePrefab[SLIDE_PREFAB_MAP["line3"]].transform;
+        component.judgeTemplate = judgeSource.GetChild(judgeSource.childCount - 1).gameObject;
+        component.judgeBreakShine = JudgeBreakShine;
         component.pathMaterial = GetSlideMaterial(
-            note.isSlideBreak, timing.time, note.isSlideMono);
-        var slideSize = GetSizeAt("slide", timing.time, false, isEach);
+            note.isSlideBreak, timing.time, note.isMineSlide, timing.streamIndex,
+            stateIsEach);
+        component.slideRouteSource = this;
+        var slideSize = GetSizeAt(
+            "slide", timing.time, false, stateIsEach, timing.streamIndex,
+            note.isMineSlide);
         component.barScale = slideSize;
 
         component.star = Instantiate(star_slidePrefab, notes.transform);
         var starRenderer = component.star.GetComponent<SpriteRenderer>();
-        starRenderer.sprite = note.isSlideBreak
+        starRenderer.sprite = note.isMineSlide
+            ? customSkin.Star
+            : note.isSlideBreak
             ? customSkin.Star_Break
-            : isEach ? customSkin.Star_Each : customSkin.Star;
-        component.starMaterial = component.pathMaterial;
-        component.starScale = Vector2.one;
+            : trailIsEach ? customSkin.Star_Each : customSkin.Star;
+        component.starMaterial = GetSlideStarMaterial(
+            note.isSlideBreak, stateIsEach, timing.time, note.isMineSlide,
+            timing.streamIndex);
+        component.starScale = GetSizeAt(
+            "slidestar",
+            timing.time, note.isSlideBreak, stateIsEach,
+            timing.streamIndex, note.isMineSlide);
         component.star.SetActive(false);
         component.sortingOrder = slideLayer;
         slideLayer -= 24;
+        component.Initialize();
 
         if (note.isSlideNoHead)
             return;
         if (note.touchArea == 'K')
         {
             slideObject.SetActive(false);
-            InstantiateTouchSlideKeyHead(timing, note, slideObject, isEach);
+            InstantiateTouchSlideKeyHead(
+                timing, note, slideObject, isEach, stateIsEach);
         }
         else
         {
-            InstantiateTouchSlideHead(timing, note, touchMembers, isEach);
+            InstantiateTouchSlideHead(
+                timing, note, touchMembers, isEach, stateIsEach);
         }
     }
 
@@ -1440,11 +2024,13 @@ public class JsonDataLoader : MonoBehaviour
         SimaiTimingPoint timing,
         SimaiNote note,
         GameObject slideObject,
-        bool isEach)
+        bool isEach,
+        bool stateIsEach)
     {
         var starObject = Instantiate(starPrefab, notes.transform);
-        AddJudgeNote(starObject, note);
-        var star = PrepareNote<StarDrop>(starObject);
+        AddJudgeNote(starObject, note, note.isFakeHead);
+        var star = PrepareNote<StarDrop>(starObject, note, note.isFakeHead);
+        star.isEachInStream = stateIsEach;
         star.noteSortOrder = noteSortOrder;
         noteSortOrder -= NOTE_LAYER_COUNT[SimaiNoteType.Slide];
         star.tapSpr = customSkin.Star;
@@ -1455,25 +2041,50 @@ public class JsonDataLoader : MonoBehaviour
         star.eachSpr_Double = customSkin.Star_Each_Double;
         star.breakSpr_Double = customSkin.Star_Break_Double;
         star.exSpr_Double = customSkin.Star_Ex_Double;
+        if (note.isMineHead)
+        {
+            star.eachSpr = customSkin.Star;
+            star.breakSpr = customSkin.Star;
+            star.eachSpr_Double = customSkin.Star_Double;
+            star.breakSpr_Double = customSkin.Star_Double;
+        }
         star.BreakShine = BreakShine;
         star.time = (float)timing.time;
         star.startPosition = note.startPosition;
         star.isDZone = note.isDZone;
         star.rotateSpeed = Mathf.Max(0.01f, (float)note.slideTime);
         star.isEach = isEach;
+        star.isDouble = BeatSlidesFrom(timing, note.startPosition) > 1;
         star.isBreak = note.isBreak;
         star.isEX = note.isEx;
         star.isFirework = note.isHanabi;
+        star.isMine = note.isMineHead;
         star.slide = slideObject;
         star.speed = noteSpeed * GetHSpeedAt(
-            "star", timing.time, timing.HSpeed, note.isBreak, isEach);
-        star.scrollType = ResolveSvType("star", note.isBreak, isEach);
+            "star", timing.time, timing.HSpeed, note.isBreak, stateIsEach,
+            timing.streamIndex, note.isMineHead);
+        star.scrollType = ResolveSvType(
+            "star", note.isBreak, stateIsEach, timing.streamIndex, note.isMineHead);
         star.noteScrollPos = SvController.GetCumulativeScroll(timing.time, star.scrollType);
-        star.spawnRadius = GetSpawnRadiusAt("star", timing.time, note.isBreak, isEach);
-        star.bounceDuration = GetBounceDurationAt("star", timing.time, note.isBreak, isEach);
+        star.spawnRadius = GetSpawnRadiusAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        star.spawnMode = GetSpawnModeAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        star.destroyRadius = GetDestroyRadiusAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        star.bounceDuration = GetBounceDurationAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        star.ConfigureBounce(star.speed / noteSpeed);
         star.colorOverrideMaterial = GetStarMaterial(
-            note.isBreak, isEach, timing.time, note.isMonoHead);
-        var size = GetSizeAt("star", timing.time, note.isBreak, isEach);
+            note.isBreak, stateIsEach, timing.time, note.isMineHead,
+            timing.streamIndex);
+        var size = GetSizeAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
         star.noteScaleX = size.x;
         star.noteScaleY = size.y;
     }
@@ -1482,58 +2093,77 @@ public class JsonDataLoader : MonoBehaviour
         SimaiTimingPoint timing,
         SimaiNote note,
         List<TouchDrop> touchMembers,
-        bool isEach)
+        bool isEach,
+        bool stateIsEach)
     {
         var touchObject = Instantiate(touchPrefab, notes.transform);
         AddJudgeTouch(
             touchObject,
-            TouchBase.GetSensor(note.touchArea, note.startPosition));
-        var touch = PrepareNote<TouchDrop>(touchObject);
+            TouchBase.GetSensor(note.touchArea, note.startPosition), note, note.isFakeHead);
+        var touch = PrepareNote<TouchDrop>(touchObject, note, note.isFakeHead);
+        touch.isEachInStream = stateIsEach;
         touch.noteSortOrder = noteSortOrder;
         noteSortOrder -= NOTE_LAYER_COUNT[SimaiNoteType.Touch];
         touch.time = (float)timing.time;
         touch.areaPosition = note.touchArea;
         touch.startPosition = note.startPosition;
+        touch.customRadius = note.touchRadius;
         touch.fanNormalSprite = note.isBreak ? customSkin.Touch_Break : customSkin.Touch;
         touch.fanEachSprite = note.isBreak ? customSkin.Touch_Break : customSkin.Touch_Each;
         touch.pointNormalSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint;
         touch.pointEachSprite = note.isBreak ? customSkin.TouchPoint_Break : customSkin.TouchPoint_Each;
+        if (note.isMineHead)
+        {
+            touch.fanNormalSprite = customSkin.Touch;
+            touch.fanEachSprite = customSkin.Touch;
+            touch.pointNormalSprite = customSkin.TouchPoint;
+            touch.pointEachSprite = customSkin.TouchPoint;
+        }
         touch.justSprite = customSkin.TouchJust;
         Array.Copy(customSkin.TouchBorder, touch.multTouchNormalSprite, 2);
         Array.Copy(customSkin.TouchBorder_Each, touch.multTouchEachSprite, 2);
         touch.isEach = isEach;
         touch.isBreak = note.isBreak;
         touch.isFirework = note.isHanabi;
+        touch.isMine = note.isMineHead;
         if (isEach)
             touchMembers.Add(touch);
         touch.speed = touchSpeed * GetHSpeedAt(
-            "touch", timing.time, timing.HSpeed, note.isBreak, isEach);
-        touch.scrollType = ResolveSvType("touch", note.isBreak, isEach);
+            "touch", timing.time, timing.HSpeed, note.isBreak, stateIsEach,
+            timing.streamIndex, note.isMineHead);
+        touch.scrollType = ResolveSvType(
+            "touch", note.isBreak, stateIsEach, timing.streamIndex, note.isMineHead);
         touch.noteScrollPos = SvController.GetCumulativeScroll(
             timing.time, touch.scrollType);
         touch.GroupInfo = null;
-        touch.colorOverrideMaterial = note.isMonoHead
-            ? CreateTintMaterial(null, GetAlphaAt("touch", timing.time), grayscale: true)
-            : CreateTintMaterial(GetColorAt("touch", timing.time), GetAlphaAt("touch", timing.time));
-        var touchSize = GetSizeAt("touch", timing.time, note.isBreak, isEach);
+        touch.colorOverrideMaterial = note.isMineHead
+            ? MineMaterial(
+                timing.time, timing.streamIndex,
+                GetAlphaAt("touch", timing.time, timing.streamIndex,
+                    note.isBreak, stateIsEach, isMine: true))
+            : CreateTintMaterial(
+                GetColorAt("touch", timing.time, timing.streamIndex,
+                    note.isBreak, stateIsEach),
+                GetAlphaAt("touch", timing.time, timing.streamIndex,
+                    note.isBreak, stateIsEach));
+        var touchSize = GetSizeAt(
+            "touch", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
         touch.noteScaleX = touchSize.x;
         touch.noteScaleY = touchSize.y;
     }
 
     private GameObject InstantiateWifi(SimaiTimingPoint timing, SimaiNote note)
     {
-        var str = note.noteContent.Substring(0, 3);
-        var digits = str.Split('w');
-        var startPos = int.Parse(digits[0]);
-        var endPos = int.Parse(digits[1]);
-        endPos = endPos - startPos;
-        endPos = endPos < 0 ? endPos + 8 : endPos;
-        endPos = endPos > 8 ? endPos - 8 : endPos;
-        endPos++;
+        var visualIsEach = BeatIsEach(timing);
+        var stateIsEach = timing.isEachInStream ?? visualIsEach;
+        var wifiSegment = ResolveSlidePath(note)[0];
+        var startPos = wifiSegment.startPosition;
 
         var GOnote = Instantiate(starPrefab, notes.transform);
-        var NDCompo = PrepareNote<StarDrop>(GOnote);
-        AddJudgeNote(GOnote, note);
+        var NDCompo = PrepareNote<StarDrop>(GOnote, note, note.isFakeHead);
+        NDCompo.isEachInStream = stateIsEach;
+        AddJudgeNote(GOnote, note, note.isFakeHead);
 
 
         // Note layer order
@@ -1549,23 +2179,41 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.eachSpr_Double = customSkin.Star_Each_Double;
         NDCompo.breakSpr_Double = customSkin.Star_Break_Double;
         NDCompo.exSpr_Double = customSkin.Star_Ex_Double;
+        if (note.isMineHead)
+        {
+            NDCompo.eachSpr = customSkin.Star;
+            NDCompo.breakSpr = customSkin.Star;
+            NDCompo.eachSpr_Double = customSkin.Star_Double;
+            NDCompo.breakSpr_Double = customSkin.Star_Double;
+        }
 
         NDCompo.BreakShine = BreakShine;
 
-        NDCompo.rotateSpeed = (float)note.slideTime;
+        // StarDrop divides by this every frame. A zero-length slide made it
+        // divide by zero, and the infinity that comes back writes NaN into the
+        // transform: the star stops travelling and stops retiring, so it sits on
+        // the playfield. The touch-slide head has always clamped the same value.
+        NDCompo.rotateSpeed = Mathf.Max(0.01f, (float)note.slideTime);
         NDCompo.isEX = note.isEx;
         NDCompo.isBreak = note.isBreak;
         NDCompo.isFirework = note.isHanabi;
+        NDCompo.isMine = note.isMineHead;
         NDCompo.isDZone = note.isDZone;
 
         var slideWifi = Instantiate(slidePrefab[SLIDE_PREFAB_MAP["wifi"]], notes.transform);
         slideWifi.SetActive(false);
         NDCompo.slide = slideWifi;
-        var WifiCompo = PrepareNote<WifiDrop>(slideWifi);
+        var WifiCompo = PrepareNote<WifiDrop>(slideWifi, note, note.isFakeSlide);
+        WifiCompo.isEachInStream = stateIsEach;
 
         WifiCompo.normalStar = customSkin.Star;
         WifiCompo.eachStar = customSkin.Star_Each;
         WifiCompo.breakStar = customSkin.Star_Break;
+        if (note.isMineSlide)
+        {
+            WifiCompo.eachStar = customSkin.Star;
+            WifiCompo.breakStar = customSkin.Star;
+        }
         WifiCompo.judgeBreakShine = JudgeBreakShine;
         WifiCompo.breakMaterial = breakMaterial;
         WifiCompo.slideShine = BreakShine;
@@ -1573,65 +2221,82 @@ public class JsonDataLoader : MonoBehaviour
         WifiCompo.judgeQueues = new(WIFISLIDE_JUDGE_QUEUE[startPos]);
         WifiCompo.slideConst = SLIDE_AREA_CONST["wifi"];
         WifiCompo.smoothSlideAnime = smoothSlideAnime;
-        WifiCompo.starSpeed = starSpeed;
+        WifiCompo.starSpeed = note.suppressSlideGuideStarFade ? 1f : starSpeed;
         WifiCompo.isDZone = note.isDZone;
         WifiCompo.isDZoneEnd = note.isDZoneEnd;
 
         Array.Copy(customSkin.Wifi, WifiCompo.normalSlide, 11);
         Array.Copy(customSkin.Wifi_Each, WifiCompo.eachSlide, 11);
         Array.Copy(customSkin.Wifi_Break, WifiCompo.breakSlide, 11);
-
-        if (timing.noteList.Count > 1)
+        if (note.isMineSlide)
         {
-            NDCompo.isEach = true;
-            NDCompo.isDouble = false;
-            if (timing.noteList.FindAll(
-                    o => o.noteType == SimaiNoteType.Slide).Count
-                > 1)
-                WifiCompo.isEach = true;
-            var count = timing.noteList.FindAll(
-                o => o.noteType == SimaiNoteType.Slide &&
-                     o.startPosition == note.startPosition).Count;
-            if (count > 1) // Multiple notes share the same start
-            {
-                NDCompo.isDouble = true;
-                if (count == timing.noteList.Count)
-                    NDCompo.isEach = false;
-                else
-                    NDCompo.isEach = true;
-            }
+            Array.Copy(customSkin.Wifi, WifiCompo.eachSlide, 11);
+            Array.Copy(customSkin.Wifi, WifiCompo.breakSlide, 11);
         }
 
+        if (BeatTrailsAreEach(timing))
+            WifiCompo.isEach = true;
+        NDCompo.isEach = BeatIsEach(timing);
+        NDCompo.isDouble = BeatSlidesFrom(timing, note.startPosition) > 1;
+
         WifiCompo.isBreak = note.isSlideBreak;
+        WifiCompo.isMine = note.isMineSlide;
+        WifiCompo.suppressGuideStarFadeIn = note.suppressSlideGuideStarFade;
         WifiCompo.colorOverrideMaterial = GetSlideMaterial(
-            note.isSlideBreak, timing.time, note.isSlideMono);
+            note.isSlideBreak, timing.time, note.isMineSlide, timing.streamIndex,
+            stateIsEach);
+        WifiCompo.guideStarMaterial = GetSlideStarMaterial(
+            note.isSlideBreak, stateIsEach, timing.time, note.isMineSlide,
+            timing.streamIndex);
         NDCompo.colorOverrideMaterial = GetStarMaterial(
-            note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
+            note.isBreak, stateIsEach, timing.time,
+            note.isMineHead, timing.streamIndex);
 
         NDCompo.isNoHead = note.isSlideNoHead;
         NDCompo.time = (float)timing.time;
         NDCompo.startPosition = note.startPosition;
         NDCompo.speed = noteSpeed * GetHSpeedAt(
-            "star", timing.time, timing.HSpeed, note.isBreak, NDCompo.isEach);
-        NDCompo.scrollType = ResolveSvType("star", note.isBreak, NDCompo.isEach);
+            "star", timing.time, timing.HSpeed, note.isBreak, stateIsEach,
+            timing.streamIndex, note.isMineHead);
+        NDCompo.scrollType = ResolveSvType(
+            "star", note.isBreak, stateIsEach, timing.streamIndex, note.isMineHead);
         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time, NDCompo.scrollType);
         NDCompo.spawnRadius = GetSpawnRadiusAt(
-            "star", timing.time, note.isBreak, NDCompo.isEach);
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        NDCompo.spawnMode = GetSpawnModeAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        NDCompo.destroyRadius = GetDestroyRadiusAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
         NDCompo.bounceDuration = GetBounceDurationAt(
-            "star", timing.time, note.isBreak, NDCompo.isEach);
-        var wifiStarSize = GetSizeAt("star", timing.time, note.isBreak, NDCompo.isEach);
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        NDCompo.ConfigureBounce(NDCompo.speed / noteSpeed);
+        var wifiStarSize = GetSizeAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
         NDCompo.noteScaleX = wifiStarSize.x;
         NDCompo.noteScaleY = wifiStarSize.y;
 
-        WifiCompo.isJustR = detectJustType(note.noteContent, out endPos);
+        WifiCompo.isJustR = detectJustType(wifiSegment, out var endPos);
         WifiCompo.endPosition = endPos;
-        WifiCompo.speed = noteSpeed * GetHSpeedAt(
-            "slide", timing.time, timing.HSpeed, note.isSlideBreak, WifiCompo.isEach);
-        WifiCompo.scrollType = ResolveSvType("slide", note.isSlideBreak, WifiCompo.isEach);
+        WifiCompo.speed = noteSpeed * ResolveSlideAppearanceSpeed(
+            timing.time, timing.streamIndex);
+        WifiCompo.scrollType = ResolveSvType(
+            "slide", note.isSlideBreak, stateIsEach, timing.streamIndex,
+            note.isMineSlide);
         var wifiSlideSize = GetSizeAt(
-            "slide", timing.time, note.isSlideBreak, WifiCompo.isEach);
+            "slide", timing.time, note.isSlideBreak, stateIsEach, timing.streamIndex,
+            note.isMineSlide);
         WifiCompo.noteScaleX = wifiSlideSize.x;
         WifiCompo.noteScaleY = wifiSlideSize.y;
+        var wifiGuideStarSize = GetSizeAt(
+            "slidestar", timing.time, note.isSlideBreak, stateIsEach,
+            timing.streamIndex, note.isMineSlide);
+        WifiCompo.guideStarScaleX = wifiGuideStarSize.x;
+        WifiCompo.guideStarScaleY = wifiGuideStarSize.y;
         WifiCompo.timeStart = (float)timing.time;
         WifiCompo.startPosition = note.startPosition;
         WifiCompo.time = (float)note.slideStartTime;
@@ -1645,10 +2310,13 @@ public class JsonDataLoader : MonoBehaviour
 
     private GameObject InstantiateStar(SimaiTimingPoint timing, SimaiNote note, ConnSlideInfo info)
     {
+        var visualIsEach = BeatIsEach(timing);
+        var stateIsEach = timing.isEachInStream ?? visualIsEach;
         var GOnote = Instantiate(starPrefab, notes.transform);
-        var NDCompo = PrepareNote<StarDrop>(GOnote);
+        var NDCompo = PrepareNote<StarDrop>(GOnote, note, note.isFakeHead);
+        NDCompo.isEachInStream = stateIsEach;
         if(!note.isSlideNoHead)
-            AddJudgeNote(GOnote, note);
+            AddJudgeNote(GOnote, note, note.isFakeHead);
         // Note layer order
         NDCompo.noteSortOrder = noteSortOrder;
         noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
@@ -1662,16 +2330,29 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.eachSpr_Double = customSkin.Star_Each_Double;
         NDCompo.breakSpr_Double = customSkin.Star_Break_Double;
         NDCompo.exSpr_Double = customSkin.Star_Ex_Double;
+        if (note.isMineHead)
+        {
+            NDCompo.eachSpr = customSkin.Star;
+            NDCompo.breakSpr = customSkin.Star;
+            NDCompo.eachSpr_Double = customSkin.Star_Double;
+            NDCompo.breakSpr_Double = customSkin.Star_Double;
+        }
 
         NDCompo.BreakShine = BreakShine;
 
-        NDCompo.rotateSpeed = (float)note.slideTime;
+        // StarDrop divides by this every frame. A zero-length slide made it
+        // divide by zero, and the infinity that comes back writes NaN into the
+        // transform: the star stops travelling and stops retiring, so it sits on
+        // the playfield. The touch-slide head has always clamped the same value.
+        NDCompo.rotateSpeed = Mathf.Max(0.01f, (float)note.slideTime);
         NDCompo.isEX = note.isEx;
         NDCompo.isBreak = note.isBreak;
         NDCompo.isFirework = note.isHanabi;
+        NDCompo.isMine = note.isMineHead;
         NDCompo.isDZone = note.isDZone;
 
-        string slideShape = detectShapeFromText(note.noteContent);
+        var parsedSegment = ResolveSlidePath(note, info.IsGroupPart)[0];
+        var slideShape = DetectShape(parsedSegment);
         var isMirror = false;
         var isReverse = false;
         if (slideShape.StartsWith("-"))
@@ -1688,67 +2369,78 @@ public class JsonDataLoader : MonoBehaviour
 
         var slide = Instantiate(slidePrefab[slideIndex], notes.transform);
         var slide_star = Instantiate(star_slidePrefab, notes.transform);
-        slide_star.GetComponent<SpriteRenderer>().sprite = customSkin.Star;
+        var slideStarRenderer = slide_star.GetComponent<SpriteRenderer>();
+        slideStarRenderer.sprite = customSkin.Star;
         slide_star.SetActive(false);
         slide.SetActive(false);
         NDCompo.slide = slide;
-        var SliCompo = slide.AddComponent<SlideDrop>();
-        SliCompo.previewOnly = previewOnly;
+        slide.AddComponent<SlideDrop>();
+        var SliCompo = PrepareNote<SlideDrop>(
+            slide, note, note.isFakeSlide);
+        SliCompo.isEachInStream = stateIsEach;
         SliCompo.isDZone = note.isDZone;
         SliCompo.isDZoneEnd = note.isDZoneEnd;
 
         SliCompo.slideType = slideShape;
+        SliCompo.pathExpression = note.pathExpression;
+        SliCompo.pathSegment = parsedSegment;
         SliCompo.spriteNormal = customSkin.Slide;
         SliCompo.spriteEach = customSkin.Slide_Each;
         SliCompo.spriteBreak = customSkin.Slide_Break;
+        if (note.isMineSlide)
+        {
+            SliCompo.spriteEach = customSkin.Slide;
+            SliCompo.spriteBreak = customSkin.Slide;
+        }
         SliCompo.slideShine = BreakShine;
         SliCompo.breakMaterial = breakMaterial;
         SliCompo.judgeBreakShine = JudgeBreakShine;
         SliCompo.areaStep = new List<int>(SLIDE_AREA_STEP_MAP[slideShape]);
         SliCompo.slideConst = SLIDE_AREA_CONST[slideShape];
         SliCompo.smoothSlideAnime = smoothSlideAnime;
-        SliCompo.starSpeed = starSpeed;
+        SliCompo.starSpeed = note.suppressSlideGuideStarFade ? 1f : starSpeed;
 
-        if (timing.noteList.Count > 1)
+        if (BeatTrailsAreEach(timing))
         {
-            NDCompo.isEach = true;
-            if (timing.noteList.FindAll(o => o.noteType == SimaiNoteType.Slide).Count > 1)
-            {
-                SliCompo.isEach = true;
-                slide_star.GetComponent<SpriteRenderer>().sprite = customSkin.Star_Each;
-            }
-
-            var count = timing.noteList.FindAll(
-                o => o.noteType == SimaiNoteType.Slide &&
-                     o.startPosition == note.startPosition).Count;
-            if (count > 1)
-            {
-                NDCompo.isDouble = true;
-                if (count == timing.noteList.Count)
-                    NDCompo.isEach = false;
-                else
-                    NDCompo.isEach = true;
-            }
+            SliCompo.isEach = true;
+            slideStarRenderer.sprite = customSkin.Star_Each;
         }
+        NDCompo.isEach = BeatIsEach(timing);
+        NDCompo.isDouble = BeatSlidesFrom(timing, note.startPosition) > 1;
 
         SliCompo.ConnectInfo = info;
         SliCompo.isBreak = note.isSlideBreak;
-        if (note.isSlideBreak) slide_star.GetComponent<SpriteRenderer>().sprite = customSkin.Star_Break;
-
+        SliCompo.isMine = note.isMineSlide;
+        SliCompo.suppressGuideStarFadeIn = note.suppressSlideGuideStarFade;
+        if (note.isMineSlide)
+            slideStarRenderer.sprite = customSkin.Star;
+        else if (note.isSlideBreak)
+            slideStarRenderer.sprite = customSkin.Star_Break;
         NDCompo.isNoHead = note.isSlideNoHead;
         NDCompo.time = (float)timing.time;
         NDCompo.startPosition = note.startPosition;
         NDCompo.speed = noteSpeed * GetHSpeedAt(
-            "star", timing.time, timing.HSpeed, note.isBreak, NDCompo.isEach);
-        NDCompo.scrollType = ResolveSvType("star", note.isBreak, NDCompo.isEach);
+            "star", timing.time, timing.HSpeed, note.isBreak, stateIsEach,
+            timing.streamIndex, note.isMineHead);
+        NDCompo.scrollType = ResolveSvType(
+            "star", note.isBreak, stateIsEach, timing.streamIndex, note.isMineHead);
         NDCompo.noteScrollPos = SvController.GetCumulativeScroll(timing.time, NDCompo.scrollType);
         NDCompo.spawnRadius = GetSpawnRadiusAt(
-            "star", timing.time, note.isBreak, NDCompo.isEach);
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        NDCompo.spawnMode = GetSpawnModeAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        NDCompo.destroyRadius = GetDestroyRadiusAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
 
         NDCompo.bounceDuration = GetBounceDurationAt(
-            "star", timing.time, note.isBreak, NDCompo.isEach);
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
+        NDCompo.ConfigureBounce(NDCompo.speed / noteSpeed);
         SliCompo.isMirror = isMirror;
-        SliCompo.isJustR = detectJustType(note.noteContent, out int endPos);
+        SliCompo.isJustR = detectJustType(parsedSegment, out var endPos);
         SliCompo.endPosition = endPos;
         SliCompo.isReverse = isReverse;
         if (isReverse)
@@ -1766,10 +2458,14 @@ public class JsonDataLoader : MonoBehaviour
         {
             SliCompo.isSpecialFlip = isMirror;
         }
-        SliCompo.speed = noteSpeed * GetHSpeedAt(
-            "slide", timing.time, timing.HSpeed, note.isSlideBreak, SliCompo.isEach);
-        SliCompo.scrollType = ResolveSvType("slide", note.isSlideBreak, SliCompo.isEach);
-        var slideSize = GetSizeAt("slide", timing.time, note.isSlideBreak, SliCompo.isEach);
+        SliCompo.speed = noteSpeed * ResolveSlideAppearanceSpeed(
+            timing.time, timing.streamIndex);
+        SliCompo.scrollType = ResolveSvType(
+            "slide", note.isSlideBreak, stateIsEach, timing.streamIndex,
+            note.isMineSlide);
+        var slideSize = GetSizeAt(
+            "slide", timing.time, note.isSlideBreak, stateIsEach, timing.streamIndex,
+            note.isMineSlide);
         SliCompo.noteScaleX = slideSize.x;
         SliCompo.noteScaleY = slideSize.y;
         SliCompo.timeStart = (float)timing.time;
@@ -1780,322 +2476,112 @@ public class JsonDataLoader : MonoBehaviour
         //SliCompo.sortIndex = -7000 + (int)((lastNoteTime - timing.time) * -100) + sort * 5;
         SliCompo.sortIndex = slideLayer;
         slideLayer -= SLIDE_AREA_STEP_MAP[slideShape].Last();
-        var slideMat = GetSlideMaterial(note.isSlideBreak, timing.time, note.isSlideMono);
+        var slideMat = GetSlideMaterial(
+            note.isSlideBreak, timing.time, note.isMineSlide, timing.streamIndex,
+            stateIsEach);
         SliCompo.colorOverrideMaterial = slideMat;
         if (slideMat != null) SliCompo.noteTintColor = slideMat.GetColor("_NoteColor");
+        SliCompo.guideStarMaterial = GetSlideStarMaterial(
+            note.isSlideBreak, stateIsEach, timing.time, note.isMineSlide,
+            timing.streamIndex);
+        var guideStarSize = GetSizeAt(
+            "slidestar",
+            timing.time, note.isSlideBreak, stateIsEach,
+            timing.streamIndex, note.isMineSlide);
+        SliCompo.guideStarScaleX = guideStarSize.x;
+        SliCompo.guideStarScaleY = guideStarSize.y;
         var starMat = GetStarMaterial(
-            note.isBreak, timing.noteList.Count > 1, timing.time, note.isMonoHead);
+            note.isBreak, stateIsEach, timing.time,
+            note.isMineHead, timing.streamIndex);
         NDCompo.colorOverrideMaterial = starMat;
         if (starMat != null) NDCompo.noteTintColor = starMat.GetColor("_NoteColor");
-        var starSize = GetSizeAt("star", timing.time, note.isBreak, NDCompo.isEach);
+        var starSize = GetSizeAt(
+            "star", timing.time, note.isBreak, stateIsEach, timing.streamIndex,
+            note.isMineHead);
         NDCompo.noteScaleX = starSize.x;
         NDCompo.noteScaleY = starSize.y;
         //slideLayer += 5;
         return slide;
     }
 
-    private bool detectJustType(string content, out int endPos)
+    private string GetTrajectoryCarrierVisualType(SimaiNote note)
     {
-        // > < ^ V w
-        if (content.Contains('>'))
+        if (note.isForceStar)
+            return "star";
+        return note.trajectoryCarrierType switch
         {
-            var str = content.Substring(0, 3);
-            var digits = str.Split('>');
-            var startPos = int.Parse(digits[0]);
-            endPos = int.Parse(digits[1]);
-            if (isUpperHalf(startPos))
-                return true;
-            return false;
-        }
-
-        if (content.Contains('<'))
-        {
-            var str = content.Substring(0, 3);
-            var digits = str.Split('<');
-            var startPos = int.Parse(digits[0]);
-            endPos = int.Parse(digits[1]);
-            if (!isUpperHalf(startPos))
-                return true;
-            return false;
-        }
-
-        if (content.Contains('^'))
-        {
-            var str = content.Substring(0, 3);
-            var digits = str.Split('^');
-            var startPos = int.Parse(digits[0]);
-            endPos = int.Parse(digits[1]);
-            endPos = endPos - startPos;
-            endPos = endPos < 0 ? endPos + 8 : endPos;
-            endPos = endPos > 8 ? endPos - 8 : endPos;
-
-            if (endPos < 4)
-            {
-                endPos = int.Parse(digits[1]);
-                return true;
-            }
-            if (endPos > 4)
-            {
-                endPos = int.Parse(digits[1]);
-                return false;
-            }
-        }
-        else if (content.Contains('V'))
-        {
-            var str = content.Substring(0, 4);
-            var digits = str.Split('V');
-            endPos = int.Parse(digits[1][1].ToString());
-
-            if (isRightHalf(endPos))
-                return true;
-            return false;
-        }
-        else if (content.Contains('w'))
-        {
-            var str = content.Substring(0, 3);
-            endPos = int.Parse(str.Substring(2, 1));
-            if (isUpperHalf(endPos))
-                return true;
-            return false;
-        }
-        else
-        {
-            //int endPos;
-            if (content.Contains("qq") || content.Contains("pp") || content.Contains("rp") || content.Contains("rq"))
-                endPos = int.Parse(content.Substring(3, 1));
-            else
-                endPos = int.Parse(content.Substring(2, 1));
-            if (isRightHalf(endPos))
-                return true;
-            return false;
-        }
-        return true;
+            SimaiNoteType.Hold => "hold",
+            SimaiNoteType.Touch => "touch",
+            SimaiNoteType.TouchHold => "touchhold",
+            _ => "tap"
+        };
     }
 
-    private string detectShapeFromText(string content)
+    private Sprite GetTrajectoryCarrierSprite(SimaiNote note, bool isEach)
     {
-        int getRelativeEndPos(int startPos, int endPos)
+        if (note.isForceStar)
         {
-            endPos = endPos - startPos;
-            endPos = endPos < 0 ? endPos + 8 : endPos;
-            endPos = endPos > 8 ? endPos - 8 : endPos;
-            return endPos + 1;
+            if (note.isBreak)
+                return customSkin.Star_Break;
+            return isEach ? customSkin.Star_Each : customSkin.Star;
         }
-
-        //print(content);
-        if (content.Contains('-'))
+        if (note.trajectoryCarrierType == SimaiNoteType.Hold)
         {
-            // line
-            var str = content.Substring(0, 3); //something like "8-6"
-            var digits = str.Split('-');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            if (endPos < 3 || endPos > 7) throw new Exception("-星星至少隔开一键\n-スライドエラー");
-            return "line" + endPos;
+            if (note.isBreak)
+                return customSkin.Hold_Break;
+            return isEach ? customSkin.Hold_Each : customSkin.Hold;
         }
-
-        if (content.Contains('>'))
+        if (note.trajectoryCarrierType is
+            SimaiNoteType.Touch or SimaiNoteType.TouchHold)
         {
-            // Circle defaults to clockwise
-            var str = content.Substring(0, 3);
-            var digits = str.Split('>');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            if (isUpperHalf(startPos))
-            {
-                return "circle" + endPos;
-            }
-
-            endPos = MirrorKeys(endPos);
-            return "-circle" + endPos; //Mirror
+            if (note.isBreak)
+                return customSkin.Touch_Break;
+            return isEach ? customSkin.Touch_Each : customSkin.Touch;
         }
+        if (note.isBreak)
+            return customSkin.Tap_Break;
+        return isEach ? customSkin.Tap_Each : customSkin.Tap;
+    }
 
-        if (content.Contains('<'))
-        {
-            // Circle defaults to clockwise
-            var str = content.Substring(0, 3);
-            var digits = str.Split('<');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            if (!isUpperHalf(startPos))
-            {
-                return "circle" + endPos;
-            }
+    private Material GetTrajectoryCarrierMaterial(
+        SimaiNote note,
+        bool isEach,
+        double time,
+        int streamIndex)
+    {
+        var type = GetTrajectoryCarrierVisualType(note);
+        if (type == "star")
+            return GetStarMaterial(
+                note.isBreak, isEach, time, note.isMineHead, streamIndex);
+        if (type == "hold")
+            return GetHoldMaterial(
+                note.isBreak, isEach, time, note.isMineHead, streamIndex);
+        if (type == "tap")
+            return GetTapMaterial(
+                note.isBreak, isEach, time, note.isMineHead, streamIndex);
+        if (note.isMineHead)
+            return MineMaterial(
+                time, streamIndex,
+                GetAlphaAt(type, time, streamIndex,
+                    note.isBreak, isEach, isMine: true));
+        return CreateTintMaterial(
+            GetColorAt(type, time, streamIndex, note.isBreak, isEach),
+            GetAlphaAt(type, time, streamIndex, note.isBreak, isEach));
+    }
 
-            endPos = MirrorKeys(endPos);
-            return "-circle" + endPos; //Mirror
-        }
+    // Guide-star facing comes from the parsed segment: reading the text again broke
+    // on D-zone heads and on turns, because it assumed fixed character offsets.
+    private bool detectJustType(SlidePathSegmentData segment, out int endPos)
+    {
+        SlideShapeResolver.TryGetJustDirection(segment, out endPos, out var isRight);
+        return isRight;
+    }
 
-        if (content.Contains('^'))
-        {
-            var str = content.Substring(0, 3);
-            var digits = str.Split('^');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-
-            if (endPos == 1 || endPos == 5)
-            {
-                throw new Exception("^星星不合法\n^スライドエラー");
-            }
-
-            if (endPos < 5)
-            {
-                return "circle" + endPos;
-            }
-            if (endPos > 5)
-            {
-                return "-circle" + MirrorKeys(endPos);
-            }
-        }
-
-        if (content.Contains('v'))
-        {
-            // v
-            var str = content.Substring(0, 3);
-            var digits = str.Split('v');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            if (endPos == 5) throw new Exception("v星星不合法\nvスライドエラー");
-            return "v" + endPos;
-        }
-
-        if (content.Contains("rp"))
-        {
-            // rp: same arc geometry as (endPos pp startPos), traversed start->end (isReverse handles star direction)
-            var str = content.Substring(0, 4);
-            var digits = str.Split(new string[] { "rp" }, StringSplitOptions.None);
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(endPos, startPos);
-            return "rppqq" + endPos;
-        }
-
-        if (content.Contains("rq"))
-        {
-            // rq: same arc geometry as (endPos qq startPos), traversed start->end (isReverse handles star direction)
-            var str = content.Substring(0, 4);
-            var digits = str.Split(new string[] { "rq" }, StringSplitOptions.None);
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(endPos, startPos);
-            endPos = MirrorKeys(endPos);
-            return "-rppqq" + endPos;
-        }
-
-        if (content.Contains("pp"))
-        {
-            // ppqq defaults to pp
-            var str = content.Substring(0, 4);
-            var digits = str.Split('p');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[2]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            return "ppqq" + endPos;
-        }
-
-        if (content.Contains("qq"))
-        {
-            // ppqq defaults to pp
-            var str = content.Substring(0, 4);
-            var digits = str.Split('q');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[2]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            endPos = MirrorKeys(endPos);
-            return "-ppqq" + endPos;
-        }
-
-        if (content.Contains('p'))
-        {
-            // pq defaults to p
-            var str = content.Substring(0, 3);
-            var digits = str.Split('p');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            return "pq" + endPos;
-        }
-
-        if (content.Contains('q'))
-        {
-            // pq defaults to p
-            var str = content.Substring(0, 3);
-            var digits = str.Split('q');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            endPos = MirrorKeys(endPos);
-            return "-pq" + endPos;
-        }
-
-        if (content.Contains('s'))
-        {
-            // s
-            var str = content.Substring(0, 3);
-            var digits = str.Split('s');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            if (endPos != 5) throw new Exception("s星星尾部错误\nsスライドエラー");
-            return "s";
-        }
-
-        if (content.Contains('z'))
-        {
-            // Mirrored s
-            var str = content.Substring(0, 3);
-            var digits = str.Split('z');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            if (endPos != 5) throw new Exception("z星星尾部错误\nzスライドエラー");
-            return "-s";
-        }
-
-        if (content.Contains('V'))
-        {
-            // L
-            var str = content.Substring(0, 4);
-            var digits = str.Split('V');
-            var startPos = int.Parse(digits[0]);
-            var turnPos = int.Parse(digits[1][0].ToString());
-            var endPos = int.Parse(digits[1][1].ToString());
-
-            turnPos = getRelativeEndPos(startPos, turnPos);
-            endPos = getRelativeEndPos(startPos, endPos);
-            if (turnPos == 7)
-            {
-                if (endPos < 2 || endPos > 5) throw new Exception("V星星终点不合法\nVスライドエラー");
-                return "L" + endPos;
-            }
-
-            if (turnPos == 3)
-            {
-                if (endPos < 5) throw new Exception("V星星终点不合法\nVスライドエラー");
-                return "-L" + MirrorKeys(endPos);
-            }
-
-            throw new Exception("V星星拐点只能隔开一键\nVスライドエラー");
-        }
-
-        if (content.Contains('w'))
-        {
-            // wifi
-            var str = content.Substring(0, 3);
-            var digits = str.Split('w');
-            var startPos = int.Parse(digits[0]);
-            var endPos = int.Parse(digits[1]);
-            endPos = getRelativeEndPos(startPos, endPos);
-            if (endPos != 5) throw new Exception("w星星尾部错误\nwスライドエラー");
-            return "wifi";
-        }
-
-        return "";
+    private string DetectShape(SlidePathSegmentData segment)
+    {
+        if (!SlideShapeResolver.TryResolve(segment, out var prefabKey, out _, out var error))
+            throw new Exception(error);
+        return prefabKey;
     }
 
     public bool TryGetSlideRoute(
@@ -2107,34 +2593,15 @@ public class JsonDataLoader : MonoBehaviour
         positions = new List<Vector3>();
         try
         {
-            var shape = detectShapeFromText(content);
-            var isMirror = shape.StartsWith("-", StringComparison.Ordinal);
-            if (isMirror)
-                shape = shape.Substring(1);
-            var isReverse = shape.StartsWith("r", StringComparison.Ordinal);
-            if (isReverse)
-                shape = shape.Substring(1);
-            if (!SLIDE_PREFAB_MAP.TryGetValue(shape, out var prefabIndex))
+            if (!TryGetSlideVisualRoute(content, out positions))
                 return false;
-
-            var startPosition = content[0] - '0';
-            detectJustType(content, out var endPosition);
-            var rotationPosition = isReverse ? endPosition : startPosition;
-            var rotation = isMirror
-                ? Quaternion.Euler(0f, 0f, -45f * rotationPosition)
-                : Quaternion.Euler(0f, 0f, -45f * (rotationPosition - 1));
-            var scale = isMirror ? new Vector3(-1f, 1f, 1f) : Vector3.one;
-            var prefab = slidePrefab[prefabIndex].transform;
             var sensorRoot = GameObject.Find("Sensors")?.transform;
             if (sensorRoot == null)
                 return false;
 
             Sensor lastSensor = null;
-            for (var barIndex = 0; barIndex < prefab.childCount - 1; barIndex++)
+            foreach (var position in positions)
             {
-                var local = Vector3.Scale(prefab.GetChild(barIndex).localPosition, scale);
-                var position = rotation * local;
-                positions.Add(position);
                 for (var sensorIndex = 0; sensorIndex < sensorRoot.childCount; sensorIndex++)
                 {
                     var rect = sensorRoot.GetChild(sensorIndex).GetComponent<RectTransform>();
@@ -2154,16 +2621,55 @@ public class JsonDataLoader : MonoBehaviour
                 }
             }
 
-            if (isReverse)
-            {
-                path.Reverse();
-                positions.Reverse();
-            }
             return path.Count > 0;
         }
         catch
         {
             path.Clear();
+            positions.Clear();
+            return false;
+        }
+    }
+
+    public bool TryGetSlideVisualRoute(string content, out List<Vector3> positions)
+    {
+        positions = new List<Vector3>();
+        try
+        {
+            if (!SlidePathParser.TryParsePath(content, out var path) ||
+                path.segments.Count != 1)
+                return false;
+            var parsed = path.segments[0];
+            var shape = DetectShape(parsed);
+            var isMirror = shape.StartsWith("-", StringComparison.Ordinal);
+            if (isMirror)
+                shape = shape.Substring(1);
+            var isReverse = shape.StartsWith("r", StringComparison.Ordinal);
+            if (isReverse)
+                shape = shape.Substring(1);
+            if (!SLIDE_PREFAB_MAP.TryGetValue(shape, out var prefabIndex))
+                return false;
+
+            var rotationPosition = isReverse
+                ? parsed.endPosition
+                : parsed.startPosition;
+            var rotation = isMirror
+                ? Quaternion.Euler(0f, 0f, -45f * rotationPosition)
+                : Quaternion.Euler(0f, 0f, -45f * (rotationPosition - 1));
+            var scale = isMirror ? new Vector3(-1f, 1f, 1f) : Vector3.one;
+            var prefab = slidePrefab[prefabIndex].transform;
+            for (var barIndex = 0; barIndex < prefab.childCount - 1; barIndex++)
+            {
+                var local = Vector3.Scale(prefab.GetChild(barIndex).localPosition, scale);
+                positions.Add(rotation * local);
+            }
+
+            if (isReverse)
+                positions.Reverse();
+            return positions.Count > 0;
+        }
+        catch
+        {
             positions.Clear();
             return false;
         }
@@ -2189,8 +2695,14 @@ public class JsonDataLoader : MonoBehaviour
         return false;
     }
 
-    private Dictionary<string, List<(double time, string color)>> _colorTimeline
-        = new Dictionary<string, List<(double, string)>>();
+    private static string StateKey(int streamIndex, string noteType) =>
+        streamIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" +
+        NormalizeNoteType(noteType);
+
+    private static string VisualStateKey(int streamIndex, string noteType, bool live) =>
+        StateKey(streamIndex, noteType) + (live ? ":live" : ":note");
+
+    private readonly Dictionary<string, List<(double time, ColorChange value)>> _colorTimeline = new();
 
     private void BuildColorTimeline(List<ColorChange> colorTable)
     {
@@ -2198,26 +2710,84 @@ public class JsonDataLoader : MonoBehaviour
         if (colorTable == null) return;
         foreach (var ev in colorTable)
         {
-            var key = NormalizeNoteType(ev.noteType);
+            var key = VisualStateKey(ev.streamIndex, ev.noteType, ev.live);
             if (!_colorTimeline.ContainsKey(key))
-                _colorTimeline[key] = new List<(double, string)>();
-            string colorValue = string.Equals(ev.color, "NULL", StringComparison.OrdinalIgnoreCase) ? null : ev.color;
-            _colorTimeline[key].Add((ev.time, colorValue));
+                _colorTimeline[key] = new List<(double, ColorChange)>();
+            _colorTimeline[key].Add((ev.time, ev));
         }
         foreach (var kv in _colorTimeline)
-            kv.Value.Sort((a, b) => a.time.CompareTo(b.time));
+            kv.Value.Sort((a, b) => a.time != b.time
+                ? a.time.CompareTo(b.time)
+                : a.value.sourcePosition.CompareTo(b.value.sourcePosition));
     }
 
     /// Returns the hex color string active for <paramref name="noteType"/> at <paramref name="time"/>,
     /// or null if no override is defined yet.
-    private string GetColorAt(string noteType, double time)
+    private string GetColorAt(
+        string noteType,
+        double noteTime,
+        int streamIndex = 0,
+        bool isBreak = false,
+        bool isEach = false,
+        double? liveTime = null,
+        bool liveOnly = false)
     {
-        if (!_colorTimeline.TryGetValue(NormalizeNoteType(noteType), out var list)) return null;
-        var index = FindTimelineIndex(list, time);
-        return index >= 0 ? list[index].color : null;
+        ColorChange Lookup(string type, bool live, double time)
+        {
+            if (!_colorTimeline.TryGetValue(VisualStateKey(streamIndex, type, live), out var values))
+                return null;
+            var index = FindTimelineIndex(values, time);
+            return index >= 0 ? values[index].value : null;
+        }
+
+        string ResolveTyped(bool live, double time)
+        {
+            // Mines are not here on purpose: they take their colour from the mine key
+            // alone, through GetMineColorAt, so that colouring taps leaves the mines
+            // among them alone.
+            IEnumerable<string> Types()
+            {
+                if (isBreak) yield return "break";
+                if (isEach) yield return "each";
+                yield return noteType;
+                if (string.Equals(noteType, "star", StringComparison.OrdinalIgnoreCase))
+                    yield return "tap";
+            }
+
+            foreach (var type in Types().Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var value = Lookup(type, live, time);
+                if (value != null && !string.Equals(value.color, "NULL", StringComparison.OrdinalIgnoreCase))
+                    return value.color;
+            }
+            return null;
+        }
+
+        string ResolveGlobal(bool live, double time)
+        {
+            var value = Lookup(string.Empty, live, time);
+            return value == null || string.Equals(value.color, "NULL", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : value.color;
+        }
+
+        // The live answer on its own, for the override layer: what the note is
+        // painted with when it is built already carries every non-live COLOR, so
+        // repeating those here would let the override layer restate a value the
+        // note already has - and, worse, keep restating it after a COLORV*NULL
+        // asked for the note's own colour back.
+        if (liveOnly)
+            return liveTime.HasValue
+                ? ResolveTyped(true, liveTime.Value) ??
+                  ResolveGlobal(true, liveTime.Value)
+                : null;
+        return (liveTime.HasValue ? ResolveTyped(true, liveTime.Value) : null) ??
+               ResolveTyped(false, noteTime) ??
+               (liveTime.HasValue ? ResolveGlobal(true, liveTime.Value) : null) ??
+               ResolveGlobal(false, noteTime);
     }
 
-    private Dictionary<string, List<(double time, Vector2 scale)>> _sizeTimeline = new();
+    private readonly Dictionary<string, List<(double time, SizeChange value)>> _sizeTimeline = new();
 
     private void BuildSizeTimeline(List<SizeChange> sizeTable)
     {
@@ -2225,52 +2795,151 @@ public class JsonDataLoader : MonoBehaviour
         if (sizeTable == null) return;
         foreach (var ev in sizeTable)
         {
-            string key = NormalizeNoteType(ev.noteType);
+            string key = VisualStateKey(ev.streamIndex, ev.noteType, ev.live);
             if (!_sizeTimeline.ContainsKey(key))
-                _sizeTimeline[key] = new List<(double, Vector2)>();
-            var x = ev.scaleX == 0f ? ev.scale : ev.scaleX;
-            var y = ev.scaleY == 0f ? ev.scale : ev.scaleY;
-            if (x == 0f) x = 1f;
-            if (y == 0f) y = 1f;
-            _sizeTimeline[key].Add((ev.time, new Vector2(x, y)));
+                _sizeTimeline[key] = new List<(double, SizeChange)>();
+            _sizeTimeline[key].Add((ev.time, ev));
         }
         foreach (var kv in _sizeTimeline)
-            kv.Value.Sort((a, b) => a.time.CompareTo(b.time));
+            kv.Value.Sort((a, b) => a.time != b.time
+                ? a.time.CompareTo(b.time)
+                : a.value.sourcePosition.CompareTo(b.value.sourcePosition));
     }
 
     /// Returns the scale multiplier active for <paramref name="noteType"/> at
     /// <paramref name="time"/> (per-type over global, default 1.0).
+    private Vector2? ResolveSizeAt(
+        string noteType,
+        double noteTime,
+        bool isBreak = false,
+        bool isEach = false,
+        int streamIndex = 0,
+        double? liveTime = null,
+        bool isMine = false,
+        bool liveOnly = false)
+    {
+        Vector2? Lookup(string type, bool live, double time)
+        {
+            if (!_sizeTimeline.TryGetValue(VisualStateKey(streamIndex, type, live), out var list))
+                return null;
+            var index = FindTimelineIndex(list, time);
+            if (index < 0) return null;
+            var value = list[index].value;
+            if (value.reset) return null;
+            var x = value.scaleX == 0f ? value.scale : value.scaleX;
+            var y = value.scaleY == 0f ? value.scale : value.scaleY;
+            return new Vector2(x == 0f ? 1f : x, y == 0f ? 1f : y);
+        }
+        Vector2? ResolveTyped(bool live, double time)
+        {
+            if (isMine)
+            {
+                var value = Lookup("mine", live, time);
+                if (value.HasValue) return value;
+            }
+            if (isBreak)
+            {
+                var value = Lookup("break", live, time);
+                if (value.HasValue) return value;
+            }
+            if (isEach)
+            {
+                var value = Lookup("each", live, time);
+                if (value.HasValue) return value;
+            }
+            return Lookup(noteType, live, time);
+        }
+
+        var value = (liveTime.HasValue ? ResolveTyped(true, liveTime.Value) : null) ??
+                    (liveOnly ? null : ResolveTyped(false, noteTime));
+        if (value.HasValue)
+            return value;
+
+        // Global SIZE deliberately excludes Slide paths; SIZE*slide is explicit.
+        if (string.Equals(noteType, "slide", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return (liveTime.HasValue ? Lookup(string.Empty, true, liveTime.Value) : null) ??
+               (liveOnly ? null : Lookup(string.Empty, false, noteTime));
+    }
+
     private Vector2 GetSizeAt(
         string noteType,
         double time,
         bool isBreak = false,
-        bool isEach = false)
-    {
-        Vector2? Lookup(string key)
-        {
-            if (!_sizeTimeline.TryGetValue(key, out var list)) return null;
-            var index = FindTimelineIndex(list, time);
-            return index >= 0 ? list[index].scale : null;
-        }
-        var resolvedType = ResolveTimelineType(_sizeTimeline, NormalizeNoteType(noteType), isBreak, isEach);
-        var typedScale = Lookup(resolvedType);
-        if (typedScale.HasValue)
-            return typedScale.Value;
+        bool isEach = false,
+        int streamIndex = 0,
+        bool isMine = false) =>
+        ResolveSizeAt(noteType, time, isBreak, isEach, streamIndex, isMine: isMine) ??
+        Vector2.one;
 
-        // A slide body is a path made from many sprites. Scaling it with the global
-        // note size changes both sprite size and spacing, so only SIZE*slide=...
-        // may alter it. The star head still follows the global/star setting.
-        if (string.Equals(noteType, "slide", StringComparison.OrdinalIgnoreCase))
-            return Vector2.one;
-
-        return Lookup("") ?? Vector2.one;
-    }
-
-    private Dictionary<string, List<(double time, float multiplier)>> _hSpeedTimeline = new();
+    private readonly Dictionary<string, List<(double time, SpeedChange value)>> _hSpeedTimeline = new();
 
     private Dictionary<string, List<(double time, SpawnChange value)>> _spawnTimeline = new();
+    private readonly Dictionary<string, List<(double time, SpawnModeChange value)>>
+        _spawnModeTimeline = new();
 
     private readonly Dictionary<string, List<(double time, BounceChange value)>> _bounceTimeline = new();
+    private readonly Dictionary<string, List<(double time, DestroyChange value)>> _destroyTimeline = new();
+
+    private void BuildDestroyTimeline(List<DestroyChange> changes)
+    {
+        _destroyTimeline.Clear();
+        if (changes == null)
+            return;
+        foreach (var change in changes)
+        {
+            var key = StateKey(change.streamIndex, change.noteType);
+            if (!_destroyTimeline.TryGetValue(key, out var values))
+                _destroyTimeline[key] = values = new List<(double, DestroyChange)>();
+            values.Add((change.time, change));
+        }
+        foreach (var values in _destroyTimeline.Values)
+            values.Sort((left, right) => left.time != right.time
+                ? left.time.CompareTo(right.time)
+                : left.value.sourcePosition.CompareTo(right.value.sourcePosition));
+    }
+
+    private float GetDestroyRadiusAt(
+        string noteType,
+        double time,
+        bool isBreak,
+        bool isEach,
+        int streamIndex,
+        bool isMine = false)
+    {
+        float? Lookup(string type)
+        {
+            if (!_destroyTimeline.TryGetValue(StateKey(streamIndex, type), out var values))
+                return null;
+            var index = FindTimelineIndex(values, time);
+            if (index < 0 || values[index].value.reset)
+                return null;
+            return values[index].value.radius;
+        }
+
+        float? typed = null;
+        if (isMine)
+            typed = Lookup("mine");
+        if (!typed.HasValue && isBreak)
+            typed = Lookup("break");
+        if (!typed.HasValue && isEach)
+            typed = Lookup("each");
+        return typed ?? Lookup(noteType) ?? Lookup(string.Empty) ??
+               NoteDrop.DefaultDestroyRadius;
+    }
+
+    private float ResolveSlideAppearanceSpeed(double time, int streamIndex)
+    {
+        if (_hSpeedTimeline.TryGetValue(
+                StateKey(streamIndex, "slide"), out var values))
+        {
+            var index = FindTimelineIndex(values, time);
+            if (index >= 0 && !values[index].value.reset)
+                return values[index].value.multiplier;
+        }
+        return 1f;
+    }
 
     private void BuildBounceTimeline(List<BounceChange> changes)
     {
@@ -2279,25 +2948,58 @@ public class JsonDataLoader : MonoBehaviour
             return;
         foreach (var change in changes)
         {
-            var key = NormalizeNoteType(change.noteType);
+            var key = StateKey(change.streamIndex, change.noteType);
             if (!_bounceTimeline.TryGetValue(key, out var values))
                 _bounceTimeline[key] = values = new List<(double, BounceChange)>();
             values.Add((change.time, change));
         }
         foreach (var values in _bounceTimeline.Values)
-            values.Sort((left, right) => left.time.CompareTo(right.time));
+            values.Sort((left, right) =>
+            {
+                var byTime = left.time.CompareTo(right.time);
+                return byTime != 0
+                    ? byTime
+                    : left.value.sourcePosition.CompareTo(right.value.sourcePosition);
+            });
     }
 
-    private float GetBounceDurationAt(string noteType, double time, bool isBreak, bool isEach)
+    private float GetBounceDurationAt(
+        string noteType,
+        double time,
+        bool isBreak,
+        bool isEach,
+        int streamIndex = 0,
+        bool isMine = false)
     {
-        var resolvedType = ResolveTimelineType(
-            _bounceTimeline, NormalizeNoteType(noteType), isBreak, isEach);
-        if (!_bounceTimeline.TryGetValue(resolvedType, out var values))
-            return 0f;
-        var index = FindTimelineIndex(values, time);
-        if (index < 0 || values[index].value.reset)
-            return 0f;
-        return Math.Max(0f, values[index].value.duration);
+        BounceChange Lookup(int stream, string type)
+        {
+            if (!_bounceTimeline.TryGetValue(StateKey(stream, type), out var values))
+                return null;
+            var index = FindTimelineIndex(values, time);
+            return index >= 0 ? values[index].value : null;
+        }
+        float? Resolve(int stream)
+        {
+            float? Value(BounceChange value) =>
+                value == null || value.reset ? null : Math.Max(0f, value.duration);
+            if (isMine)
+            {
+                var value = Value(Lookup(stream, "mine"));
+                if (value.HasValue) return value;
+            }
+            if (isBreak)
+            {
+                var value = Value(Lookup(stream, "break"));
+                if (value.HasValue) return value;
+            }
+            if (isEach)
+            {
+                var value = Value(Lookup(stream, "each"));
+                if (value.HasValue) return value;
+            }
+            return Value(Lookup(stream, noteType)) ?? Value(Lookup(stream, ""));
+        }
+        return Resolve(streamIndex) ?? 0f;
     }
 
     private void BuildSpawnTimeline(List<SpawnChange> changes)
@@ -2306,48 +3008,106 @@ public class JsonDataLoader : MonoBehaviour
         if (changes == null) return;
         foreach (var change in changes)
         {
-            var key = NormalizeNoteType(change.noteType);
+            var key = StateKey(change.streamIndex, change.noteType);
             if (!_spawnTimeline.TryGetValue(key, out var list))
                 _spawnTimeline[key] = list = new List<(double, SpawnChange)>();
             list.Add((change.time, change));
         }
         foreach (var list in _spawnTimeline.Values)
-            list.Sort((left, right) => left.time.CompareTo(right.time));
+            list.Sort((left, right) =>
+            {
+                var byTime = left.time.CompareTo(right.time);
+                return byTime != 0
+                    ? byTime
+                    : left.value.sourcePosition.CompareTo(right.value.sourcePosition);
+            });
     }
 
     private float GetSpawnRadiusAt(
         string noteType,
         double time,
         bool isBreak = false,
-        bool isEach = false)
+        bool isEach = false,
+        int streamIndex = 0,
+        bool isMine = false)
     {
-        SpawnChange Lookup(string key)
+        SpawnChange Lookup(int stream, string type)
         {
-            if (!_spawnTimeline.TryGetValue(key, out var list)) return null;
+            if (!_spawnTimeline.TryGetValue(StateKey(stream, type), out var list)) return null;
             var index = FindTimelineIndex(list, time);
             return index >= 0 ? list[index].value : null;
         }
-
-        float Resolve(SpawnChange change) =>
-            change == null || change.reset ? NoteDrop.DefaultSpawnRadius : change.radius;
-
-        if (isBreak)
+        float? Resolve(int stream)
         {
-            var special = Lookup("break");
-            if (special != null)
-                return special.reset ? Resolve(Lookup("")) : special.radius;
+            float? Value(SpawnChange value) => value == null || value.reset ? null : value.radius;
+            if (isMine)
+            {
+                var value = Value(Lookup(stream, "mine"));
+                if (value.HasValue) return value;
+            }
+            if (isBreak)
+            {
+                var value = Value(Lookup(stream, "break"));
+                if (value.HasValue) return value;
+            }
+            if (isEach)
+            {
+                var value = Value(Lookup(stream, "each"));
+                if (value.HasValue) return value;
+            }
+            return Value(Lookup(stream, noteType)) ?? Value(Lookup(stream, ""));
         }
-        if (isEach)
+        return Resolve(streamIndex) ?? NoteDrop.DefaultSpawnRadius;
+    }
+
+    private void BuildSpawnModeTimeline(List<SpawnModeChange> changes)
+    {
+        _spawnModeTimeline.Clear();
+        if (changes == null)
+            return;
+        foreach (var change in changes)
         {
-            var special = Lookup("each");
-            if (special != null)
-                return special.reset ? Resolve(Lookup("")) : special.radius;
+            var key = StateKey(change.streamIndex, change.noteType);
+            if (!_spawnModeTimeline.TryGetValue(key, out var list))
+                _spawnModeTimeline[key] =
+                    list = new List<(double, SpawnModeChange)>();
+            list.Add((change.time, change));
+        }
+        foreach (var list in _spawnModeTimeline.Values)
+            list.Sort((left, right) => left.time != right.time
+                ? left.time.CompareTo(right.time)
+                : left.value.sourcePosition.CompareTo(right.value.sourcePosition));
+    }
+
+    private SpawnVisualMode GetSpawnModeAt(
+        string noteType,
+        double time,
+        bool isBreak = false,
+        bool isEach = false,
+        int streamIndex = 0,
+        bool isMine = false)
+    {
+        SpawnModeChange Lookup(string type)
+        {
+            if (!_spawnModeTimeline.TryGetValue(
+                    StateKey(streamIndex, type), out var values))
+                return null;
+            var index = FindTimelineIndex(values, time);
+            return index >= 0 ? values[index].value : null;
         }
 
-        var typed = Lookup(NormalizeNoteType(noteType));
-        if (typed != null)
-            return typed.reset ? Resolve(Lookup("")) : typed.radius;
-        return Resolve(Lookup(""));
+        SpawnVisualMode? Value(SpawnModeChange value) =>
+            value == null || value.reset ? null : value.mode;
+
+        if (isMine && Value(Lookup("mine")) is { } mineMode)
+            return mineMode;
+        if (isBreak && Value(Lookup("break")) is { } breakMode)
+            return breakMode;
+        if (isEach && Value(Lookup("each")) is { } eachMode)
+            return eachMode;
+        return Value(Lookup(noteType)) ??
+               Value(Lookup(string.Empty)) ??
+               SpawnVisualMode.Rewind;
     }
 
     private void BuildHSpeedTimeline(List<SpeedChange> changes)
@@ -2356,13 +3116,15 @@ public class JsonDataLoader : MonoBehaviour
         if (changes == null) return;
         foreach (var change in changes)
         {
-            var key = NormalizeNoteType(change.noteType);
+            var key = StateKey(change.streamIndex, change.noteType);
             if (!_hSpeedTimeline.TryGetValue(key, out var list))
-                _hSpeedTimeline[key] = list = new List<(double, float)>();
-            list.Add((change.time, change.multiplier));
+                _hSpeedTimeline[key] = list = new List<(double, SpeedChange)>();
+            list.Add((change.time, change));
         }
         foreach (var list in _hSpeedTimeline.Values)
-            list.Sort((left, right) => left.time.CompareTo(right.time));
+            list.Sort((left, right) => left.time != right.time
+                ? left.time.CompareTo(right.time)
+                : left.value.sourcePosition.CompareTo(right.value.sourcePosition));
     }
 
     private float GetHSpeedAt(
@@ -2370,35 +3132,53 @@ public class JsonDataLoader : MonoBehaviour
         double time,
         float fallback,
         bool isBreak = false,
-        bool isEach = false)
+        bool isEach = false,
+        int streamIndex = 0,
+        bool isMine = false)
     {
-        var resolvedType = ResolveTimelineType(_hSpeedTimeline, NormalizeNoteType(noteType), isBreak, isEach);
-        if (!_hSpeedTimeline.TryGetValue(resolvedType, out var list))
-            return fallback;
-        var index = FindTimelineIndex(list, time);
-        return index >= 0 ? list[index].multiplier : fallback;
+        float? Lookup(int stream, string type)
+        {
+            if (!_hSpeedTimeline.TryGetValue(StateKey(stream, type), out var values))
+                return null;
+            var index = FindTimelineIndex(values, time);
+            if (index < 0 || values[index].value.reset) return null;
+            return values[index].value.multiplier;
+        }
+        float? Resolve(int stream)
+        {
+            if (isMine)
+            {
+                var value = Lookup(stream, "mine");
+                if (value.HasValue) return value;
+            }
+            if (isBreak)
+            {
+                var value = Lookup(stream, "break");
+                if (value.HasValue) return value;
+            }
+            if (isEach)
+            {
+                var value = Lookup(stream, "each");
+                if (value.HasValue) return value;
+            }
+            return Lookup(stream, noteType) ?? Lookup(stream, "");
+        }
+        return Resolve(streamIndex) ?? fallback;
     }
 
-    private static string ResolveTimelineType<T>(
-        Dictionary<string, List<T>> timeline,
-        string baseType,
-        bool isBreak,
-        bool isEach)
+    private static string ResolveSvType(
+        string baseType, bool isBreak, bool isEach, int streamIndex, bool isMine = false)
     {
-        if (isBreak && timeline.ContainsKey("break"))
-            return "break";
-        if (isEach && timeline.ContainsKey("each"))
-            return "each";
-        return baseType;
-    }
-
-    private static string ResolveSvType(string baseType, bool isBreak, bool isEach)
-    {
-        if (isBreak && SvController.HasTypedCurve("break"))
-            return "break";
-        if (isEach && SvController.HasTypedCurve("each"))
-            return "each";
-        return baseType;
+        var mineType = SvController.MakeCurveKey(streamIndex, "mine");
+        if (isMine && SvController.HasTypedCurve(mineType))
+            return mineType;
+        var breakType = SvController.MakeCurveKey(streamIndex, "break");
+        if (isBreak && SvController.HasTypedCurve(breakType))
+            return breakType;
+        var eachType = SvController.MakeCurveKey(streamIndex, "each");
+        if (isEach && SvController.HasTypedCurve(eachType))
+            return eachType;
+        return SvController.MakeCurveKey(streamIndex, baseType);
     }
 
     private static int FindTimelineIndex<T>(List<(double time, T value)> timeline, double time)
@@ -2422,7 +3202,7 @@ public class JsonDataLoader : MonoBehaviour
         return result;
     }
 
-    private Dictionary<string, List<(double time, float alpha)>> _alphaTimeline = new();
+    private readonly Dictionary<string, List<(double time, AlphaChange value)>> _alphaTimeline = new();
 
     private void BuildAlphaTimeline(List<AlphaChange> alphaTable)
     {
@@ -2430,25 +3210,117 @@ public class JsonDataLoader : MonoBehaviour
         if (alphaTable == null) return;
         foreach (var ev in alphaTable)
         {
-            string key = NormalizeNoteType(ev.noteType);
+            string key = VisualStateKey(ev.streamIndex, ev.noteType, ev.live);
             if (!_alphaTimeline.ContainsKey(key))
-                _alphaTimeline[key] = new List<(double, float)>();
-            _alphaTimeline[key].Add((ev.time, ev.alpha));
+                _alphaTimeline[key] = new List<(double, AlphaChange)>();
+            _alphaTimeline[key].Add((ev.time, ev));
         }
         foreach (var kv in _alphaTimeline)
-            kv.Value.Sort((a, b) => a.time.CompareTo(b.time));
+            kv.Value.Sort((a, b) => a.time != b.time
+                ? a.time.CompareTo(b.time)
+                : a.value.sourcePosition.CompareTo(b.value.sourcePosition));
     }
 
-    private float GetAlphaAt(string noteType, double time)
+    private float? ResolveAlphaAt(
+        string noteType,
+        double noteTime,
+        int streamIndex = 0,
+        bool isBreak = false,
+        bool isEach = false,
+        double? liveTime = null,
+        bool isMine = false,
+        bool liveOnly = false)
     {
-        float? Lookup(string key)
+        float? Lookup(string type, bool live, double time)
         {
-            if (!_alphaTimeline.TryGetValue(key, out var list)) return null;
+            if (!_alphaTimeline.TryGetValue(VisualStateKey(streamIndex, type, live), out var list))
+                return null;
             var index = FindTimelineIndex(list, time);
-            return index >= 0 ? list[index].alpha : null;
+            if (index < 0 || list[index].value.reset) return null;
+            return list[index].value.alpha;
         }
-        return Lookup(NormalizeNoteType(noteType)) ?? Lookup("") ?? 1f;
+
+        float? ResolveTyped(bool live, double time)
+        {
+            if (isMine)
+            {
+                var value = Lookup("mine", live, time);
+                if (value.HasValue) return value;
+            }
+            if (isBreak)
+            {
+                var value = Lookup("break", live, time);
+                if (value.HasValue) return value;
+            }
+            if (isEach)
+            {
+                var value = Lookup("each", live, time);
+                if (value.HasValue) return value;
+            }
+            return Lookup(noteType, live, time);
+        }
+
+        if (liveOnly)
+            return liveTime.HasValue
+                ? ResolveTyped(true, liveTime.Value) ??
+                  Lookup(string.Empty, true, liveTime.Value)
+                : null;
+        return (liveTime.HasValue ? ResolveTyped(true, liveTime.Value) : null) ??
+               ResolveTyped(false, noteTime) ??
+               (liveTime.HasValue ? Lookup(string.Empty, true, liveTime.Value) : null) ??
+               Lookup(string.Empty, false, noteTime);
     }
+
+    private float GetAlphaAt(
+        string noteType,
+        double time,
+        int streamIndex = 0,
+        bool isBreak = false,
+        bool isEach = false,
+        bool isMine = false) =>
+        ResolveAlphaAt(noteType, time, streamIndex, isBreak, isEach, isMine: isMine) ?? 1f;
+
+    // A mine answers to a mine colour and to nothing else, live or not: it ignores the
+    // note's own type, break, each and the global colour exactly as it always has, so
+    // that a chart colouring taps does not accidentally colour the mines among them.
+    // COLORV/SIZEV/ALPHAV are an override layer over what the note was painted
+    // with, so these read the live commands and nothing else. Type precedence,
+    // break/each, the star's fall back to tap and the mine's refusal to answer to
+    // anything but "mine" are all the same rules COLOR/SIZE/ALPHA go through -
+    // that is the point of asking the same resolver a different question.
+    internal string ResolveLiveColor(NoteDrop note, double liveTime) =>
+        note.IsVisualMine
+            ? GetMineColorAt(note.VisualStateTime, note.VisualStreamIndex, liveTime,
+                liveOnly: true)
+            : GetColorAt(note.VisualNoteType, note.VisualStateTime, note.VisualStreamIndex,
+                note.IsVisualBreak, note.isEachInStream, liveTime, liveOnly: true);
+
+    internal Vector2? ResolveLiveSize(NoteDrop note, double liveTime) =>
+        ResolveSizeAt(note.VisualNoteType, note.VisualStateTime, note.IsVisualBreak,
+            note.isEachInStream, note.VisualStreamIndex, liveTime, note.IsVisualMine,
+            liveOnly: true);
+
+    internal float? ResolveLiveAlpha(NoteDrop note, double liveTime) =>
+        ResolveAlphaAt(note.VisualNoteType, note.VisualStateTime, note.VisualStreamIndex,
+            note.IsVisualBreak, note.isEachInStream, liveTime, note.IsVisualMine,
+            liveOnly: true);
+
+    internal string ResolveLiveGuideStarColor(NoteDrop note, double liveTime) =>
+        note.IsVisualMine
+            ? GetMineColorAt(note.VisualStateTime, note.VisualStreamIndex, liveTime,
+                liveOnly: true)
+            : GetColorAt(note.LiveGuideStarVisualType, note.VisualStateTime, note.VisualStreamIndex,
+                note.IsVisualBreak, note.isEachInStream, liveTime, liveOnly: true);
+
+    internal Vector2? ResolveLiveGuideStarSize(NoteDrop note, double liveTime) =>
+        ResolveSizeAt(note.LiveGuideStarVisualType, note.VisualStateTime, note.IsVisualBreak,
+            note.isEachInStream, note.VisualStreamIndex, liveTime, note.IsVisualMine,
+            liveOnly: true);
+
+    internal float? ResolveLiveGuideStarAlpha(NoteDrop note, double liveTime) =>
+        ResolveAlphaAt(note.LiveGuideStarVisualType, note.VisualStateTime, note.VisualStreamIndex,
+            note.IsVisualBreak, note.isEachInStream, liveTime, note.IsVisualMine,
+            liveOnly: true);
 
     private static Shader _tintShader;
     private static bool renderingMaterialsWarmed;
@@ -2564,66 +3436,113 @@ public class JsonDataLoader : MonoBehaviour
     private static string NormalizeNoteType(string noteType) =>
         string.IsNullOrWhiteSpace(noteType) ? "" : noteType.Trim().ToLowerInvariant();
 
-    private Material GetTapMaterial(bool isBreak, bool isEach, double time, bool isMono = false)
+    /// <summary>
+    /// The colour a chart wrote for mines specifically, or null. A mine is grey by
+    /// default, and only a colour aimed at mines may replace that grey: this asks for
+    /// the one key and deliberately does not fall through to break, each, the note's
+    /// own type or the global colour, all of which mines have always ignored.
+    /// </summary>
+    private string GetMineColorAt(
+        double time,
+        int streamIndex,
+        double? liveTime = null,
+        bool liveOnly = false)
     {
-        if (isMono)
-            return CreateTintMaterial(null,
-                GetAlphaAt(isBreak ? "break" : isEach ? "each" : "tap", time),
-                grayscale: true);
-        if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time), GetAlphaAt("break", time));
-        if (isEach)
-            return CreateTintMaterial(GetColorAt("each", time) ?? GetColorAt("tap", time),
-                GetAlphaAt("each", time));
-        return CreateTintMaterial(GetColorAt("tap", time), GetAlphaAt("tap", time));
-    }
-
-    private Material GetHoldMaterial(bool isBreak, bool isEach, double time, bool isMono = false)
-    {
-        if (isMono)
-            return CreateTintMaterial(null,
-                GetAlphaAt(isBreak ? "break" : isEach ? "each" : "hold", time),
-                grayscale: true);
-        if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("hold", time),
-                GetAlphaAt("break", time));
-        if (isEach)
-            return CreateTintMaterial(GetColorAt("each", time) ?? GetColorAt("hold", time),
-                GetAlphaAt("each", time));
-        return CreateTintMaterial(GetColorAt("hold", time), GetAlphaAt("hold", time));
-    }
-
-    private Material GetSlideMaterial(bool isBreak, double time, bool isMono = false)
-    {
-        if (isMono)
-            return CreateTintMaterial(null,
-                GetAlphaAt(isBreak ? "break" : "slide", time),
-                grayscale: true);
-        if (isBreak)
-            return CreateTintMaterial(GetColorAt("break", time) ?? GetColorAt("slide", time),
-                GetAlphaAt("break", time));
-        return CreateTintMaterial(GetColorAt("slide", time), GetAlphaAt("slide", time));
-    }
-
-    /// Star heads (slide star + forced-star taps). Uses "star" key, falls back to "tap".
-    private Material GetStarMaterial(bool isBreak, bool isEach, double time, bool isMono = false)
-    {
-        if (isMono)
-            return CreateTintMaterial(null,
-                GetAlphaAt(isBreak ? "break" : isEach ? "each" : "star", time),
-                grayscale: true);
-        if (isBreak)
+        string Lookup(bool live, double at)
         {
-            string c = GetColorAt("break", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time);
-            return CreateTintMaterial(c, GetAlphaAt("break", time));
+            if (!_colorTimeline.TryGetValue(
+                    VisualStateKey(streamIndex, "mine", live), out var values))
+                return null;
+            var index = FindTimelineIndex(values, at);
+            if (index < 0)
+                return null;
+            var color = values[index].value.color;
+            return string.Equals(color, "NULL", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : color;
         }
-        if (isEach)
-            return CreateTintMaterial(
-                GetColorAt("each", time) ?? GetColorAt("star", time) ?? GetColorAt("tap", time),
-                GetAlphaAt("each", time));
+        if (liveOnly)
+            return liveTime.HasValue ? Lookup(true, liveTime.Value) : null;
+        return (liveTime.HasValue ? Lookup(true, liveTime.Value) : null) ??
+               Lookup(false, time);
+    }
+
+    /// <summary>
+    /// A mine's material: grey, unless the chart named a colour for mines, in which
+    /// case that colour is drawn as written and the grey is dropped.
+    /// </summary>
+    private Material MineMaterial(double time, int streamIndex, float alpha)
+    {
+        var color = GetMineColorAt(time, streamIndex);
+        return color == null
+            ? CreateTintMaterial(null, alpha, grayscale: true)
+            : CreateTintMaterial(color, alpha);
+    }
+
+    private Material GetTapMaterial(
+        bool isBreak, bool isEach, double time, bool isMine = false,
+        int streamIndex = 0)
+    {
+        if (isMine)
+            return MineMaterial(time, streamIndex,
+                GetAlphaAt("tap", time, streamIndex, isBreak, isEach, isMine: true));
         return CreateTintMaterial(
-            GetColorAt("star", time) ?? GetColorAt("tap", time),
-            GetAlphaAt("star", time));
+            GetColorAt("tap", time, streamIndex, isBreak, isEach),
+            GetAlphaAt("tap", time, streamIndex, isBreak, isEach));
+    }
+
+    private Material GetHoldMaterial(
+        bool isBreak, bool isEach, double time, bool isMine = false,
+        int streamIndex = 0)
+    {
+        if (isMine)
+            return MineMaterial(time, streamIndex,
+                GetAlphaAt("hold", time, streamIndex, isBreak, isEach, isMine: true));
+        return CreateTintMaterial(
+            GetColorAt("hold", time, streamIndex, isBreak, isEach),
+            GetAlphaAt("hold", time, streamIndex, isBreak, isEach));
+    }
+
+    private Material GetSlideMaterial(
+        bool isBreak, double time, bool isMine = false, int streamIndex = 0,
+        bool isEach = false)
+    {
+        if (isMine)
+            return MineMaterial(time, streamIndex,
+                GetAlphaAt("slide", time, streamIndex, isBreak, isEach, isMine: true));
+        return CreateTintMaterial(
+            GetColorAt("slide", time, streamIndex, isBreak, isEach),
+            GetAlphaAt("slide", time, streamIndex, isBreak, isEach));
+    }
+
+    /// Star-shaped note visuals: Slide heads and forced-star taps.
+    /// Uses the "star" key and falls back to "tap".
+    private Material GetStarMaterial(
+        bool isBreak, bool isEach, double time, bool isMine = false,
+        int streamIndex = 0)
+    {
+        if (isMine)
+            return MineMaterial(time, streamIndex,
+                GetAlphaAt("star", time, streamIndex, isBreak, isEach, isMine: true));
+        return CreateTintMaterial(
+            GetColorAt("star", time, streamIndex, isBreak, isEach),
+            GetAlphaAt("star", time, streamIndex, isBreak, isEach));
+    }
+
+    /// Moving guide-star visuals used by Slide, Wifi, and TouchSlide.
+    private Material GetSlideStarMaterial(
+        bool isBreak, bool isEach, double time, bool isMine = false,
+        int streamIndex = 0)
+    {
+        if (isMine)
+            return MineMaterial(time, streamIndex,
+                GetAlphaAt(
+                    "slidestar", time, streamIndex, isBreak, isEach, isMine: true));
+        return CreateTintMaterial(
+            GetColorAt(
+                "slidestar", time, streamIndex, isBreak, isEach),
+            GetAlphaAt(
+                "slidestar", time, streamIndex, isBreak, isEach));
     }
 
     private int MirrorKeys(int key)

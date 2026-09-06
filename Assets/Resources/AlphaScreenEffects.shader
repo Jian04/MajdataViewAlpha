@@ -67,9 +67,9 @@ Shader "Hidden/AlphaScreenEffects"
             {
                 float2 uv = input.uv;
                 [branch]
-                if (_Zoom > 0.0001)
+                if (abs(_Zoom) > 0.0001)
                 {
-                    float zoomScale = 1.0 + _Zoom * 0.12;
+                    float zoomScale = max(0.1, 1.0 + _Zoom);
                     uv = (uv - 0.5) / zoomScale + 0.5;
                 }
 

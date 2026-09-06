@@ -32,6 +32,7 @@ public class ScreenRecorder : MonoBehaviour
     private float scheduledStopAt = -1f;
     private string recordFailureMessage;
     private bool shouldRestoreResolution;
+    private Process encoderProcess;
     private int restoreWidth;
     private int restoreHeight;
     private bool restoreFullscreen;
@@ -98,12 +99,20 @@ public class ScreenRecorder : MonoBehaviour
     {
         print("stop recording");
         var cancelledStartup = isStarting && !isRecording;
+        var wasRecording = isRecording;
         isStarting = false;
         isRecording = false;
         if (timeProvider != null)
             timeProvider.isStart = false;
         if (cancelledStartup)
-            CleanupRecordingState();
+        {
+            if (captureActive && encoderProcess != null)
+                TryTerminateEncoder(encoderProcess);
+            else
+                CleanupRecordingState();
+        }
+        else if (captureActive && !wasRecording && encoderProcess != null)
+            TryTerminateEncoder(encoderProcess);
     }
 
     /// <summary>Stops after the recording clock advances by seconds, used after the AP presentation.</summary>
@@ -194,6 +203,7 @@ public class ScreenRecorder : MonoBehaviour
                 CleanupRecordingState();
                 yield break;
             }
+            encoderProcess = p;
 
             Task waitForConnection = pipeServer.WaitForConnectionAsync();
             while (!waitForConnection.IsCompleted)
@@ -365,14 +375,29 @@ public class ScreenRecorder : MonoBehaviour
                 );
             }
 
-            while (!p.HasExited)
+            var finalizeDeadline = Time.realtimeSinceStartup + 15f;
+            while (!p.HasExited &&
+                   Time.realtimeSinceStartup < finalizeDeadline)
                 yield return null;
+            if (!p.HasExited)
+            {
+                recordFailureMessage =
+                    ViewLocalization.Text("FfmpegFinalizeTimeout");
+                AppendError(recordFailureMessage);
+                TryTerminateEncoder(p);
+                var terminateDeadline = Time.realtimeSinceStartup + 2f;
+                while (!p.HasExited &&
+                       Time.realtimeSinceStartup < terminateDeadline)
+                    yield return null;
+            }
 
             if (!string.IsNullOrEmpty(recordFailureMessage))
             {
                 AppendError(ViewLocalization.Text("RecordingAborted"));
             }
-            else if (File.Exists(maidata_path + "/" + outputName) && p.ExitCode == 0)
+            else if (p.HasExited &&
+                     File.Exists(maidata_path + "/" + outputName) &&
+                     p.ExitCode == 0)
             {
                 AppendStatus(ViewLocalization.Text(
                     "RecordingSuccess",
@@ -383,8 +408,12 @@ public class ScreenRecorder : MonoBehaviour
             }
             else
             {
-                AppendError(ViewLocalization.Text("FfmpegExited", p.ExitCode));
+                AppendError(ViewLocalization.Text(
+                    "FfmpegExited",
+                    p.HasExited ? p.ExitCode : -1));
             }
+            encoderProcess = null;
+            p.Dispose();
         }
 
         Destroy(texture);
@@ -478,6 +507,13 @@ public class ScreenRecorder : MonoBehaviour
         isStarting = false;
         isRecording = false;
         captureActive = false;
+        var process = encoderProcess;
+        encoderProcess = null;
+        if (process != null)
+        {
+            TryTerminateEncoder(process);
+            process.Dispose();
+        }
         if (timeProvider != null)
         {
             timeProvider.isStart = false;
@@ -499,5 +535,15 @@ public class ScreenRecorder : MonoBehaviour
         if (bgManager != null)
             bgManager.PauseVideo();
         MediaTimeline?.SetPlaybackActive(false);
+    }
+
+    private void OnDestroy()
+    {
+        var process = encoderProcess;
+        encoderProcess = null;
+        if (process == null)
+            return;
+        TryTerminateEncoder(process);
+        process.Dispose();
     }
 }
