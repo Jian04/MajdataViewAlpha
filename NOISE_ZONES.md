@@ -1,4 +1,4 @@
-﻿# X 噪域
+# X 噪域（BlockArea）
 
 ### X 噪域
 XD1[8:1] / XC[4:1] / XA1 / XE1[4:1]/XC[4:1]/XE2[4:1]/XE3[4:1]/XE4[4:1]
@@ -11,13 +11,13 @@ XD1[8:1] / XC[4:1] / XA1 / XE1[4:1]/XC[4:1]/XE2[4:1]/XE3[4:1]/XE4[4:1]
 
 ### 渲染来源与适配
 
-全局 SV/HS 默认包含噪域，但不改变 Slide 轨迹；可单独写 `<SV*noise=2>`、`<HS*noise=2>`。预警与同流速 Touch 使用相同的累计流速距离和出现阈值，SV=2 将提前量减半，HS=2 按 Touch 的速度公式缩短提前量；负 SV 和变向也按当前位置恢复。
+全局 SV/HS 默认包含噪域，但不改变 Slide 轨迹；可单独写 `<SV*blockarea=2>`、`<HS*blockarea=2>`。预警与同流速 Touch 使用相同的累计流速距离和出现阈值，SV=2 将提前量减半，HS=2 按 Touch 的速度公式缩短提前量；负 SV 和变向也按当前位置恢复。
 
-全局 COLOR/SIZE/ALPHA（包括 V 即时版本）默认不控制噪域，必须显式指定 `noise`：`<COLOR*noise=00BBFF>`、`<SIZE*noise=0.8>`、`<SIZE*noise=(0.8,1.2)>`、`<ALPHA*noise=0.5>`。`COLORV`、`SIZEV`、`ALPHAV` 同样支持 `noise`，即时修改已经出现的区域；`NULL` 恢复原有状态。颜色包括外框、区域与 Glitch 辉光，缩放围绕各触控区中心；透明度为零时仅隐藏画面，输入禁用仍按原指定触控区与时长执行。噪域先与谱面画面合成，再统一经过滤镜，因而能参与玻璃碎裂、模糊、像素化等效果。
+全局 COLOR/SIZE/ALPHA（包括 V 即时版本）默认不控制噪域，必须显式指定 `blockarea`：`<COLOR*blockarea=00BBFF>`、`<SIZE*blockarea=0.8>`、`<SIZE*blockarea=(0.8,1.2)>`、`<ALPHA*blockarea=0.5>`。`COLORV`、`SIZEV`、`ALPHAV` 同样支持 `blockarea`，即时修改已经出现的区域；`NULL` 恢复原有状态。颜色包括外框、区域与 Glitch 辉光，缩放围绕各触控区中心；透明度为零时仅隐藏画面，输入禁用仍按原指定触控区与时长执行。噪域先与谱面画面合成，再统一经过滤镜，因而能参与玻璃碎裂、模糊、像素化等效果。
 
 预警使用 Phira-Pro DisabledBlock 的暗暖红底色、低速噪声纹理与暖红外框，在音符下方使用加法混合；白光单独柔和叠加闪烁。预警和活动区沿用原实现的粒子采样比例，区域、边缘采用对应低分辨率的点采样，只有辉光平滑插值；自定义 COLOR 仍可以覆盖预警颜色。
 
-活动噪域参考 [Phira-Pro](https://github.com/Phira-Pro/Phira-Pro/tree/main/prpr/src/core) 的 BlockCompose、EdgeMask、GlowMask、ActiveBlock 运算及 pro.6-v4 噪声素材：先位移低分辨率活动遮罩，再生成外沿和辉光，最后采样当前谱面画面（包含音符），作 HSV 变色、折射和预乘透明度混合。经过区域的黄色 Hold 等音符可能变色，这与 `COLOR` 指令是否默认包含 noise 是两个独立行为。来源记录见 Assets/Resources/NoiseZone/SOURCE.md。
+活动噪域参考 [Phira-Pro](https://github.com/Phira-Pro/Phira-Pro/tree/main/prpr/src/core) 的 BlockCompose、EdgeMask、GlowMask、ActiveBlock 运算及 pro.6-v4 噪声素材：先位移低分辨率活动遮罩，再生成外沿和辉光，最后采样当前谱面画面（包含音符），作 HSV 变色、折射和预乘透明度混合。经过区域的黄色 Hold 等音符可能变色，这与 `COLOR` 指令是否默认包含 blockarea 是两个独立行为。来源记录见 Assets/Resources/NoiseZone/SOURCE.md。
 
 ViewAlpha 保留 33 个触控分区形状、速度决定的外框预警和输入禁用语义，不引入 Phigros 的矩形事件或触摸音频滤波。动画使用谱面时间，以便拖动、回放能复现；不声称与原游戏整帧逐像素一致。
 
