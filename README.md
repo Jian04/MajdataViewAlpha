@@ -2,59 +2,78 @@
 
 基于 [MajdataView / MajdataEdit 4.4.0](https://github.com/LingFeng-bbben/MajdataView) 扩展，感谢原作者 bbben（LingFeng-bbben）及原项目贡献者。本项目遵循 GPL-3.0。
 
-## v0.5.3 新增功能
+## v0.6.0 新增功能
 
-相对 v0.4.2，依据 [v0.5.3 Release](https://github.com/Jian04/MajdataViewAlpha/releases/tag/v0.5.3) 与当前源码整理。
+### 音符、噪域与判定线
 
-### 音符与轨迹
+- **噪域 `X`**：`XD1[8:1]`、`XC[4:1]` 等事件，按 Touch 流速、SV、HS 提前显示暖红预警，到指定时间生成带 Glitch、折射和辉光的区域，持续期间禁用对应判定区。相邻区域连成外框，后来区域从相邻块扩张，结束时向相邻块或自身中心缩回；短噪域保留可见的 Glitch。噪域不计物量、分数或占手，结束时间包含其持续时长。[完整说明](NOISE_ZONES.md)。
+- **噪域分类控制**：全局 `SV` / `HS` 默认包含噪域；全局 `COLOR` / `SIZE` / `ALPHA` 及 V 版本默认不包含。可显式写 `<COLOR*noise=00BBFF>`、`<SIZEV*noise=(0.8,1.2)>`、`<ALPHAV*noise=0.5>`、`<SV*noise=2>`。
+- **图片继承扩展**：`~[图片]` 支持 Tap、Hold、Touch、Star 和 Slide 对应皮肤，例如 `1h[8:1]~[hold.png]`；轨迹继承的载体只用于显示，不进入判定物量和分数。
+- **判定线**：设置中可视化切换默认、判定区、Magical 样式；`JUDGELINE` 使用 `0/False` 关闭、数字选择样式，取消独立 `JUDGEAREA`。`JUDGELINEEXPAND` 在原线外附加白线，旋转到 22.5° 接 D 区音符，支持过渡时间、方向和关闭，例如 `<JUDGELINEEXPAND*(True,8:1,CW)>`、`<JUDGELINEEXPAND*(False)>`。
+- **星星显示模式**：可选新版（先出现的在上，默认）或旧版（后出现的在上），分别管理星星头和运动星的重叠顺序。
 
-- **SlideCode**：通过 `A/B/C` 节点、`P/Q` 轨道和末尾 `K` 终点组合连续轨迹，支持同一指令连续填写多个参数，例如 `5Q9A1P98CQ49K5[8:1]`。
-- **大写 `P/Q` 星星**：可选择绕行的圆圈，例如 `1P85[8:1]`、`2Q96[8:1]`；`0` 表示中央圈，`1–8` 表示侧边圈，`9` 表示最外圈。
-- **Touch Slide 路径扩展**：在已有直线、圆弧基础上增加 `p/q`、`pp/qq`、大写 `P/Q` 及连续同向 `<<` / `>>` 多圈螺旋路径，支持普通键与 Touch 区之间的连接。例如 `E1pp5d[8:1]`、`A1<<E5[8:1]`、`1P3E5Q0A5[8:1]`。
-- **继承语法**：支持编写任意半径的 Touch，以及沿星星轨道运动的 Tap。
-- **Mine 设置**：可单独调整 Mine 音量，并选择是否显示判定特效。
+### 滤镜与显示指令
 
-### Alpha 命令
+- **新增滤镜**：`SHATTER` 厚玻璃碎裂、`RADIALBLUR` 径向模糊、`RIPPLE` 冲击波、`PIXELATE` 像素化、`LENSDISTORT` 镜头畸变、`SPLIT` 分屏错位、`KALEIDOSCOPE` 万花筒、`BLOOM` 泛光、`INVERT` 反色、`POSTERIZE` 色阶压缩。支持 `True` 持续开启、`False` 关闭、`Instant` 临时效果及过渡，例如 `<SHATTER*(Instant,0.7,8:1)>`。[参数与示例](FILTERS.md)。
+- **万花筒角度**：第 2 参数为旋转角度，可为负数，过渡时旋转到目标角度；0° 仍开启，例如 `<KALEIDOSCOPE*(True,45,8:1)>`。
+- **黑角渐变**：`VIGNETTE` 增加圆周渐变开关，默认开启、可缺省，避免硬截断黑色。
+- **恢复设置默认值**：内外亮度、中央显示、判定文字、判定统计和判定线支持 `Default`，如 `<INNERBRIGHTNESS*(Default,0.5)>`、`<COMBODISPLAY*(Default)>`。
+- **语法提示**：统一函数头、参数解释与示例；根据光标位置高亮参数，同一参数可用 Tab 切换常用开关、时长等值；帮助包含 Simai 和 Alpha 两个章节。
 
-- **`ALPHAV` / `SIZEV` / `COLORV`**：即时修改已加载音符的透明度、尺寸和颜色，支持按音符类型设置，也可分别控制星形头 `star`、运动星 `slidestar` 和轨道 `slide`。例如 `<ALPHAV*slidestar=0.5>`、`<SIZEV*tap=1.5>`、`<COLORV*slidestar=FF0000>`。
-- **`FAKE`**：让当前音符流后续音符仅用于显示，不计物量、不判定，也不产生击打音效、判定文字或特效。支持全局和分类设置，例如 `<FAKE*TRUE>`、`<FAKE*tap=TRUE,slide=TRUE>`，用 `<FAKE*FALSE>` 关闭。
-- **`DESTROY`**：修改 Tap、Star、Each、Hold 的视觉终点半径，不改变判定时刻。支持分类设置，例如 `<DESTROY*tap=3,hold=4>`，`<DESTROY*NULL>` 恢复默认半径 `4.8`。
-- **`TEXT` 扩展选项**：可设置持续时间、位置、字号、字体、字幕索引、显示样式和过渡时间，支持渐入 `Fade` 与逐字显示 `Typewriter`。
+### 编辑器与桌宠
 
-### 编辑器
+- **工具侧边栏**：录制、语法帮助、Edit / View 设置、多窗口、联机和在线谱面集中为可切换页面；支持调整宽度、铺满 Edit，以及拖出为独立窗口。
+- **设置与外观**：Edit 设置和 View 设置分开，设置修改自动保存，快捷键可修改和重置；背景、音符和判定线可视化选择。新增 Magical、X-Verse-X、MATE 背景及入退场动画，Magical 为默认主题。
+- **编辑工具**：分拍格式刷与时长刷，支持指定 Hold / Slide 等时长、最大 / 最小时长；选区一键保护套、绝赞、镜像、全谱整理与撤销；手按 BPM 工具增加自动检测。
+- **波形与诊断**：噪域显示为红色标记，音符位于其上；拖动预览、文本跟随独立开关。语法错误、静态无理、DJAuto 动态无理分别计数，可点击定位详情，检查包含独立音符流。
+- **桌宠**：默认迪拉熊，可切换 Uni；启动与工具栏吸附同步播放跳入 / 跳出动画，支持拖入按钮和拖出。写谱、语法错误、预览动作各自调度，缺失帧回退，动作播完后有冷却。
 
-- **多行音符流 `@* … *@`**：在已有可重叠音符流基础上增加跨行写法，方便分别管理音符与特效；可将音符流按时间合并回主谱。
-- **实时预览**：新增实时预览功能，便于边编辑边查看谱面效果。
+### 谱面列表、联机与多窗口
+
+- **谱面列表**：按难度分别保存，可导入当前谱面或递归导入歌曲文件夹，拖动排序；支持上一首 / 下一首、播放 / 暂停、终止、进度拖动、顺序 / 随机 / 单曲循环及批量录制。
+- **Majnet 与检查更新**：侧栏搜索关键词、标签，勾选批量下载并加入谱面列表，可不下载 PV；下载有进度，默认放入 `Downloads`。菜单可检查 GitHub 新版本。
+- **联机写谱**：公网房间大厅、房间搜索、房主昵称和可选密码；共享谱面文本修改与光标，本地保持未保存状态，保存和播放独立处理。复用已有歌曲素材，按需同步音频、封面和 PV。
+- **多 Edit / View**：实例分配独立端口与编号，集中控制播放 / 暂停和进度。同歌曲不同难度只播放一份歌曲音频；不同歌曲分别播放。支持横向、纵向、网格和自定窗口布局、合并录制 `out_multi.mp4` 与依次导出。
+
+### 剪辑、录制与发行
+
+- **音视频剪辑**：双音频 / 视频轨叠加，选中片段可编辑音量、渐入渐出、亮度和透明度，修改自动应用；移动、裁切、空轨区间和媒体偏移参与预览与导出。
+- **录制输出**：统一录制参数、固定帧导出、结束自动打开输出目录。视频等导出归入 `outputs`，谱面信息图归入 `figure`；普通录制为 `out.mp4`，同歌多难度批量录制使用 `out_难度.mp4`。
+- **轻量发行包**：暂时移除自动采音和配置库入口，不附带模型及离线谱面库；Edit / View 共用 FFmpeg，Launcher 压缩单文件发布。
 
 ## 相对原版新增功能
 
-以下为相对 MajdataView / MajdataEdit 4.4.0 的累计新增功能，包含 v0.5.3。
+以下为相对 MajdataView / MajdataEdit 4.4.0 的累计新增功能，包含 v0.5.3 与 v0.6.0。
 
 ### 谱面语法与音符控制
 
 - **动态音符属性**：`SV`、`HS` 控制速度，`SPAWN` / `SPAWNMODE` 控制出生位置与回退显示行为，`DESTROY` 控制视觉终点，`BOUNCE` 控制往返运动。
 - **音符外观**：`COLOR` / `COLORV`、`SIZE` / `SIZEV`、`ALPHA` / `ALPHAV` 控制颜色、尺寸与透明度；支持分类设置，并分别控制星形头、运动星和轨道。
-- **扩展音符**：D 区 Tap / Hold / Slide、非 C 区 TouchHold、Break Touch / TouchHold、Mine、`FAKE` 视觉音符，以及继承语法。
-- **扩展轨迹**：`rp/rq`、可选绕圈的大写 `P/Q`、Touch Slide、Touch Slide 多圈螺旋与 `p/q`、`pp/qq` 路径，以及 SlideCode。
-- **独立音符流**：`@{分拍}…` 与 `@* … *@`，可将不同音符或特效分流编写。
+- **扩展音符**：D 区 Tap / Hold / Slide、非 C 区 TouchHold、Break Touch / TouchHold、Mine、`FAKE` 视觉音符，以及继承语法。Mine 音量可独立设置，并可选择是否显示判定特效。
+- **扩展轨迹**：`rp/rq`、可选绕圈的大写 `P/Q`（0 中央圈、1–8 侧边圈、9 最外圈）、Touch Slide 的 `p/q`、`pp/qq`、`P/Q` 与多圈 `<<` / `>>` 螺旋，以及 SlideCode 节点 / 轨道组合，如 `5Q9A1P98CQ49K5[8:1]`。
+- **独立音符流**：`@{分拍}…` 与跨行 `@* … *@`，可将不同音符或特效分流编写，并按时间合并回主谱。
 - **编辑标记**：块注释 `|* … *|`、波形拍号 `@分子/分母`、编辑区分段背景色 `@RRGGBB` / `@NULL`。
 
 ### 画面、字幕与媒体
 
-- **动态显示控制**：判定线颜色、判定线与判定区显隐、判定文字、左右信息栏、中央数据显示和内外圈亮度。
-- **字幕**：通过 `TEXT` 添加可定位、可设置字体与动画样式的字幕。
-- **画面特效**：Gaussian、Neon、Trail、Fade、Flash、Brightness、Saturation、Contrast、Rainbow、Vignette、Zoom、Glitch、TVNoise、Hue、Tint、Move、Rotate、Shake。
+- **动态显示控制**：判定线颜色、判定线样式与显隐、判定文字、左右信息栏、中央数据显示和内外圈亮度。
+- **字幕**：通过 `TEXT` 添加可定位、可设置字体、字号、持续时间、索引与动画过渡的多条字幕，支持 `Fade` / `Typewriter`，可在编辑预览中实时查看。
+- **噪域**：`XD1[8:1]` 等区域事件，红框预警后生成红色 Glitch 区域，临时屏蔽对应分区；相邻噪域合并外框，不计物量、分数和占手。详见 [噪域语法](NOISE_ZONES.md)。
+- **画面特效**：Gaussian、Neon、Trail、Fade、Flash、Brightness、Saturation、Contrast、Rainbow、Vignette、Zoom、Glitch、TVNoise、Hue、Tint、Move、Rotate、Shake，以及玻璃碎裂、径向模糊、冲击波、像素化、镜头畸变、分屏错位、万花筒、泛光、反色、色阶压缩；[新增滤镜语法](FILTERS.md)。黑角渐变默认开启，参数可省略。
 - **谱面媒体命令**：`AUDIO` 播放附加音频；`PVOVERLAY` 用图片或视频覆盖当前 PV，并支持渐变切换。
 - **展示样式**：新版 Master / Re:Master 歌曲信息卡片、DX 满分与等级显示、可选开头背景和 All Perfect 结尾。
 
 ### 制谱辅助与编辑器
 
-- **界面与外观**：简体中文、英语、日语界面；深色、浅色、CiRCLE、CiRCLE PLUS 主题；编辑器字体、字号与播放器字体设置；`dx`、`sd` 及自定义皮肤目录。
+- **界面与外观**：简体中文、英语、日语界面；深色、浅色、CiRCLE、CiRCLE PLUS、Magical、X-Verse-X、MATE 主题；编辑器字体、字号与播放器字体设置；`dx`、`sd` 及自定义皮肤目录。
 - **语法辅助**：Alpha 命令补全、参数提示、分类语法帮助、语法错误标记和导出无特效谱面。
 - **谱面整理**：8 / 12 / 16 / 24 / 32 / 最高分拍格式刷、全谱整理、选区镜像和小节模板。
-- **配置与预览**：配置库 / 节奏型检索、配置即时预览、星星形状预览和实时预览。
+- **预览**：星星形状预览和实时预览；可通过「拖动预览」切换拖动时预览或终止播放。
+- **星星显示模式**：编辑器设置可选择新版（默认，先出现的星星在上）或旧版（后出现的星星在上），同时更新星星头和运动星的重叠显示，设置自动保存。
 - **可视化插入**：在 View 中点击或拖动生成 Tap、Touch 与 Slide。
-- **分析辅助**：音符密度图、自动踩音，以及集成 MaiMuriDX 无理配置检查。
+- **分析辅助**：音符密度图、语法错误、静态无理和 DJAuto 动态无理；点击计数在侧栏查看位置。保留集成的 MaiMuriDX 检查。
+- **在线谱面**：Majnet 侧栏支持关键词、标签搜索和勾选批量下载；菜单栏可检查 GitHub 发行版本。
+- **轻量发行包**：暂时移除自动采音与配置库入口，不包含采音模型、运行环境和离线谱面库；Edit 与 View 共用 FFmpeg，Launcher 使用压缩单文件发布。
 - **波形信息**：显示音符、BPM、Clock Count、拍号、歌曲信息卡片、All Perfect 和录制区段。
 
 ### 媒体编辑与录制
@@ -66,7 +85,13 @@
 ### 桌宠启动器
 
 - 自动查找并依次启动 View 与 Edit。
-- 显示启动、播放、制谱、录制和错误状态，支持透明动画与状态气泡。
+- 初始、写谱、语法错误和预览四种状态，完整动作与冷却调度，支持状态气泡。
 - 可跟随 Edit 窗口或固定在桌面位置。
 
-完整命令签名与示例见 Edit 的「工具 → Alpha 语法帮助」。
+完整命令签名与示例见 Edit 的「工具 → 语法帮助 → Alpha」。
+
+## Contribute
+
+- [MajdataView / MajdataEdit](https://github.com/LingFeng-bbben/MajdataView)：原项目与制谱基础，感谢 bbben 和原项目贡献者。
+- [Phira-Pro](https://github.com/Phira-Pro/Phira-Pro)：噪域的 BlockCompose、EdgeMask、GlowMask、ActiveBlock / DisabledBlock 渲染与参考素材；保留 GPL-3.0 来源说明。素材及代码出处见 [来源记录](Assets/Resources/NoiseZone/SOURCE.md)。
+- [MajdataPlay](https://github.com/TeamMajdata/MajdataPlay)：Alpha 播放器的判定与输入基线；MajdataPlayAlpha 兼容项目与 View 的语法、显示效果同步维护。
