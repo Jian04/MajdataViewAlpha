@@ -810,7 +810,12 @@ public class MediaTimelineController : MonoBehaviour
         }
         var activeAlpha = parentVisibility * overlayBlend *
                           (replacementActive ? replacementProgress : 1f);
-        var color = new Color(1f, 1f, 1f, activeAlpha);
+        var clipOpacity = activeOverlay != null && activeOverlay.timelineClip
+            ? Mathf.Clamp01((float)activeOverlay.opacity) : 1f;
+        var clipBrightness = activeOverlay != null && activeOverlay.timelineClip
+            ? Mathf.Max(0f, 1f + (float)activeOverlay.brightness) : 1f;
+        var color = new Color(clipBrightness, clipBrightness, clipBrightness,
+            activeAlpha * clipOpacity);
         if (imageRenderer != null && imageRenderer.enabled)
             imageRenderer.color = color;
         if (activeVideo != null)

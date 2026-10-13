@@ -28,7 +28,7 @@ public static class LocalHttp
 
 public sealed class MajdataPetClient : MonoBehaviour
 {
-    private const string Endpoint = "http://127.0.0.1:8015/pet";
+    private static string Endpoint => MajdataCore.AlphaSession.PetEndpoint;
     private static MajdataPetClient instance;
     private static bool initialNotificationSent;
 
@@ -39,7 +39,8 @@ public sealed class MajdataPetClient : MonoBehaviour
         if (initialNotificationSent)
             return;
         initialNotificationSent = true;
-        Trigger("jump", "View is awake");
+        // View startup is not playback. The pet's startup jump belongs to the
+        // launcher and runs once while Edit and View become ready.
     }
 
     public static void Trigger(string action, string message = null)

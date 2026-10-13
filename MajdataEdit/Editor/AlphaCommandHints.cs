@@ -72,8 +72,15 @@ internal static class AlphaCommandHints
                 described.TryGetValue(descriptor.name, out var localized)
                     ? localized
                     : new AlphaCommand(
-                        descriptor.name, BuildSignature(descriptor), string.Empty));
-        return commands.ToArray();
+                        descriptor.name, GetStateSignature(descriptor.name) ?? BuildSignature(descriptor),
+                        AlphaExtraFilters.Find(descriptor.name) is { } filter
+                            ? Localized(filter.Chinese, filter.English, filter.Japanese) : string.Empty));
+        return commands.Select(command => Describe(command.Name)?.SupportsDefaultReset == true
+            ? command with { Description = command.Description + Localized(
+                " Default 恢复当前设置配置，可附加过渡时间。",
+                " Default restores the current configured setting, with an optional transition.",
+                " Defaultは現在の設定値に戻します。切替時間は省略可能です。") }
+            : command).ToArray();
     }
 
     private static string BuildSignature(AlphaCommandDescriptor descriptor)
@@ -97,29 +104,29 @@ internal static class AlphaCommandHints
         if (CurrentLanguage == "en")
             return new AlphaCommand[]
             {
-                new("SV", "<SV*multiplier> / <SV*tap=multiplier,touch=multiplier,slide=multiplier>", "True scroll-speed multiplier. Global SV affects ring notes, Touch, and TouchHold; slide= shapes Slide-path motion within the authored duration. Positive net motion is normalized to finish on time; non-positive motion is cut off at the authored end."),
-                new("HS", "<HS*multiplier> / <HS*tap=multiplier,slide=appearance multiplier>", "Traditional fall-speed multiplier for note heads. HS*slide multiplies Slide appearance speed (for example, 999 is nearly instant) without changing path duration; global HS does not affect Slides. Path motion uses SV*slide."),
-                new("SPAWN", "<SPAWN*radius> / <SPAWN*tap=radius,hold=radius>", "Ring-note visual spawn radius from -4.8 to 4.8; the default is 1.225. 0 is center and -4.8 is the opposite judge line. Supports NULL reset."),
+                new("SV", "<SV*multiplier> / <SV*tap=multiplier,touch=multiplier,slide=multiplier>", "True scroll-speed multiplier. Global SV includes ring notes, Touch, TouchHold and blockarea, but excludes Slide paths; blockarea= controls warning timing; slide= shapes Slide-path motion within the authored duration. Positive net motion is normalized to finish on time; non-positive motion is cut off at the authored end."),
+                new("HS", "<HS*multiplier> / <HS*tap=multiplier,slide=appearance multiplier>", "Traditional fall-speed multiplier for note heads. Global HS includes blockarea warnings; blockarea= overrides them. HS*slide multiplies Slide appearance speed (for example, 999 is nearly instant) without changing path duration; global HS does not affect Slides. Path motion uses SV*slide."),
+                new("SPAWN", "<SPAWN*radius> / <SPAWN*tap=radius,hold=radius>", "Ring-note visual spawn radius accepts any finite number; default 1.225. 0 is center and -4.8 is the opposite judge line. Supports NULL reset."),
                 new("SPAWNMODE", "<SPAWNMODE*Rewind> / <SPAWNMODE*tap=Once,hold=Rewind>", "Rewind hides or shrinks a ring note again when SV crosses back before SPAWN. Once keeps it active after its first SPAWN crossing. Rewind is the default; NULL resets it."),
                 new("DESTROY", "<DESTROY*radius> / <DESTROY*tap=radius,hold=radius> / <DESTROY*NULL>", "Changes the visual endpoint for Tap, Star, Each, and Hold without changing judgement timing. The authored radius is preserved; NULL restores 4.8."),
                 new("BOUNCE", "<BOUNCE*duration> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>", "Makes Tap, Star, Each, and Hold travel from DESTROY to SPAWN and back. Rewind hides when SV retreats before takeoff; Once stays active after the first crossing. SV=0 pauses motion."),
                 new("FAKE", "<FAKE*TRUE> / <FAKE*FALSE> / <FAKE*tap=TRUE,slide=TRUE>", "Makes following notes visual-only in the current note stream: no count, judgement, effects, text, or hit sound."),
-                new("COLOR", "<COLOR*RRGGBB>", "Colors notes. star controls star-shaped notes and Slide heads; slidestar controls moving guide stars; slide controls paths."),
-                new("COLORV", "<COLORV*RRGGBB> / <COLORV*slidestar=FF0000>", "Instantly recolors loaded notes. Typed targets include regular note types plus star, slidestar, and slide."),
-                new("SIZE", "<SIZE*scale> / <SIZE*(scaleX,scaleY)> / <SIZE*type=(scaleX,scaleY)>", "Sets uniform or local X/Y scale. Typed targets include tap, hold, touch, star, slidestar, and slide; global scale excludes paths."),
+                new("COLOR", "<COLOR*RRGGBB|NULL>", "Colors notes. Global color excludes mine and blockarea; only mine= colors mines, and mine=NULL restores gray; use blockarea= explicitly. star controls star-shaped notes and Slide heads; slidestar controls moving guide stars; slide controls paths."),
+                new("COLORV", "<COLORV*RRGGBB|NULL> / <COLORV*slidestar=FF0000>", "Instantly recolors loaded notes. Global color excludes mine and blockarea; only mine= colors mines, and mine=NULL restores gray; use blockarea= explicitly. Typed targets include regular note types plus star, slidestar, slide, and blockarea."),
+                new("SIZE", "<SIZE*scale> / <SIZE*(scaleX,scaleY)> / <SIZE*type=(scaleX,scaleY)>", "Sets uniform or local X/Y scale. Typed targets include tap, hold, touch, star, slidestar, slide, and blockarea; global scale excludes paths and blockarea; use blockarea= explicitly."),
                 new("SIZEV", "<SIZEV*scale> / <SIZEV*(scaleX,scaleY)> / <SIZEV*type=(scaleX,scaleY)>", "Instantly resizes loaded notes with uniform or local X/Y scale and typed targets."),
                 new("ALPHA", "<ALPHA*opacity>", "Opacity from 0 to 1. star controls star-shaped notes and Slide heads; slidestar controls moving guide stars; slide controls paths."),
                 new("ALPHAV", "<ALPHAV*opacity> / <ALPHAV*slidestar=0.5>", "Instantly changes loaded-note opacity with separate star, slidestar, and slide targets."),
                 new("JLINE", "<JLINE*RRGGBB> / <JLINE*(RRGGBB[,duration])>", "Transitions the judge-line color during playback. NULL restores the skin color."),
                 new("TEXT", "<TEXT*(\"content\"[,duration][,x][,y][,size][,font][,index][,style][,transition])>", "Caption text must be quoted. Optional positional slots may be skipped with consecutive commas. index is any non-negative integer; Fade uses transition as fade-in time, while Typewriter uses it as typing time."),
-                new("SHOWJUDGELINE", $"<SHOWJUDGELINE*({BooleanChoices}[,duration])>", "Shows or hides the judge line, optionally with a transition."),
-                new("SHOWJUDGEAREA", $"<SHOWJUDGEAREA*({BooleanChoices}[,duration])>", "Shows or hides judgment areas, optionally with a transition."),
-                new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}[,duration])>", "Shows or hides judgment text such as Critical Perfect."),
-                new("SHOWJUDGEINFO", $"<SHOWJUDGEINFO*({BooleanChoices}[,duration])>", "Shows or hides the left-side judgment statistics."),
-                new("SHOWCOMBOINFO", $"<SHOWCOMBOINFO*({BooleanChoices}[,duration])>", "Shows or hides the right-side combo and achievement display."),
-                new("COMBODISPLAY", "<COMBODISPLAY*(mode[,duration])>", "Changes the center display: NONE, COMBO, SCORE, ACC, DXACC, DXSCORE, and others."),
-                new("OUTERBRIGHTNESS", "<OUTERBRIGHTNESS*(darkness[,duration])>", "Outer-ring darkness: 0 is fully bright and 1 is darkest."),
-                new("INNERBRIGHTNESS", "<INNERBRIGHTNESS*(darkness[,duration])>", "Inner-area darkness: 0 is fully bright and 1 is darkest."),
+                new("JUDGELINEEXPAND", "<JUDGELINEEXPAND*(True[,duration,1|-1])> / <JUDGELINEEXPAND*(False)>", Localized("True 附加白线并旋转22.5°，False 移除附加白线；默认时间0秒、方向1/CW，-1/CCW逆时针。", "True adds a white ring rotated 22.5 degrees; False removes it. Default duration 0, direction CW/1.", "Trueで白い判定線を追加して22.5度回転、Falseで追加線のみ非表示。時間0秒、方向CW/1が既定値。")),
+                new("JUDGELINE", "<JUDGELINE*(0|1|2|3|4|Default[,duration])>", Localized("判定线样式：1 经典、2 经典完整、3 MAGiCAL；0/False 关闭。4 及以后预留扩展。", "1 classic, 2 classic full, 3 MAGiCAL; 0/False off; later IDs reserved.", "1 クラシック、2 全体、3 MAGiCAL、0/False 非表示。以降は拡張用。")),
+                new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}|Default[,duration])>", "Shows or hides judgment text such as Critical Perfect."),
+                new("SHOWJUDGEINFO", $"<SHOWJUDGEINFO*({BooleanChoices}|Default[,duration])>", "Shows or hides the left-side judgment statistics."),
+                new("SHOWCOMBOINFO", $"<SHOWCOMBOINFO*({BooleanChoices}|Default[,duration])>", "Shows or hides the right-side combo and achievement display."),
+                new("COMBODISPLAY", "<COMBODISPLAY*(mode|Default[,duration])>", "Changes the center display: NONE, COMBO, SCORE, ACC, DXACC, DXSCORE, and others."),
+                new("OUTERBRIGHTNESS", "<OUTERBRIGHTNESS*(darkness|Default[,duration])>", "Outer-ring darkness: 0 is fully bright and 1 is darkest."),
+                new("INNERBRIGHTNESS", "<INNERBRIGHTNESS*(darkness|Default[,duration])>", "Inner-area darkness: 0 is fully bright and 1 is darkest."),
                 new("GAUSSIAN", $"<GAUSSIAN*({BooleanTrue},strength[,duration])>", "Gaussian blur. Strength is required."),
                 new("NEON", $"<NEON*({BooleanTrue},strength[,duration])>", "Neon glow and RGB separation."),
                 new("TRAIL", $"<TRAIL*({BooleanTrue},strength[,duration])>", "Previous-frame trail."),
@@ -129,7 +136,7 @@ internal static class AlphaCommandHints
                 new("SATURATION", $"<SATURATION*({BooleanTrue},strength[,duration])>", "Adjusts frame saturation."),
                 new("CONTRAST", $"<CONTRAST*({BooleanTrue},strength[,duration])>", "Adjusts frame contrast."),
                 new("RAINBOW", $"<RAINBOW*({BooleanTrue},strength[,duration])>", "Cycles the frame hue."),
-                new("VIGNETTE", $"<VIGNETTE*({BooleanTrue},strength[,duration])>", "Circular vignette effect."),
+                new("VIGNETTE", $"<VIGNETTE*({BooleanTrue},strength[,duration])>", "Circular vignette; gradient defaults to True when omitted or empty. False uses a hard edge."),
                 new("ZOOM", $"<ZOOM*({BooleanTrue},scale[,duration])>", "Scales the frame directly: 0.6 = 60%, 1 = unchanged, and 1.5 = 150%. Valid range: 0.1 to 8."),
                 new("GLITCH", $"<GLITCH*({BooleanTrue},strength[,duration])>", "Glitch displacement effect."),
                 new("TVNOISE", $"<TVNOISE*({BooleanTrue},strength[,duration])>", "TV scan-line noise."),
@@ -145,29 +152,29 @@ internal static class AlphaCommandHints
         if (CurrentLanguage == "ja")
             return new AlphaCommand[]
             {
-                new("SV", "<SV*倍率> / <SV*tap=倍率,touch=倍率,slide=倍率>", "実スクロール速度の倍率。全体 SV はリングノーツと Touch / TouchHold に適用され、slide= は譜面で指定された時間内の軌道を制御します。正の総移動量は終了時刻に合わせて正規化し、0 以下は指定終了時刻で打ち切ります。"),
-                new("HS", "<HS*倍率> / <HS*tap=倍率,slide=表示倍率>", "通常ノーツ頭の落下倍率です。HS*slide は Slide の表示速度を倍率化し（例: 999 はほぼ瞬時）、軌道時間は変えません。全体 HS は Slide に影響せず、軌道速度は SV*slide です。"),
-                new("SPAWN", "<SPAWN*半径> / <SPAWN*tap=半径,hold=半径>", "リングノーツの出現半径（-4.8～4.8、既定値 1.225）。0 は中央、-4.8 は反対側の判定ラインです。NULL でリセットします。"),
+                new("SV", "<SV*倍率|NULL> / <SV*tap=倍率,touch=倍率,slide=倍率>", "実スクロール速度の倍率。全体 SV はリングノーツと Touch / TouchHold に適用され、slide= は譜面で指定された時間内の軌道を制御します。正の総移動量は終了時刻に合わせて正規化し、0 以下は指定終了時刻で打ち切ります。"),
+                new("HS", "<HS*倍率|NULL> / <HS*tap=倍率,slide=表示倍率>", "通常ノーツ頭の落下倍率です。HS*slide は Slide の表示速度を倍率化し（例: 999 はほぼ瞬時）、軌道時間は変えません。全体 HS は Slide に影響せず、軌道速度は SV*slide です。"),
+                new("SPAWN", "<SPAWN*半径> / <SPAWN*tap=半径,hold=半径>", "リングノーツの出現半径（任意の有限数値、既定値 1.225）。0 は中央、-4.8 は反対側の判定ラインです。NULL でリセットします。"),
                 new("SPAWNMODE", "<SPAWNMODE*Rewind> / <SPAWNMODE*tap=Once,hold=Rewind>", "Rewind は SV が SPAWN より前へ戻ると再び縮小・非表示にします。Once は最初に SPAWN を越えた後も表示を維持します。既定値は Rewind、NULL でリセットします。"),
                 new("DESTROY", "<DESTROY*半径> / <DESTROY*tap=半径,hold=半径> / <DESTROY*NULL>", "Tap、Star、Each、Hold の表示上の終点だけを変更し、判定時刻は変えません。指定した半径をそのまま使用し、NULL で 4.8 に戻します。"),
                 new("BOUNCE", "<BOUNCE*時間> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>", "Tap、Star、Each、Hold を DESTROY から SPAWN へ往復させます。Rewind は SV が起点より前へ戻ると非表示、Once は最初の通過後も表示を維持します。SV=0 で停止します。"),
                 new("FAKE", "<FAKE*TRUE> / <FAKE*FALSE> / <FAKE*tap=TRUE,slide=TRUE>", "同じノーツストリームの後続ノーツを表示専用にします。物量、判定、演出、判定文字、効果音は発生しません。"),
-                new("COLOR", "<COLOR*RRGGBB>", "star は星型ノーツと Slide ヘッド、slidestar は移動星、slide は軌道を着色します。"),
-                new("COLORV", "<COLORV*RRGGBB> / <COLORV*slidestar=FF0000>", "読み込み済みノーツを即時着色します。通常の種別に加え、star、slidestar、slide を個別指定できます。"),
+                new("COLOR", "<COLOR*RRGGBB|NULL> / <COLOR*blockarea=00BBFF>", "全体の値はmineとblockareaに適用せず、mine=で地雷を着色し、mine=NULLで灰色に戻します。blockarea=で個別設定します。star は星型ノーツと Slide ヘッド、slidestar は移動星、slide は軌道を着色します。"),
+                new("COLORV", "<COLORV*RRGGBB|NULL> / <COLORV*slidestar=FF0000>", "読み込み済みノーツを即時着色します。地雷はmine=のみで着色し、mine=NULLで灰色に戻します。通常の種別に加え、star、slidestar、slide を個別指定できます。"),
                 new("SIZE", "<SIZE*倍率> / <SIZE*(X倍率,Y倍率)> / <SIZE*種別=(X倍率,Y倍率)>", "等倍またはローカル X/Y を指定できます。種別には tap、hold、touch、star、slidestar、slide などを指定できます。"),
                 new("SIZEV", "<SIZEV*倍率> / <SIZEV*(X倍率,Y倍率)> / <SIZEV*種別=(X倍率,Y倍率)>", "読み込み済みノーツを等倍またはローカル X/Y で即時拡縮します。"),
-                new("ALPHA", "<ALPHA*透明度>", "透明度は 0～1。star は星型ノーツとヘッド、slidestar は移動星、slide は軌道に適用されます。"),
-                new("ALPHAV", "<ALPHAV*透明度> / <ALPHAV*slidestar=0.5>", "star、slidestar、slide の透明度を個別に即時変更します。"),
+                new("ALPHA", "<ALPHA*透明度|NULL> / <ALPHA*blockarea=0.5>", "全体の値はblockareaに適用せず、blockarea=で個別設定します。透明度は 0～1。star は星型ノーツとヘッド、slidestar は移動星、slide は軌道に適用されます。"),
+                new("ALPHAV", "<ALPHAV*透明度|NULL> / <ALPHAV*slidestar=0.5>", "star、slidestar、slide の透明度を個別に即時変更します。"),
                 new("JLINE", "<JLINE*RRGGBB> / <JLINE*(RRGGBB[,時間])>", "再生中の判定ライン色を切り替えます。NULL でスキン色に戻します。"),
                 new("TEXT", "<TEXT*(\"内容\"[,時間][,x][,y][,サイズ][,フォント][,index][,style][,transition])>", "字幕は二重引用符で囲みます。省略する位置引数は連続したカンマで飛ばせます。index は 0 以上の整数、Fade の transition はフェード時間、Typewriter では文字送り時間です。"),
-                new("SHOWJUDGELINE", $"<SHOWJUDGELINE*({BooleanChoices}[,時間])>", "判定ラインを表示または非表示にします。"),
-                new("SHOWJUDGEAREA", $"<SHOWJUDGEAREA*({BooleanChoices}[,時間])>", "判定エリアを表示または非表示にします。"),
-                new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}[,時間])>", "Critical Perfect などの判定文字を表示または非表示にします。"),
-                new("SHOWJUDGEINFO", $"<SHOWJUDGEINFO*({BooleanChoices}[,時間])>", "左側の判定集計を表示または非表示にします。"),
-                new("SHOWCOMBOINFO", $"<SHOWCOMBOINFO*({BooleanChoices}[,時間])>", "右側のコンボと達成率を表示または非表示にします。"),
-                new("COMBODISPLAY", "<COMBODISPLAY*(モード[,時間])>", "中央表示を切り替えます：NONE、COMBO、SCORE、ACC、DXACC、DXSCORE など。"),
-                new("OUTERBRIGHTNESS", "<OUTERBRIGHTNESS*(暗さ[,時間])>", "外周の遮暗量。0 は全亮、1 は最も暗い状態です。"),
-                new("INNERBRIGHTNESS", "<INNERBRIGHTNESS*(暗さ[,時間])>", "内側の遮暗量。0 は全亮、1 は最も暗い状態です。"),
+                new("JUDGELINEEXPAND", "<JUDGELINEEXPAND*(True[,过渡时间][,方向])> / <JUDGELINEEXPAND*(False)>", Localized("True 附加白线并旋转22.5°，False 移除附加白线；默认时间0秒、方向1/CW，-1/CCW逆时针。", "True adds a white ring rotated 22.5 degrees; False removes it. Default duration 0, direction CW/1.", "Trueで白い判定線を追加して22.5度回転、Falseで追加線のみ非表示。時間0秒、方向CW/1が既定値。")),
+                new("JUDGELINE", "<JUDGELINE*(0|1|2|3|4|Default[,过渡时间])>", Localized("判定线样式：1 经典、2 经典完整、3 MAGiCAL；0/False 关闭。4 及以后预留扩展。", "1 classic, 2 classic full, 3 MAGiCAL; 0/False off; later IDs reserved.", "1 クラシック、2 全体、3 MAGiCAL、0/False 非表示。以降は拡張用。")),
+                new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}|Default[,時間])>", "Critical Perfect などの判定文字を表示または非表示にします。"),
+                new("SHOWJUDGEINFO", $"<SHOWJUDGEINFO*({BooleanChoices}|Default[,時間])>", "左側の判定集計を表示または非表示にします。"),
+                new("SHOWCOMBOINFO", $"<SHOWCOMBOINFO*({BooleanChoices}|Default[,時間])>", "右側のコンボと達成率を表示または非表示にします。"),
+                new("COMBODISPLAY", "<COMBODISPLAY*(モード|Default[,時間])>", "中央表示を切り替えます：NONE、COMBO、SCORE、ACC、DXACC、DXSCORE など。"),
+                new("OUTERBRIGHTNESS", "<OUTERBRIGHTNESS*(暗さ|Default[,時間])>", "外周の遮暗量。0 は全亮、1 は最も暗い状態です。"),
+                new("INNERBRIGHTNESS", "<INNERBRIGHTNESS*(暗さ|Default[,時間])>", "内側の遮暗量。0 は全亮、1 は最も暗い状態です。"),
                 new("GAUSSIAN", $"<GAUSSIAN*({BooleanTrue},強度[,時間])>", "ガウスぼかし。強度は必須です。"),
                 new("NEON", $"<NEON*({BooleanTrue},強度[,時間])>", "ネオン発光と RGB 分離。"),
                 new("TRAIL", $"<TRAIL*({BooleanTrue},強度[,時間])>", "残像エフェクト。"),
@@ -177,7 +184,7 @@ internal static class AlphaCommandHints
                 new("SATURATION", $"<SATURATION*({BooleanTrue},強度[,時間])>", "画面の彩度を調整します。"),
                 new("CONTRAST", $"<CONTRAST*({BooleanTrue},強度[,時間])>", "画面のコントラストを調整します。"),
                 new("RAINBOW", $"<RAINBOW*({BooleanTrue},強度[,時間])>", "色相を循環させます。"),
-                new("VIGNETTE", $"<VIGNETTE*({BooleanTrue},強度[,時間])>", "円形のビネット効果。"),
+                new("VIGNETTE", $"<VIGNETTE*({BooleanTrue},強度[,時間])>", "円形ビネット。グラデーションは省略・空欄でTrue、Falseで従来の輪郭。"),
                 new("ZOOM", $"<ZOOM*({BooleanTrue},倍率[,時間])>", "画面倍率を直接指定します。0.6 は 60%、1 は等倍、1.5 は 150%。範囲は 0.1～8 です。"),
                 new("GLITCH", $"<GLITCH*({BooleanTrue},強度[,時間])>", "グリッチずれ効果。"),
                 new("TVNOISE", $"<TVNOISE*({BooleanTrue},強度[,時間])>", "テレビ走査線ノイズ。"),
@@ -192,30 +199,30 @@ internal static class AlphaCommandHints
 
         return new AlphaCommand[]
         {
-        new("SV", "<SV*倍率> / <SV*tap=倍率,touch=倍率,slide=倍率>", "真实 SV 倍率。全局 SV 影响环形音符及 Touch/TouchHold；slide= 在谱面标记时长内控制 Slide 轨迹。净积分为正时归一化到准时结束，净积分不为正时到标记终点直接截断。"),
-        new("HS", "<HS*倍率> / <HS*tap=倍率,slide=显现倍率>", "普通音符头的传统下落倍率。HS*slide 按倍率改变 Slide 的显现速度（例如 999 基本瞬间出现），但不改变轨迹时长；全局 HS 不影响 Slide，轨迹运动仍由 SV*slide 控制。"),
-        new("SPAWN", "<SPAWN*半径> / <SPAWN*tap=半径,hold=半径>", "环形音符视觉出生半径，范围 -4.8～4.8，默认值 1.225；0 是中心，-4.8 是对面判定线。支持 NULL 恢复。"),
+        new("SV", "<SV*倍率|NULL> / <SV*tap=倍率,touch=倍率,slide=倍率>", "真实 SV 倍率。全局 SV 默认影响环形音符、Touch/TouchHold 和 blockarea，不影响 Slide 轨迹；blockarea= 可单独控制噪域预警；slide= 在谱面标记时长内控制 Slide 轨迹。净积分为正时归一化到准时结束，净积分不为正时到标记终点直接截断。"),
+        new("HS", "<HS*倍率|NULL> / <HS*tap=倍率,slide=显现倍率>", "普通音符头的传统下落倍率。全局 HS 默认控制 blockarea 的预警出现时间，blockarea= 可单独控制；HS*slide 按倍率改变 Slide 的显现速度（例如 999 基本瞬间出现），但不改变轨迹时长；全局 HS 不影响 Slide，轨迹运动仍由 SV*slide 控制。"),
+        new("SPAWN", "<SPAWN*半径> / <SPAWN*tap=半径,hold=半径>", "环形音符视觉出生半径，支持任意有限数值，默认值 1.225；0 是中心，-4.8 是对面判定线。支持 NULL 恢复。"),
         new("SPAWNMODE", "<SPAWNMODE*Rewind> / <SPAWNMODE*tap=Once,hold=Rewind>", "Rewind 会在 SV 退回 SPAWN 前时重新缩小并隐藏；Once 在第一次越过 SPAWN 后保持激活。默认 Rewind，NULL 恢复默认。"),
         new("DESTROY", "<DESTROY*半径> / <DESTROY*tap=半径,hold=半径> / <DESTROY*NULL>", "仅修改 Tap、Star、Each、Hold 的视觉终点，不改变判定时刻；始终保留所写半径，NULL 恢复 4.8。"),
-        new("BOUNCE", "<BOUNCE*时长> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>", "让 Tap、Star、Each、Hold 从 DESTROY 到 SPAWN 往返；Rewind 在 SV 退回起跳点前时隐藏，Once 首次越过后保持激活，SV=0 时暂停。"),
+        new("BOUNCE", "<BOUNCE*持续时间|NULL|False> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>", "让 Tap、Star、Each、Hold 从 DESTROY 到 SPAWN 往返；Rewind 在 SV 退回起跳点前时隐藏，Once 首次越过后保持激活，SV=0 时暂停。"),
         new("FAKE", "<FAKE*TRUE> / <FAKE*FALSE> / <FAKE*tap=TRUE,slide=TRUE>", "让当前音符流后续音符仅显示：不计物量、不判定、无判定/击打特效、文字和音效。"),
-        new("COLOR", "<COLOR*RRGGBB>", "star 控制星形音符和 Slide 头，slidestar 单独控制运动星，slide 控制轨道。"),
-        new("COLORV", "<COLORV*RRGGBB> / <COLORV*slidestar=FF0000>", "即时染色已加载音符；可分别指定普通类型及 star、slidestar、slide。"),
-        new("SIZE", "<SIZE*倍率> / <SIZE*(X倍率,Y倍率)> / <SIZE*类型=(X倍率,Y倍率)>", "支持等比或局部 X/Y 缩放；类型可写 tap、hold、touch、star、slidestar、slide 等，全局倍率不缩放轨道。"),
-        new("SIZEV", "<SIZEV*倍率> / <SIZEV*(X倍率,Y倍率)> / <SIZEV*类型=(X倍率,Y倍率)>", "按等比或局部 X/Y 即时缩放已加载音符，也支持指定音符类型。"),
-        new("ALPHA", "<ALPHA*透明度>", "透明度范围 0～1；star 控制星形音符和 Slide 头，slidestar 控制运动星，slide 控制轨道。"),
-        new("ALPHAV", "<ALPHAV*透明度> / <ALPHAV*slidestar=0.5>", "分别即时修改 star、slidestar 和 slide 的透明度。"),
+        new("COLOR", "<COLOR*RRGGBB|NULL> / <COLOR*blockarea=00BBFF>", "全局值默认不控制 mine 和 blockarea；地雷仅由 mine= 单独染色，mine=NULL 恢复灰色；blockarea= 单独控制噪域；star 控制星形音符和 Slide 头，slidestar 单独控制运动星，slide 控制轨道。"),
+        new("COLORV", "<COLORV*RRGGBB|NULL> / <COLORV*slidestar=FF0000>", "即时染色已加载音符；全局值不控制 mine 和 blockarea；地雷仅由 mine= 单独染色，mine=NULL 恢复灰色；blockarea= 单独控制；可分别指定普通类型及 star、slidestar、slide、blockarea。"),
+        new("SIZE", "<SIZE*倍率> / <SIZE*(X倍率,Y倍率)> / <SIZE*类型=(X倍率,Y倍率)>", "支持等比或局部 X/Y 缩放；类型可写 tap、hold、touch、star、slidestar、slide、blockarea 等，全局倍率不缩放轨道或 blockarea，blockarea= 单独缩放噪域。"),
+        new("SIZEV", "<SIZEV*倍率> / <SIZEV*(X倍率,Y倍率)> / <SIZEV*类型=(X倍率,Y倍率)>", "按等比或局部 X/Y 即时缩放已加载音符；全局值不控制 blockarea，blockarea= 单独控制。"),
+        new("ALPHA", "<ALPHA*透明度|NULL> / <ALPHA*blockarea=0.5>", "全局值默认不控制 blockarea；blockarea= 单独控制噪域；透明度范围 0～1；star 控制星形音符和 Slide 头，slidestar 控制运动星，slide 控制轨道。"),
+        new("ALPHAV", "<ALPHAV*透明度|NULL> / <ALPHAV*slidestar=0.5>", "分别即时修改 star、slidestar、slide、blockarea 的透明度；全局值不控制 blockarea，blockarea= 单独控制。"),
         new("JLINE", "<JLINE*RRGGBB> / <JLINE*(RRGGBB[,过渡时间])>", "播放时渐变判定线颜色；NULL 恢复皮肤颜色，停止播放后不会影响待机判定线。"),
-        new("TEXT", "<TEXT*(\"内容\"[,持续时间][,x][,y][,字号][,字体][,index][,样式][,过渡时间])>", "字幕必须写在双引号内。可选位置参数可用连续逗号跳过，例如 TEXT*(\"字幕\",,0.2,,44,Allerta,,Typewriter,1)。index 可使用任意非负整数。"),
-        new("SHOWJUDGELINE", $"<SHOWJUDGELINE*({BooleanChoices}[,过渡时间])>", "渐变显示或隐藏判定线；省略过渡时间时立即切换。"),
-        new("SHOWJUDGEAREA", $"<SHOWJUDGEAREA*({BooleanChoices}[,过渡时间])>", "渐变显示或隐藏判定区；省略过渡时间时立即切换。"),
-        new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}[,过渡时间])>", "渐变显示或隐藏 Critical Perfect 等判定文字。"),
-        new("SHOWJUDGEINFO", $"<SHOWJUDGEINFO*({BooleanChoices}[,过渡时间])>", "渐变显示或隐藏左侧判定统计。"),
-        new("SHOWCOMBOINFO", $"<SHOWCOMBOINFO*({BooleanChoices}[,过渡时间])>", "渐变显示或隐藏右侧 combo / 达成率信息。"),
-        new("COMBODISPLAY", "<COMBODISPLAY*(模式[,过渡时间])>", "切换中间显示内容。模式: NONE / COMBO / SCORE / ACC / DXACC / DXSCORE 等。"),
-        new("OUTERBRIGHTNESS", "<OUTERBRIGHTNESS*(遮暗值[,过渡时间])>", "外圈遮暗值，0 为全亮，1 为最暗。"),
-        new("INNERBRIGHTNESS", "<INNERBRIGHTNESS*(遮暗值[,过渡时间])>", "内圈遮暗值，0 为全亮，1 为最暗。"),
-        new("GAUSSIAN", $"<GAUSSIAN*({BooleanTrue},强度[,过渡时间])>", "高斯模糊。强度必填，省略过渡时间时立即生效。"),
+        new("TEXT", "<TEXT*(\"内容\"[,持续时间][,x][,y][,字号][,字体][,index][,样式][,过渡时间])>", "字幕必须写在双引号内。可选位置参数可用连续逗号跳过。index 可使用任意非负整数。"),
+        new("JUDGELINEEXPAND", "<JUDGELINEEXPAND*(True[,过渡时间][,方向])> / <JUDGELINEEXPAND*(False)>", Localized("True 附加白线并旋转22.5°，False 移除附加白线；默认时间0秒、方向1/CW，-1/CCW逆时针。", "True adds a white ring rotated 22.5 degrees; False removes it. Default duration 0, direction CW/1.", "Trueで白い判定線を追加して22.5度回転、Falseで追加線のみ非表示。時間0秒、方向CW/1が既定値。")),
+        new("JUDGELINE", "<JUDGELINE*(0|1|2|3|4|Default[,过渡时间])>", Localized("判定线样式：1 经典、2 经典完整、3 MAGiCAL；0/False 关闭。4 及以后预留扩展。", "1 classic, 2 classic full, 3 MAGiCAL; 0/False off; later IDs reserved.", "1 クラシック、2 全体、3 MAGiCAL、0/False 非表示。以降は拡張用。")),
+        new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}|Default[,过渡时间])>", "渐变显示或隐藏 Critical Perfect 等判定文字。"),
+        new("SHOWJUDGEINFO", $"<SHOWJUDGEINFO*({BooleanChoices}|Default[,过渡时间])>", "渐变显示或隐藏左侧判定统计。"),
+        new("SHOWCOMBOINFO", $"<SHOWCOMBOINFO*({BooleanChoices}|Default[,过渡时间])>", "渐变显示或隐藏右侧 combo / 达成率信息。"),
+        new("COMBODISPLAY", "<COMBODISPLAY*(模式|Default[,过渡时间])>", "切换中间显示内容。模式: NONE / COMBO / SCORE / ACC / DXACC / DXSCORE 等。"),
+        new("OUTERBRIGHTNESS", "<OUTERBRIGHTNESS*(遮暗值|Default[,过渡时间])>", "外圈遮暗值，0 为全亮，1 为最暗。"),
+        new("INNERBRIGHTNESS", "<INNERBRIGHTNESS*(遮暗值|Default[,过渡时间])>", "内圈遮暗值，0 为全亮，1 为最暗。"),
+        new("GAUSSIAN", $"<GAUSSIAN*({BooleanTrue},强度[,过渡时间])>", "高斯模糊。"),
         new("NEON", $"<NEON*({BooleanTrue},强度[,过渡时间])>", "霓虹与 RGB 分离。"),
         new("TRAIL", $"<TRAIL*({BooleanTrue},强度[,过渡时间])>", "拖影残影。"),
         new("FADE", $"<FADE*({BooleanTrue},强度[,过渡时间])>", "压黑画面。"),
@@ -224,7 +231,7 @@ internal static class AlphaCommandHints
         new("SATURATION", $"<SATURATION*({BooleanTrue},强度[,过渡时间])>", "调整画面饱和度。"),
         new("CONTRAST", $"<CONTRAST*({BooleanTrue},强度[,过渡时间])>", "调整画面对比度。"),
         new("RAINBOW", $"<RAINBOW*({BooleanTrue},强度[,过渡时间])>", "循环改变色相。"),
-        new("VIGNETTE", $"<VIGNETTE*({BooleanTrue},强度[,过渡时间])>", "暗角特效。"),
+        new("VIGNETTE", $"<VIGNETTE*({BooleanTrue},强度[,过渡时间])>", "黑角特效；渐变省略或留空默认为True，False保留硬边。"),
         new("ZOOM", $"<ZOOM*({BooleanTrue},倍率[,过渡时间])>", "直接指定画面倍率：0.6 为 60%，1 为原大小，1.5 为 150%；范围 0.1～8。"),
         new("GLITCH", $"<GLITCH*({BooleanTrue},强度[,过渡时间])>", "故障错位特效。"),
         new("TVNOISE", $"<TVNOISE*({BooleanTrue},强度[,过渡时间])>", "电视扫描噪声。"),
@@ -244,22 +251,26 @@ internal static class AlphaCommandHints
         bool instantMode = false,
         int parameterCount = 1)
     {
-        var duration = Localized("过渡时间", "duration", "時間");
+        var duration = Localized("过渡时间", "transition", "遷移時間");
+        var sustain = Localized("持续时间", "duration", "持続時間");
         var strength = Localized("强度", "strength", "強度");
         var scale = Localized("倍率", "scale", "倍率");
         var degrees = Localized("角度", "degrees", "角度");
         var frequency = Localized("频率", "frequency", "周波数");
         string? on = name switch
         {
+            "VIGNETTE" => $"<VIGNETTE*({BooleanTrue},{strength}[,{duration}][,{Localized("渐变", "gradient", "グラデーション")}])>",
             "TINT" => $"<TINT*({BooleanTrue},RRGGBB,{strength}[,{duration}])>",
             "MOVE" => $"<MOVE*({BooleanTrue},dx,dy[,{duration}])>",
             "SHAKE" => $"<SHAKE*({BooleanTrue},{strength},{frequency}[,{degrees},{duration}])>",
             "ZOOM" => $"<ZOOM*({BooleanTrue},{scale}[,{duration}])>",
-            "HUE" or "ROTATE" => $"<{name}*({BooleanTrue},{degrees}[,{duration}])>",
+            "ROTATE" => $"<{name}*({BooleanTrue},{degrees}[,{duration}][,{Localized("旋转PV", "rotate PV", "PV回転")}])>",
+            "HUE" or "KALEIDOSCOPE" => $"<{name}*({BooleanTrue},{degrees}[,{duration}])>",
             "GAUSSIAN" or "NEON" or "TRAIL" or "FADE" or "FLASH" or
             "BRIGHTNESS" or "SATURATION" or "CONTRAST" or "RAINBOW" or
-            "VIGNETTE" or "GLITCH" or "TVNOISE" =>
+            "GLITCH" or "TVNOISE" =>
                 $"<{name}*({BooleanTrue},{strength}[,{duration}])>",
+            _ when AlphaExtraFilters.Find(name) != null => $"<{name}*({BooleanTrue},{strength}[,{duration}])>",
             _ => null
         };
         if (on == null)
@@ -268,12 +279,14 @@ internal static class AlphaCommandHints
         var off = $"<{name}*({BooleanFalse}[,{duration}])>";
         var instant = name switch
         {
-            "TINT" => $"<TINT*(Instant,RRGGBB,{strength},{duration})>",
-            "MOVE" => $"<MOVE*(Instant,dx,dy,{duration})>",
-            "SHAKE" => $"<SHAKE*(Instant,{strength},{frequency}[,{degrees}],{duration})>",
-            "ZOOM" => $"<ZOOM*(Instant,{scale},{duration})>",
-            "HUE" or "ROTATE" => $"<{name}*(Instant,{degrees},{duration})>",
-            _ => $"<{name}*(Instant,{strength},{duration})>"
+            "VIGNETTE" => $"<VIGNETTE*(Instant,{strength},{sustain}[,{Localized("渐变", "gradient", "グラデーション")}])>",
+            "TINT" => $"<TINT*(Instant,RRGGBB,{strength},{sustain})>",
+            "MOVE" => $"<MOVE*(Instant,dx,dy,{sustain})>",
+            "SHAKE" => $"<SHAKE*(Instant,{strength},{frequency}[,{degrees}],{sustain})>",
+            "ZOOM" => $"<ZOOM*(Instant,{scale},{sustain})>",
+            "ROTATE" => $"<{name}*(Instant,{degrees},{sustain}[,{Localized("旋转PV", "rotate PV", "PV回転")}])>",
+            "HUE" or "KALEIDOSCOPE" => $"<{name}*(Instant,{degrees},{sustain})>",
+            _ => $"<{name}*(Instant,{strength},{sustain})>"
         };
         if (instantMode)
             return instant;
@@ -297,12 +310,42 @@ internal static class AlphaCommandHints
     private static bool IsScreenEffect(string name) =>
         Describe(name)?.category == AlphaCommandCategory.Filter;
 
-    private static string? GetStateSignatureOverview(string name)
+    private static string? GetStateSignatureOverview(string name, bool instant = false)
     {
         if (!IsScreenEffect(name))
             return null;
 
-        return GetStateSignature(name);
+        var signature = GetStateSignature(name, true, instant);
+        return signature?.Replace((instant ? "Instant" : BooleanTrue) + ",", BooleanTrue + "|" + BooleanFalse + "|Instant,", StringComparison.Ordinal);
+    }
+
+    private static string CommonSignature(AlphaCommand command)
+    {
+        return AlphaCommandExamples.Header(command.Name, CurrentLanguage);
+    }
+
+    private static string[] SplitSignatureForms(string signature) =>
+        System.Text.RegularExpressions.Regex.Split(signature, @"\s+(?:/|\|)\s+(?=<)");
+
+    private static string SpecialSignatures(AlphaCommand command) => AlphaCommandExamples.Examples(command.Name);
+
+    private static StackPanel BuildHintContent(AlphaCommand command, string explanation)
+    {
+        var panel = new StackPanel { MaxWidth = 480, HorizontalAlignment = HorizontalAlignment.Left };
+        panel.Children.Add(new TextBlock {
+            Text = explanation, Foreground = HintForeground,
+            TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Left,
+            Margin = new Thickness(0, 2, 0, 4)
+        });
+        var specials = SpecialSignatures(command);
+        if (!string.IsNullOrEmpty(specials))
+        {
+            var examples = BuildSignatureBlock(specials, 0);
+            examples.FontWeight = FontWeights.Normal;
+            examples.Margin = new Thickness(0, 4, 0, 0);
+            panel.Children.Add(examples);
+        }
+        return panel;
     }
 
     private static CompletionWindow? completionWindow;
@@ -408,14 +451,15 @@ internal static class AlphaCommandHints
         {
             if (e.Key != Key.Tab)
                 return;
+            if (TryHandleAlphaArgumentTab(editor.TextArea)) {
+                completionWindow?.Close(); e.Handled = true; return;
+            }
             if (completionWindow?.CompletionList.SelectedItem != null)
             {
                 e.Handled = true;
                 completionWindow.CompletionList.RequestInsertion(e);
                 return;
             }
-            if (TryHandleAlphaArgumentTab(editor.TextArea))
-                e.Handled = true;
         };
         editor.TextChanged += (_, _) => QueueCompletionRefresh(editor);
     }
@@ -611,6 +655,7 @@ internal static class AlphaCommandHints
         for (var i = angleOffset - 1; i >= 0; i--)
         {
             var ch = document.GetCharAt(i);
+            if (ch is '\r' or '\n') return true;
             if (char.IsWhiteSpace(ch))
                 continue;
             return ch is ',' or '}' or '>' or ')';
@@ -761,16 +806,12 @@ internal static class AlphaCommandHints
 
     private static FrameworkElement BuildHintPanel(AlphaCommand command)
     {
-        var panel = new StackPanel { MaxWidth = 480 };
-        var signature = BuildSignatureBlock(GetStateSignatureOverview(command.Name) ?? command.Signature, 0);
+        var panel = new StackPanel { MaxWidth = 480, HorizontalAlignment = HorizontalAlignment.Left };
+        var signature = BuildSignatureBlock(CommonSignature(command), 0);
+        signature.FontWeight = FontWeights.Bold;
         signature.Margin = new Thickness(0, 0, 0, 6);
         panel.Children.Add(signature);
-        panel.Children.Add(new TextBlock
-        {
-            Text = command.Description,
-            Foreground = HintForeground,
-            TextWrapping = TextWrapping.Wrap
-        });
+        panel.Children.Add(BuildHintContent(command, command.Description));
         return panel;
     }
 
@@ -781,6 +822,7 @@ internal static class AlphaCommandHints
 
     private static void ShowOrUpdateInsight(TextArea textArea)
     {
+        if (PresentationSource.FromVisual(textArea) == null) return;
         var document = textArea.Document;
         var caret = textArea.Caret.Offset;
         if (!TryFindOpenAlphaCommand(document, caret, out var openOffset, out var starOffset, out var command))
@@ -877,6 +919,7 @@ internal static class AlphaCommandHints
     {
         var index = 1;
         var depth = 0;
+        var quoted = false;
         var topLevelDepth = 0;
         for (var i = startOffset; i < caretOffset && i < document.TextLength; i++)
         {
@@ -889,6 +932,8 @@ internal static class AlphaCommandHints
         for (var i = startOffset; i < caretOffset && i < document.TextLength; i++)
         {
             var ch = document.GetCharAt(i);
+            if (ch == '"' && (i == 0 || document.GetCharAt(i - 1) != '\\')) quoted = !quoted;
+            if (quoted || ch == '"') continue;
             if (ch == '(')
                 depth++;
             else if (ch == ')' && depth > 0)
@@ -936,7 +981,23 @@ internal static class AlphaCommandHints
 
         var enabled = GetBooleanArgument(document, starOffset + 1, caret);
         var current = document.GetText(argumentStart, argumentEnd - argumentStart).Trim();
-        if (SupportsNullReset(command.Name) && current.Length > 0 &&
+        var equals = current.IndexOf('=');
+        var spec = ArgumentSpec(command.Name, parameterIndex, enabled,
+            IsInstantArgument(document, starOffset + 1, caret));
+        if (equals >= 0 && Describe(command.Name)?.HasTarget(current[..equals].Trim()) == true) {
+            argumentStart += document.GetText(argumentStart, argumentEnd - argumentStart).IndexOf('=') + 1;
+            current = document.GetText(argumentStart, argumentEnd - argumentStart).Trim();
+            spec = Describe(command.Name)?.TypedValueSpec;
+        }
+        if (parameterIndex == 1 && Describe(command.Name)?.SupportsDefaultReset == true && current.Length > 0 && current != "Default" &&
+            "Default".StartsWith(current, StringComparison.OrdinalIgnoreCase))
+        {
+            document.Replace(argumentStart, argumentEnd - argumentStart, "Default");
+            textArea.Caret.Offset = argumentStart + 7;
+            ShowOrUpdateInsight(textArea);
+            return true;
+        }
+        if (SupportsNullReset(command.Name) && current.Length > 0 && current != "NULL" &&
             "NULL".StartsWith(current, StringComparison.OrdinalIgnoreCase))
         {
             document.Replace(argumentStart, argumentEnd - argumentStart, "NULL");
@@ -944,30 +1005,52 @@ internal static class AlphaCommandHints
             ShowOrUpdateInsight(textArea);
             return true;
         }
-        if (current.Length == 0)
-        {
-            var defaultValue = GetDefaultArgument(command.Name, parameterIndex, enabled);
-            if (defaultValue == null)
-                return false;
-            document.Replace(argumentStart, argumentEnd - argumentStart, defaultValue);
-            textArea.Caret.Offset = argumentStart + defaultValue.Length;
-            ShowOrUpdateInsight(textArea);
-            return true;
-        }
-
-        if (argumentEnd < document.TextLength && document.GetCharAt(argumentEnd) == ',')
-        {
-            textArea.Caret.Offset = argumentEnd + 1;
-            ShowOrUpdateInsight(textArea);
-            return true;
-        }
-
-        if (parameterIndex >= GetMaximumArgumentCount(command.Name, enabled))
-            return false;
-        document.Insert(argumentEnd, ",");
-        textArea.Caret.Offset = argumentEnd + 1;
+        var options = ArgumentOptions(command.Name, parameterIndex, spec, equals < 0).ToArray();
+        if (options.Length == 0) return false;
+        var currentIndex = Array.FindIndex(options, value => string.Equals(value, current, StringComparison.OrdinalIgnoreCase));
+        var next = currentIndex >= 0
+            ? options[(currentIndex + 1) % options.Length]
+            : options.FirstOrDefault(value => value.StartsWith(current, StringComparison.OrdinalIgnoreCase)) ?? options[0];
+        document.Replace(argumentStart, argumentEnd - argumentStart, next);
+        textArea.Caret.Offset = argumentStart + next.Length;
         ShowOrUpdateInsight(textArea);
         return true;
+    }
+
+    private static AlphaValueSpec? ArgumentSpec(string name, int index, bool? enabled, bool instant)
+    {
+        var descriptor = Describe(name);
+        if (descriptor == null) return null;
+        if (descriptor.forms.Length == 0) return index == 1 ? descriptor.scalar : null;
+        var kind = instant ? AlphaArgumentFormKind.Instant : enabled == false ? AlphaArgumentFormKind.StateOff : AlphaArgumentFormKind.StateOn;
+        var form = descriptor.forms.Where(f => f.kind == kind).OrderByDescending(f => f.MaximumCount).FirstOrDefault() ??
+                   descriptor.forms.Where(f => f.kind == AlphaArgumentFormKind.Plain).OrderByDescending(f => f.MaximumCount).FirstOrDefault();
+        return index >= 1 && index <= (form?.slots.Length ?? 0) ? form!.slots[index - 1] : null;
+    }
+
+    private static IEnumerable<string> ArgumentOptions(string name, int index, AlphaValueSpec? spec, bool positional)
+    {
+        var descriptor = Describe(name)!;
+        if (index == 1 && positional && descriptor.forms.Any(f => f.kind == AlphaArgumentFormKind.StateOn)) {
+            yield return "True"; yield return "False";
+            if (descriptor.forms.Any(f => f.kind == AlphaArgumentFormKind.Instant)) yield return "Instant";
+            if (descriptor.SupportsDefaultReset) yield return "Default";
+            yield break;
+        }
+        if (spec == null) yield break;
+        var candidates = spec.kind switch {
+            AlphaValueKind.Duration => new[] { "8:1", "16:1", "2:1", "4:1", "1:1", "0" },
+            AlphaValueKind.Boolean => new[] { "True", "False" },
+            AlphaValueKind.Color => new[] { "00BBFF", "FF6666", "FFFFFF" },
+            AlphaValueKind.Keyword => spec.keywords,
+            AlphaValueKind.JudgeLineStyle => new[] { "3", "1", "2", "0" },
+            AlphaValueKind.ComboMode => new[] { "Combo", "DxScore", "Achievement", "None" },
+            AlphaValueKind.Number or AlphaValueKind.Scale => new[] { spec.defaultText, "0.2", "0.5", "1", "2" },
+            _ => new[] { GetDefaultArgument(name, index, null) ?? spec.defaultText }
+        };
+        foreach (var value in candidates.Where(v => v.Length > 0 && spec.Matches(v, 120)).Distinct(StringComparer.OrdinalIgnoreCase)) yield return value;
+        if (spec.allowsNull) yield return "NULL";
+        if (index == 1 && descriptor.SupportsDefaultReset) yield return "Default";
     }
 
     private static bool SupportsNullReset(string name) =>
@@ -992,10 +1075,13 @@ internal static class AlphaCommandHints
             return false;
 
         var depth = 0;
+        var quoted = false;
         argumentStart = contentStart;
         for (var i = contentStart; i < caret && i < document.TextLength; i++)
         {
             var ch = document.GetCharAt(i);
+            if (ch == '"' && (i == 0 || document.GetCharAt(i - 1) != '\\')) quoted = !quoted;
+            if (quoted || ch == '"') continue;
             if (ch == '(')
                 depth++;
             else if (ch == ')' && depth > 0)
@@ -1009,9 +1095,12 @@ internal static class AlphaCommandHints
 
         argumentEnd = argumentStart;
         depth = 0;
+        quoted = false;
         while (argumentEnd < document.TextLength)
         {
             var ch = document.GetCharAt(argumentEnd);
+            if (ch == '"' && (argumentEnd == 0 || document.GetCharAt(argumentEnd - 1) != '\\')) quoted = !quoted;
+            if (quoted || ch == '"') { argumentEnd++; continue; }
             if (ch == '(')
                 depth++;
             else if ((ch == ')' && depth == 0) || ch == '>' || ch is '\r' or '\n')
@@ -1178,32 +1267,73 @@ internal static class AlphaCommandHints
         public int Count => 1;
         public string? CurrentIndexText => null;
         public object CurrentHeader => BuildHeader();
-        public object CurrentContent => new TextBlock
+        public object CurrentContent => BuildHintContent(command, parameterIndex <= 1 ? command.Description : ParameterExplanation());
+
+        private string ParameterExplanation()
         {
-            Text = string.Join("\n", new[]
-            {
-                GetCurrentParameterHint(),
-                command.Description
-            }.Where(value => !string.IsNullOrEmpty(value))),
-            Foreground = HintSecondary,
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 440,
-            Margin = new Thickness(6, 2, 6, 6)
-        };
+            var text=GetCurrentParameterHint();
+            var spec=ArgumentSpec(command.Name,parameterIndex,enabled,instantMode);
+            if(CurrentLanguage is not ("en" or "ja") && spec?.optional == true) {
+                text=Regex.Replace(text,@"^(当前参数：|第\s*\d+\s*参数：)","")
+                    .Replace("可以省略。", "").Replace("（可省略）", "").Replace("可省略；", "").Replace("可省略，", "");
+                return "当前参数：可以省略。"+(text.Length>0 ? text : spec.kind==AlphaValueKind.Duration ? "过渡时间，省略时立即切换。" : "保留默认值。");
+            }
+            return text.Length>0 ? text : command.Description;
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
         private StackPanel BuildHeader()
         {
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
-            panel.Children.Add(BuildSignatureBlock(
-                GetStateSignature(command.Name, enabled, instantMode, parameterIndex) ??
-                command.Signature, parameterIndex));
+            var active = IsScreenEffect(command.Name) && enabled == false && parameterIndex == 2
+                ? RequiredEffectParameterCount(command.Name) + 1 : parameterIndex;
+            var header = BuildSignatureBlock(instantMode && IsScreenEffect(command.Name)
+                ? GetStateSignatureOverview(command.Name, true)! : CommonSignature(command), active);
+            header.FontWeight = FontWeights.Bold;
+            panel.Children.Add(header);
             return panel;
         }
 
         private string GetCurrentParameterHint()
         {
+            if (command.Name == "ROTATE" && parameterIndex == 4)
+                return Localized("当前参数：可以省略。True 同时旋转 PV，False 不旋转 PV；默认 False。", "Current parameter: optional. True also rotates PV; False keeps PV stationary (default).", "現在の引数：省略可能。True はPVも回転、False はPVを固定（初期値）。");
+            if (IsScreenEffect(command.Name))
+            {
+                if (parameterIndex == 1)
+                    return Localized("当前参数：True 持续开启，False 关闭，Instant 临时开启。",
+                        "Current parameter: True enables, False disables, Instant applies temporarily.",
+                        "現在の引数：Trueは有効、Falseは無効、Instantは一時的に適用します。");
+                if (enabled == false && parameterIndex == 2)
+                    return Localized("当前参数：可以省略。关闭过渡时间，支持秒数或 8:1，省略则立即关闭。",
+                        "Current parameter: optional closing transition, in seconds or beats; omission closes immediately.",
+                        "現在の引数：終了の遷移時間。秒数または8:1、省略すると即時終了します。");
+                var timeParameter = command.Name == "SHAKE" ? 5 : RequiredEffectParameterCount(command.Name) + 1;
+                if (parameterIndex == timeParameter)
+                    return instantMode
+                        ? Localized("当前参数：持续时间；支持秒数或 8:1，到期恢复原效果。",
+                            "Current parameter: required duration, in seconds or beats; restores the previous effect afterward.",
+                            "現在の引数：必須の持続時間。秒数または8:1、終了後に元の効果に戻ります。")
+                        : Localized("当前参数：可以省略。过渡时间，支持秒数或 8:1，省略则立即切换。",
+                            "Current parameter: optional transition, in seconds or beats; omission switches immediately.",
+                            "現在の引数：省略可能な遷移時間。秒数または8:1、省略すると即時切替します。");
+            }
+            if(command.Name=="KALEIDOSCOPE" && parameterIndex==2 && enabled!=false)
+                return Localized("第 2 参数：旋转角度（度），例如 45 或 -90；过渡时间内逐渐转到目标角度。0 度仍开启，关闭用 False。", "Parameter 2: rotation in degrees, e.g. 45 or -90; transitions rotate to the target. Zero remains enabled; use False to disable.", "第2引数：回転角度（度）、例45、-90。遷移中に目標へ回転。0度は有効、Falseで無効。");
+            if (AlphaExtraFilters.Find(command.Name) != null)
+            {
+                if (parameterIndex == 1)
+                    return Localized("第 1 参数：True 开启，False 关闭，Instant 临时生效。效果数值写在 True／Instant 后的第 2 参数。", "Parameter 1: True enables, False disables, Instant applies temporarily. The effect value follows as parameter 2.", "第1引数：True 有効、False 無効、Instant 一時適用。効果の値は第2引数です。");
+                if (enabled == false && parameterIndex == 2)
+                    return Localized("当前参数：可以省略。关闭过渡时间。", "Parameter 2: optional fade-out duration, e.g. <" + command.Name + "*(False,0.3)>.", "第2引数：任意の終了切替時間。例 <" + command.Name + "*(False,0.3)>。");
+                if (parameterIndex == RequiredEffectParameterCount(command.Name) + 1)
+                    return instantMode
+                        ? Localized("当前参数：持续时间；可写秒数或 8:1；到期恢复原效果。", "Instant duration (required), in seconds or beats such as 8:1; restores the previous effect afterward.", "Instant の持続時間（必須）。秒数または 8:1、終了時に元の効果に戻ります。")
+                        : Localized("当前参数：开启过渡时间（可省略），可写秒数或 8:1；省略则立即切换。", "Optional transition duration, in seconds or beats such as 8:1; omission switches immediately.", "開始切替時間（任意）。秒数または 8:1、省略で即時切替。");
+            }
+            if (command.Name == "VIGNETTE" && parameterIndex == 4 && enabled != false)
+                return Localized("当前参数：渐变开关。True 为圆周向外逐渐变黑，False 为硬边；省略或留空为 True。", "Gradient: True fades outward, False uses a hard edge; omitted or empty means True.", "グラデーション：True は円周の外へ徐々に暗く、False は輪郭。省略または空欄は True。");
             if (IsScreenEffect(command.Name))
             {
                 var maximumHintParameter = command.Name == "SHAKE"
@@ -1212,6 +1342,8 @@ internal static class AlphaCommandHints
                 if (parameterIndex == 1 || enabled == false ||
                     parameterIndex > maximumHintParameter)
                     return string.Empty;
+                if (AlphaExtraFilters.Find(command.Name) is { } extraFilter)
+                    return Localized("第 2 参数：强度。" + extraFilter.Chinese, "Parameter 2: strength. " + extraFilter.English, "第2引数：強度。" + extraFilter.Japanese);
                 return command.Name switch
                 {
                     "GAUSSIAN" => Localized("当前参数：模糊强度。数值越大，采样半径越大。", "Current parameter: blur strength. Larger values increase the sample radius.", "現在の引数：ぼかし強度。値が大きいほどサンプル半径が広がります。"),
@@ -1242,8 +1374,13 @@ internal static class AlphaCommandHints
 
             return (command.Name, parameterIndex) switch
             {
+                ("JUDGELINE", 1) => Localized("样式编号：1 经典、2 经典完整、3 MAGiCAL；0/False 关闭。后续编号用于扩展。", "Style ID: 1 classic, 2 classic full, 3 MAGiCAL; 0/False off. Later IDs are reserved.", "1 クラシック、2 クラシック全体、3 MAGiCAL、0/False 非表示。以降の番号は拡張用。"),
+                ("JUDGELINE", 2) => Localized("显示过渡时间；样式编号不会插值。", "Visibility transition duration; style IDs never interpolate.", "表示切替時間。スタイル番号は補間しません。"),
                 ("JLINE", 1) => Localized("当前参数：判定线目标颜色 RRGGBB；NULL 恢复皮肤颜色。", "Current parameter: judge-line target color in RRGGBB; NULL restores the skin color.", "現在の引数：判定ラインの対象色（RRGGBB）。NULL でスキン色に戻します。"),
                 ("JLINE", 2) => Localized("当前参数：颜色过渡时间，可写秒数或 8:1。", "Current parameter: color transition duration in seconds or beat length such as 8:1.", "現在の引数：色の切り替え時間。秒数または 8:1 などの拍長を指定できます。"),
+                ("JUDGELINEEXPAND", 1) => Localized("当前参数：True 附加白线，False 关闭附加白线。", "True adds a ring; False removes it.", "Trueで白線追加、Falseで白線を非表示。"),
+                ("JUDGELINEEXPAND", 2) => Localized("当前参数：可以省略。旋转过渡时间，省略时立即旋转。", "Optional rotation transition; omission rotates immediately.", "回転の遷移時間。省略で即時回転。"),
+                ("JUDGELINEEXPAND", 3) => Localized("当前参数：可以省略。1 / CW 顺时针，-1 / CCW 逆时针。", "Optional direction: 1/CW clockwise, -1/CCW counterclockwise.", "方向：1/CW時計回り、-1/CCW反時計回り。省略可。"),
                 ("TEXT", 1) => Localized("当前参数：双引号内的字幕内容。", "Current parameter: caption text inside double quotes.", "現在の引数：二重引用符内の字幕内容。"),
                 ("TEXT", 2) => Localized("当前参数：显示时长；省略时保持到下一条 TEXT。", "Current parameter: display duration; omit it to keep the caption until the next TEXT.", "現在の引数：表示時間。省略すると次の TEXT まで表示します。"),
                 ("TEXT", 3) or ("TEXT", 4) or ("TEXT", 5) => Localized(
@@ -1256,22 +1393,22 @@ internal static class AlphaCommandHints
                     "現在の引数：フォント。Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta。font=形式も使えます。"),
                 ("TEXT", 7) => Localized("当前参数：index 为任意非负整数；不同索引可同时显示，相同索引的新字幕替换旧字幕。", "Current parameter: index is any non-negative integer. Different indices coexist; a new caption replaces the same index.", "現在の引数：index は 0 以上の整数。異なる index は同時表示でき、同じ index の新字幕だけを置き換えます。"),
                 ("TEXT", 8) => Localized("当前参数：样式，可写 Fade 或 Typewriter；也兼容 style=样式。", "Current parameter: style, either Fade or Typewriter; style=STYLE also works.", "現在の引数：スタイル。Fade または Typewriter。style=形式も使えます。"),
-                ("TEXT", 9) => Localized("当前参数：过渡时长；Fade 时为渐入时间，Typewriter 时为逐字显示完成时间，也兼容 transition=时长。", "Current parameter: transition duration. It is fade-in time for Fade and typing time for Typewriter; transition=DURATION also works.", "現在の引数：切り替え時間。Fade ではフェード、Typewriter では文字送り完了時間です。transition=形式も使えます。"),
-                ("SHOWJUDGELINE" or "SHOWJUDGEAREA" or "SHOWJUDGETEXT" or
+                ("TEXT", 9) => Localized("当前参数：过渡时间；Fade 时为渐入时间，Typewriter 时为逐字显示完成时间，也兼容 transition=时长。", "Current parameter: transition duration. It is fade-in time for Fade and typing time for Typewriter; transition=DURATION also works.", "現在の引数：切り替え時間。Fade ではフェード、Typewriter では文字送り完了時間です。transition=形式も使えます。"),
+                ("SHOWJUDGETEXT" or
                     "SHOWJUDGEINFO" or "SHOWCOMBOINFO", 1) => Localized("当前参数：True 显示，False 隐藏。", "Current parameter: True shows and False hides.", "現在の引数：True で表示、False で非表示。"),
-                ("SHOWJUDGELINE" or "SHOWJUDGEAREA" or "SHOWJUDGETEXT" or
+                ("SHOWJUDGETEXT" or
                     "SHOWJUDGEINFO" or "SHOWCOMBOINFO", 2) => Localized("当前参数：显示状态的过渡时间。", "Current parameter: visibility transition duration.", "現在の引数：表示状態の切り替え時間。"),
                 ("OUTERBRIGHTNESS" or "INNERBRIGHTNESS", 1) => Localized("当前参数：遮暗值，0 为全亮，1 为最暗。", "Current parameter: darkness; 0 is fully bright and 1 is darkest.", "現在の引数：遮暗量。0 は最も明るく、1 は最も暗い状態です。"),
                 ("OUTERBRIGHTNESS" or "INNERBRIGHTNESS", 2) => Localized("当前参数：亮度过渡时间。", "Current parameter: brightness transition duration.", "現在の引数：明るさの切り替え時間。"),
                 ("SIZE" or "SIZEV", 1) => Localized(
-                    "当前参数：等比倍率，或 (X倍率,Y倍率)；也可写 tap=(1,2)、hold=(1.1,0.8)、slide=1.25。X/Y 是音符自身的局部方向。",
+                    "当前参数：等比倍率，或分别设置 X/Y 倍率。X/Y 是音符自身的局部方向；分类型写法见下面的例子。",
                     "Current parameter: uniform scale or (scaleX,scaleY). Typed forms such as tap=(1,2), hold=(1.1,0.8), and slide=1.25 are supported; X/Y are local note axes.",
                     "現在の引数：等倍または (X倍率,Y倍率)。tap=(1,2)、hold=(1.1,0.8)、slide=1.25 も使用でき、X/Y はノーツのローカル軸です。"),
                 ("SIZE" or "SIZEV", 2) => Localized(
                     "当前参数：Y 方向倍率；只写单个数字时 X/Y 等比。",
                     "Current parameter: local Y scale. A single number scales X and Y uniformly.",
                     "現在の引数：ローカル Y 倍率。数値を1つだけ指定すると X/Y を等倍にします。"),
-                ("COMBODISPLAY", 1) => Localized("当前参数：中间显示模式，例如 Combo、DxScore、Achievement、None。", "Current parameter: center display mode, such as Combo, DxScore, Achievement, or None.", "現在の引数：中央表示モード（Combo、DxScore、Achievement、None など）。"),
+                ("COMBODISPLAY", 1) => Localized("当前参数：中间显示模式，可选 Combo、DxScore、Achievement、None。", "Current parameter: center display mode, such as Combo, DxScore, Achievement, or None.", "現在の引数：中央表示モード（Combo、DxScore、Achievement、None など）。"),
                 ("COMBODISPLAY", 2) => Localized("当前参数：模式切换过渡时间。", "Current parameter: mode transition duration.", "現在の引数：モード切り替え時間。"),
                 ("SPAWN", 1) => Localized(
                     "当前参数：生成半径，默认 1.225；0 是中心，-4.8 是对面判定线，NULL 恢复默认。",
@@ -1313,14 +1450,16 @@ internal static class AlphaCommandHints
             FontFamily = HintMonoFont,
             TextWrapping = TextWrapping.Wrap,
             MaxWidth = 440,
-            Margin = new Thickness(6, 6, 6, 2)
+            Margin = new Thickness(0, 6, 0, 2),
+            TextAlignment = TextAlignment.Left,
+            HorizontalAlignment = HorizontalAlignment.Left
         };
 
-        var forms = (signature ?? string.Empty).Split(" / ");
+        var forms = System.Text.RegularExpressions.Regex.Split(signature ?? string.Empty, @"\s+(?:/|\|)\s+(?=<)");
         for (var index = 0; index < forms.Length; index++)
         {
             if (index > 0)
-                block.Inlines.Add(" / ");
+                block.Inlines.Add(new LineBreak());
             AppendSignatureForm(block, forms[index], activeParameter);
         }
         return block;

@@ -18,17 +18,18 @@
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="180" />
-                <ColumnDefinition Width="14" />
+                <ColumnDefinition Width="0" />
+                <ColumnDefinition Width="0" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <Border Grid.Column="0" Width="180" Height="180" VerticalAlignment="Top"
+            <Border Grid.Column="2" Grid.Row="0" Width="128" Height="128" HorizontalAlignment="Center" Margin="0,0,0,12"
                     Background="{DynamicResource EditorBackground}" BorderBrush="{DynamicResource MenuSeparator}"
                     BorderThickness="1" CornerRadius="7" Padding="6">
                 <Image x:Name="CoverPreview" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
             </Border>
-            <Grid Grid.Column="2">
+            <Grid Grid.Column="2" Grid.Row="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -51,16 +52,18 @@
                 <TextBlock Grid.Row="4" Grid.Column="0" Text="{lex:Loc LevelLabel}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
                 <TextBox x:Name="LevelBox" Grid.Row="4" Grid.Column="1" Margin="0,3" FontFamily="Cascadia Mono" />
                 <Grid Grid.Row="5" Grid.ColumnSpan="2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="62" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="58" />
-                        <ColumnDefinition Width="90" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="BPM" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
                     <TextBox x:Name="BpmBox" Grid.Column="1" Margin="0,3" FontFamily="Cascadia Mono" />
-                    <TextBlock Grid.Column="2" Text="Clock" Margin="10,0,0,0" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
-                    <TextBox x:Name="ClockBox" Grid.Column="3" Margin="0,3" FontFamily="Cascadia Mono" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Clock" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
+                    <TextBox x:Name="ClockBox" Grid.Row="1" Grid.Column="1" Margin="0,3" FontFamily="Cascadia Mono" />
                 </Grid>
             </Grid>
         </Grid>
@@ -75,7 +78,7 @@
                 <TextBlock Text="{lex:Loc ExportOptions}" Foreground="{DynamicResource HelperForeground}" FontWeight="Bold" Margin="0,0,0,4" />
                 <Grid Margin="0,4">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="116" />
+                        <ColumnDefinition Width="84" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="{lex:Loc FrameRate}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
@@ -83,12 +86,12 @@
                 </Grid>
                 <Grid Margin="0,4">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="116" />
+                        <ColumnDefinition Width="84" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="{lex:Loc Resolution}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
                     <!-- Standard dropdown matching the frame-rate field; custom resolutions use the adjacent input fields. -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <WrapPanel Grid.Column="1">
                     <ComboBox x:Name="ResolutionBox" Width="120">
                         <ComboBoxItem Content="{lex:Loc KeepCurrentResolution}" IsSelected="True" />
                         <ComboBoxItem Content="3840 × 2160" />
@@ -104,63 +107,64 @@
                     <TextBox x:Name="CustomResolutionBox" Width="94" Margin="8,0,0,0"
                              VerticalContentAlignment="Center" FontFamily="Cascadia Mono"
                              Visibility="Collapsed" ToolTip="{lex:Loc EvenResolutionTip}" />
-                    </StackPanel>
+                    </WrapPanel>
                 </Grid>
                 <Grid Margin="0,4">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="116" />
+                        <ColumnDefinition Width="84" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="{lex:Loc SongCard}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
                     <Grid Grid.Column="1">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="180" />
-                            <ColumnDefinition Width="8" />
-                            <ColumnDefinition Width="96" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="0" />
+                            <ColumnDefinition Width="0" />
+                            <ColumnDefinition Width="0" />
                         </Grid.ColumnDefinitions>
                         <ComboBox x:Name="SongDetailStyleBox" Grid.Column="0">
                             <ComboBoxItem Content="{lex:Loc OriginalStyle}" />
                             <ComboBoxItem Content="{lex:Loc OfficialStyleCover}" />
                         </ComboBox>
-                        <Button x:Name="RefreshPreviewButton" Grid.Column="2" Width="96" Height="28"
+                        <Button x:Name="RefreshPreviewButton" Grid.Column="0" Grid.Row="1" HorizontalAlignment="Left" Margin="0,6,0,0" Width="96" Height="28"
                                 Content="{lex:Loc RefreshPreview}" Click="RefreshPreviewButton_Click" />
                     </Grid>
                 </Grid>
-                <StackPanel x:Name="UtageOptionsPanel" Orientation="Horizontal" Margin="116,4,0,2"
+                <StackPanel x:Name="UtageOptionsPanel" Orientation="Vertical" Margin="84,4,0,2"
                             Visibility="Collapsed">
                     <TextBlock Text="{lex:Loc UtageLabel}" Foreground="{DynamicResource ButtonForeground}"
                                VerticalAlignment="Center" Margin="0,0,8,0" />
                     <TextBox x:Name="UtageLabelBox" Width="92" MaxLength="12"
                              HorizontalContentAlignment="Center" TextWrapping="NoWrap"
                              HorizontalScrollBarVisibility="Auto" />
-                    <CheckBox x:Name="UtageCoopBox" Content="{lex:Loc UtageCoop}" Margin="14,0,0,0"
+                    <CheckBox x:Name="UtageCoopBox" Content="{lex:Loc UtageCoop}" Margin="0,6,0,0"
                               VerticalAlignment="Center" />
                 </StackPanel>
                 <Grid Margin="0,4">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="116" />
+                        <ColumnDefinition Width="84" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="{lex:Loc IntroBackground}" Foreground="{DynamicResource ButtonForeground}" VerticalAlignment="Center" />
                     <ComboBox x:Name="ViewIntroStyleBox" Grid.Column="1" Width="180" HorizontalAlignment="Left">
-                        <ComboBoxItem Content="{lex:Loc DefaultOption}" />
+                        <ComboBoxItem Content="{lex:Loc OriginalStyle}" />
                         <ComboBoxItem Content="CiRCLE PLUS" />
                         <ComboBoxItem Content="CiRCLE" />
+                        <ComboBoxItem Content="X-VERSE-X" />
+                        <ComboBoxItem Content="Mate" />
+                        <ComboBoxItem Content="MAGiCAL" />
                     </ComboBox>
                 </Grid>
-                <CheckBox x:Name="SongDetailBox" Content="{lex:Loc ShowSongIntro}" Margin="116,4,0,0" />
-                <CheckBox x:Name="AllPerfectBox" Content="{lex:Loc ShowAllPerfectEnding}" Margin="116,4,0,0" />
-                <TextBlock Text="{lex:Loc RecordingSafeLimit}" Margin="116,4,8,0"
-                           Foreground="{DynamicResource HelperForeground}" FontSize="11"
-                           TextWrapping="Wrap" />
+                <CheckBox x:Name="SongDetailBox" Content="{lex:Loc ShowSongIntro}" Margin="84,4,0,0" />
+                <CheckBox x:Name="AllPerfectBox" Content="{lex:Loc ShowAllPerfectEnding}" Margin="84,4,0,0" />
             </StackPanel>
         </Grid>
 
         <TextBlock x:Name="StatusText" Grid.Row="3" Margin="0,12,0,8" TextWrapping="Wrap" Foreground="{DynamicResource HelperForeground}" />
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="StartButton" Content="{lex:Loc StartRecording}" Width="112" Height="30" Click="StartButton_Click" />
-            <Button x:Name="CancelButton" Content="{lex:Loc Close}" Width="74" Height="30" Margin="10,0,0,0" Click="CancelButton_Click" />
+            <Button x:Name="CancelButton" Content="{lex:Loc Cancel}" Visibility="Collapsed" Width="74" Height="30" Margin="10,0,0,0" Click="CancelButton_Click" />
         </StackPanel>
     </Grid>
 </Window>

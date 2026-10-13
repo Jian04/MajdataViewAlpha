@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Assets/MajdataCore/SkinPaths.cs" Link="SkinPaths.cs" />
+    <Compile Include="../../Assets/Scripts/UI/CustomSkin.cs" Link="CustomSkin.cs" />
+  </ItemGroup>
+</Project>

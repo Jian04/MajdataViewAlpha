@@ -1,4 +1,4 @@
-﻿/*
+/*
   Copyright (c) Moying-moe All rights reserved. Licensed under the MIT license.
   See LICENSE in the project root for license information.
 */
@@ -12,6 +12,6 @@ public class GlobalAutoSaveContext : IAutoSaveContext
 {
     public string GetSavePath()
     {
-        return Environment.CurrentDirectory + "/.autosave";
+        return Environment.CurrentDirectory + "/.autosave" + (MajdataCore.AlphaSession.Current == null ? "" : "/" + MajdataCore.AlphaSession.Current.Id);
     }
 }

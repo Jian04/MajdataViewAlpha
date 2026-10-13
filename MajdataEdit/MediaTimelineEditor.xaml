@@ -15,9 +15,10 @@
 
         <Border Grid.Row="0" Background="{DynamicResource ButtonsBackground}"
                 BorderBrush="{DynamicResource MenuSeparator}" BorderThickness="0,0,0,1">
-            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+            <ScrollViewer x:Name="ToolbarButtonsScroll" HorizontalScrollBarVisibility="Hidden"
+                          VerticalScrollBarVisibility="Disabled" ScrollChanged="ToolbarButtonsScroll_ScrollChanged"
                           Background="{DynamicResource ButtonsBackground}">
-            <DockPanel Margin="6,4" LastChildFill="False">
+            <DockPanel Margin="6,4" Height="30" LastChildFill="False">
                 <Button Content="← 编辑" Width="62" Margin="0,0,8,0" Click="Close_Click"
                         Template="{DynamicResource DarkButton}" />
                 <CheckBox x:Name="SnapCheck" Content="吸附到一拍" IsChecked="True"
@@ -48,6 +49,14 @@
         </Border>
 
         <Grid Grid.Row="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <ScrollBar x:Name="ToolbarScrollBar" Grid.Row="0" Orientation="Horizontal" Height="12"
+                       Visibility="Collapsed" Scroll="ToolbarScrollBar_Scroll"
+                       Background="{DynamicResource ScrollTrack}" Foreground="{DynamicResource ScrollThumb}" />
+            <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="82" />
                 <ColumnDefinition Width="*" />
@@ -67,6 +76,7 @@
                         PreviewMouseMove="TimelineCanvas_MouseMove"
                         PreviewMouseLeftButtonUp="TimelineCanvas_MouseLeftButtonUp" />
             </ScrollViewer>
+            </Grid>
         </Grid>
 
         <Border Grid.Row="2" Background="{DynamicResource ButtonsBackground}"

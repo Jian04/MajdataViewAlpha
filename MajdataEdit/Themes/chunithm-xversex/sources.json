@@ -1,0 +1,57 @@
+{
+  "retrieved": "2026-09-16",
+  "credit": "© SEGA",
+  "source": "https://chunithm.sega.com/assets/img/common/bg/",
+  "assets": [
+    {
+      "sha256": "CD9DC954ED6DEF2DF040126F5BD1D226B600449000DF726CC4AAF5FEEB86A04F",
+      "file": "bg_pc.jpg",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/bg_pc.jpg"
+    },
+    {
+      "sha256": "FD08FE04F42C6A2927C39661B469E5E872356D31AE8CD6969C6C5C0A01C21259",
+      "file": "bottom_left.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/bottom_left.png"
+    },
+    {
+      "sha256": "94A38BE3E12D51CD767C080916D45423FC88817E9C45E8B3CDADE884B81427D5",
+      "file": "floating_text.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/floating_text.png"
+    },
+    {
+      "sha256": "9D0A124D25BB06EDEA11863C138980E588701BA6D54EFB1E9BB794F187BF2090",
+      "file": "globe_center.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/globe_center.png"
+    },
+    {
+      "sha256": "98B50C0FFE3F9E608DEE2BCA37BAA0CA7138B7AC7B3E4CAA7E336748ABE239AB",
+      "file": "globe_cross.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/globe_cross.png"
+    },
+    {
+      "sha256": "1D1FA5DF690744ECE98FB7B7DEA3837DC4C9122554D075BE76DD1618A4AC19BB",
+      "file": "globe.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/globe.png"
+    },
+    {
+      "sha256": "3327EFF3FD3CCB43A1E5D2D62769F47F7514892B942A028D350BF39898DDD767",
+      "file": "top_right.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/top_right.png"
+    },
+    {
+      "sha256": "D2FFE5F9CA61771F0532D8C195C5BEC0582AA4B7F5AF0A9B13B8D641BE5E0196",
+      "file": "verse_belt-left.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/verse_belt-left.png"
+    },
+    {
+      "sha256": "186573A104919822A11851BE1EFC2DE60059CC9A13CAB65D59829CCDCA8AD69D",
+      "file": "verse_belt-right.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/verse_belt-right.png"
+    },
+    {
+      "sha256": "708960B1596B83D13D8CA7850844FE96461F7E198EF1975DCC3B2F07673F66DB",
+      "file": "verse_town_pc.png",
+      "url": "https://chunithm.sega.com/assets/img/common/bg/verse_town_pc.png"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -33,6 +34,15 @@ public sealed class SongDetailTemplateView : MonoBehaviour
     // across that reload so replaying the same chart does not decode PNGs again.
     private static readonly SharedTextureEntry SharedBaseTexture = new();
     private static readonly SharedTextureEntry SharedOverlayTexture = new();
+    private static readonly SharedTextureEntry[] SharedTextTextures = { new(), new(), new() };
+    private sealed class CachedMarquee
+    {
+        internal RawImage Image;
+        internal float Width;
+        internal float Overflow;
+        internal float Clock;
+    }
+    private readonly CachedMarquee[] cachedMarquees = new CachedMarquee[3];
 
     private readonly List<RawImage> templateLayers = new();
     private readonly List<GameObject> runtimeObjects = new();
@@ -65,10 +75,6 @@ public sealed class SongDetailTemplateView : MonoBehaviour
     private UiState artistState;
     private UiState designerState;
     private string activeTemplateKey = "";
-    private RectTransform titleMarqueeViewport;
-    private float titleMarqueeStartX;
-    private float titleMarqueeOverflow;
-    private float titleMarqueeClock;
 
     internal bool IsMasterTemplate(Majson data)
     {
@@ -116,11 +122,8 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         if (TryApplyCachedCard(data))
             return true;
 
-        // Do not use the old runtime-composited fallback: it does not match the
-        // baked card visually. Missing cache should fall back to the original
-        // song-detail scene, while Edit fixes/recreates the cache for next play.
-        ResetOriginal();
-        return false;
+        throw new System.IO.FileNotFoundException(
+            "找不到当前难度的仿官封面，请在录制页手动刷新预览。谱面：" + data?.filePath);
     }
 
     // Show maximum dx score (note count * 3) right of DXSCORE and above the stars.
@@ -206,11 +209,27 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         var chartDir = Path.GetDirectoryName(data.filePath);
         if (string.IsNullOrWhiteSpace(chartDir))
             return false;
+        // majdata.json is a work file inside .majdata; figure belongs to the
+        // song folder, not the work-file folder.
+        if (Path.GetFileName(chartDir).Equals(".majdata", System.StringComparison.OrdinalIgnoreCase))
+            chartDir = Path.GetDirectoryName(chartDir);
+        if (string.IsNullOrWhiteSpace(chartDir)) return false;
 
         var stem = GetCacheStem(data.diffNum);
         if (stem == null)
             return false;
-        var cachePath = Path.Combine(chartDir, stem + ".png");
+        var cacheDir = Path.Combine(chartDir, "figure");
+        var cachePath = Path.Combine(cacheDir, MajdataCore.AlphaSession.FileName(stem) + ".png");
+        // Existing charts can contain caches made before this Edit/View session.
+        // Prefer our own complete cache, then the canonical shared filename.
+        if (!File.Exists(cachePath)) cachePath = Path.Combine(cacheDir, stem + ".png");
+        if (!File.Exists(cachePath) && Directory.Exists(cacheDir))
+        {
+            var previous = new DirectoryInfo(cacheDir).GetFiles(stem + "-*.png")
+                .Where(file => !file.Name.EndsWith("_overlay.png") && !file.Name.EndsWith("_full.png"))
+                .OrderByDescending(file => file.LastWriteTimeUtc).FirstOrDefault();
+            if (previous != null) cachePath = previous.FullName;
+        }
         if (!File.Exists(cachePath))
             return false;
 
@@ -229,7 +248,7 @@ public sealed class SongDetailTemplateView : MonoBehaviour
 
         // The new cache does not bake the jacket, placing the live jacket between the card base
         // and LV overlay for layered intro animation. Legacy single-image caches still hide it.
-        var overlayPath = Path.Combine(chartDir, stem + "_overlay.png");
+        var overlayPath = Path.Combine(cacheDir, Path.GetFileNameWithoutExtension(cachePath) + "_overlay.png");
         if (File.Exists(overlayPath) && TryLoadCacheOverlay(overlayPath))
         {
             ApplyJacketForCache();
@@ -258,76 +277,61 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         if (levelPlusText != null)
             levelPlusText.gameObject.SetActive(false);
         HideLegacyCardTexts();
-        // The cached base image contains the title. Do not recreate it with a live
-        // Unity Text: its metrics differ from the GDI+ preview and it adds layout work
-        // on the first intro frame.
-        titleMarqueeViewport = null;
-        titleMarqueeOverflow = 0f;
+        var textFolder = Path.Combine(cacheDir, Path.GetFileNameWithoutExtension(cachePath) + "_text");
+        ConfigureCachedMarquee(0, Path.Combine(textFolder, "title.png"), new Rect(20, 403, 301, 42));
+        ConfigureCachedMarquee(1, Path.Combine(textFolder, "artist.png"), new Rect(20, 450, 301, 38));
+        ConfigureCachedMarquee(2, Path.Combine(textFolder, "designer.png"), new Rect(21, 547, 200, 26));
         return true;
     }
 
     private void Update()
     {
         UpdateCacheOverlayIntro();
+        UpdateCachedMarquees(Time.unscaledDeltaTime);
+    }
 
-        if (titleMarqueeViewport == null || titleText == null || titleMarqueeOverflow <= 0f)
-            return;
-
+    private void UpdateCachedMarquees(float deltaTime)
+    {
         const float delay = 0.8f;
         const float endHold = 1.2f;
-        const float speed = 4f;
-        titleMarqueeClock += Time.unscaledDeltaTime;
-        var travelTime = titleMarqueeOverflow / speed;
-        var cycle = delay + travelTime + endHold;
-        var phase = titleMarqueeClock % cycle;
-        var offset = phase <= delay ? 0f
-            : phase < delay + travelTime ? (phase - delay) * speed
-            : titleMarqueeOverflow;
-        var position = titleText.rectTransform.anchoredPosition;
-        position.x = titleMarqueeStartX - offset;
-        titleText.rectTransform.anchoredPosition = position;
-    }
-
-    private void ConfigureCachedTitle(string value)
-    {
-        if (titleText == null || cardImage == null)
-            return;
-
-        if (titleMarqueeViewport == null)
+        const float speed = 32f;
+        foreach (var marquee in cachedMarquees)
         {
-            var viewportObject = new GameObject("TitleMarqueeViewport",
-                typeof(RectTransform), typeof(RectMask2D));
-            viewportObject.transform.SetParent(cardImage.rectTransform, false);
-            titleMarqueeViewport = viewportObject.GetComponent<RectTransform>();
-            runtimeObjects.Add(viewportObject);
+            if (marquee == null || !marquee.Image.gameObject.activeSelf || marquee.Overflow <= 0f)
+                continue;
+            marquee.Clock += deltaTime;
+            var travelTime = marquee.Overflow / speed;
+            var phase = marquee.Clock % (delay + travelTime + endHold);
+            var offset = Mathf.Clamp((phase - delay) * speed, 0f, marquee.Overflow);
+            var uv = marquee.Image.uvRect;
+            uv.x = offset / (marquee.Width + marquee.Overflow);
+            marquee.Image.uvRect = uv;
         }
-
-        titleMarqueeViewport.gameObject.SetActive(true);
-        SetRect(titleMarqueeViewport, FromPixelCenter(170.5f, 424f), FromPixelSize(325f, 42f));
-        titleText.transform.SetParent(titleMarqueeViewport, false);
-        titleText.gameObject.SetActive(true);
-        titleText.text = value ?? "";
-        titleText.font = bodyFont;
-        titleText.fontStyle = FontStyle.Bold;
-        titleText.fontSize = 7;
-        titleText.color = Color.white;
-        titleText.alignment = TextAnchor.MiddleLeft;
-        titleText.horizontalOverflow = HorizontalWrapMode.Overflow;
-        titleText.verticalOverflow = VerticalWrapMode.Truncate;
-        titleText.resizeTextForBestFit = false;
-        titleText.raycastTarget = false;
-        Canvas.ForceUpdateCanvases();
-
-        var viewportWidth = titleMarqueeViewport.rect.width;
-        var textWidth = Mathf.Max(viewportWidth, titleText.preferredWidth);
-        titleMarqueeOverflow = Mathf.Max(0f, textWidth - viewportWidth);
-        titleMarqueeStartX = titleMarqueeOverflow * 0.5f;
-        titleMarqueeClock = 0f;
-        SetRect(titleText.rectTransform, new Vector2(titleMarqueeStartX, 0f),
-            new Vector2(textWidth, titleMarqueeViewport.rect.height));
-        titleText.transform.SetAsLastSibling();
     }
 
+    private void ConfigureCachedMarquee(int index, string path, Rect row)
+    {
+        if (!File.Exists(path)) return;
+        var texture = LoadSharedTexture(path, SharedTextTextures[index]);
+        var marquee = cachedMarquees[index];
+        if (marquee == null)
+        {
+            var obj = new GameObject("CoverTextMarquee" + index, typeof(RectTransform), typeof(RawImage));
+            obj.transform.SetParent(cardImage.rectTransform, false);
+            runtimeObjects.Add(obj);
+            marquee = new CachedMarquee { Image = obj.GetComponent<RawImage>() };
+            cachedMarquees[index] = marquee;
+            marquee.Image.raycastTarget = false;
+        }
+        marquee.Image.gameObject.SetActive(true);
+        marquee.Image.texture = texture;
+        marquee.Width = row.width;
+        marquee.Overflow = Mathf.Max(0f, texture.width / 2f - row.width);
+        marquee.Clock = 0f;
+        marquee.Image.uvRect = new Rect(0f, 0f, row.width * 2f / texture.width, 1f);
+        SetRect(marquee.Image.rectTransform, FromPixelCenter(row.center.x, row.center.y), FromPixelSize(row.width, row.height));
+        marquee.Image.transform.SetAsLastSibling();
+    }
     private bool TryLoadCacheOverlay(string overlayPath)
     {
         var texture = LoadSharedTexture(overlayPath, SharedOverlayTexture);
@@ -391,15 +395,18 @@ public sealed class SongDetailTemplateView : MonoBehaviour
                 entry.Length == info.Length)
                 return entry.Texture;
 
-            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            // Cached cards and text strips are usually minified; sample the matching mip level.
+            var texture = new Texture2D(2, 2, TextureFormat.RGBA32, true);
             if (!texture.LoadImage(File.ReadAllBytes(path)))
             {
                 Destroy(texture);
-                return null;
+                throw new System.IO.InvalidDataException("封面图片无法解码：" + path);
             }
 
             texture.wrapMode = TextureWrapMode.Clamp;
-            texture.filterMode = FilterMode.Bilinear;
+            texture.filterMode = FilterMode.Trilinear;
+            // Retain fine glyph strokes between mip levels without reverting to unfiltered minification.
+            texture.mipMapBias = -0.5f;
             texture.hideFlags = HideFlags.DontUnloadUnusedAsset;
             if (entry.Texture != null)
                 Destroy(entry.Texture);
@@ -411,8 +418,7 @@ public sealed class SongDetailTemplateView : MonoBehaviour
         }
         catch (System.Exception exception)
         {
-            Debug.LogWarning("Unable to load baked song detail texture: " + exception.Message);
-            return null;
+            throw new System.IO.IOException("仿官封面读取失败：" + path + "\n" + exception.Message, exception);
         }
     }
 

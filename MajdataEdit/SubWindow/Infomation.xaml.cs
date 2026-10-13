@@ -12,20 +12,33 @@ namespace MajdataEdit;
 /// </summary>
 public partial class Infomation : Window
 {
+    public event Action? InformationChanged;
+    private bool loaded;
+    private readonly System.Windows.Threading.DispatcherTimer saveTimer = new()
+    { Interval = TimeSpan.FromMilliseconds(600) };
     public Infomation()
     {
         InitializeComponent();
+        saveTimer.Tick += (_, _) => { saveTimer.Stop(); InformationChanged?.Invoke(); };
+        foreach (var input in new[] { TitleTextbox, ArtistTextbox, DesignTextbox,
+                     BpmTextbox, ClockCountTextbox, OtherTextbox })
+            input.TextChanged += (_, _) => CommitInformation();
+        Closing += (_, _) => {
+            if (!saveTimer.IsEnabled) return;
+            saveTimer.Stop(); InformationChanged?.Invoke();
+        };
     }
 
-    private void OKButton_Click(object sender, RoutedEventArgs e)
+    private void CommitInformation()
     {
+        if (!loaded) return;
         SimaiProcess.title = TitleTextbox.Text;
         SimaiProcess.artist = ArtistTextbox.Text;
         SimaiProcess.designer = DesignTextbox.Text;
         SimaiProcess.wholeBpm = BpmTextbox.Text;
         SimaiProcess.clockCount = ClockCountTextbox.Text;
         SimaiProcess.other_commands = OtherTextbox.Text;
-        Close();
+        saveTimer.Stop(); saveTimer.Start();
     }
 
     private void InfomationWindow_Loaded(object sender, RoutedEventArgs e)
@@ -38,6 +51,7 @@ public partial class Infomation : Window
         OtherTextbox.Text = SimaiProcess.other_commands;
         LoadImageFromDefault();
         RenderOptions.SetBitmapScalingMode(SaltImage, BitmapScalingMode.HighQuality);
+        loaded = true;
     }
 
     private void LoadImageFromDefault()
@@ -101,6 +115,7 @@ public partial class Infomation : Window
             }
 
             Console.WriteLine(pic.MimeType);
+            CommitInformation();
         }
     }
 
@@ -132,6 +147,7 @@ public partial class Infomation : Window
             LoadImageFromByte(data);
             DelBGs();
             File.Copy(openFileDialog.FileName, MainWindow.maidataDir + "/bg" + info.Extension);
+            CommitInformation();
         }
     }
 

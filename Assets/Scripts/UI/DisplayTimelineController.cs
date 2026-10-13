@@ -16,7 +16,8 @@ public class DisplayTimelineController : MonoBehaviour
     private NoteEffectManager noteEffectManager;
     private SpriteRenderer[] judgeLines = Array.Empty<SpriteRenderer>();
     // The judge-area overlay follows the outline and is visible only during playback.
-    private SpriteRenderer judgeArea;
+    private SpriteRenderer styleOverlay;
+    private SpriteRenderer expandedJudgeLine;
     private Transform judgeLineTransform;
     private static readonly Dictionary<Transform, Vector3> originalJudgeLineScales = new();
     private bool playbackActive;
@@ -28,7 +29,14 @@ public class DisplayTimelineController : MonoBehaviour
     // pushes these values into the scene, so they must start at the same
     // defaults the request carries (visible) instead of zero.
     private float initialJudgeLine = 1f;
-    private float initialJudgeArea;
+    private int initialJudgeLineStyle = 3;
+    private static Sprite magicalJudgeLine;
+    private SpriteRenderer fadingJudgeLine;
+    private float judgeStyleTransitionStart = -1f;
+    private float fadingJudgeLineAlpha;
+    private float fadingOverlayAlpha;
+    private bool crossfadeJudgeLineImage;
+    private float initialStyleOverlay;
     private float initialJudgeInfo = 1f;
     private float initialComboInfo = 1f;
     private float initialOuterBrightness;
@@ -36,7 +44,7 @@ public class DisplayTimelineController : MonoBehaviour
     private float initialJudgeText = 1f;
     private int initialComboDisplay;
     private float lastJudgeLine = float.NaN;
-    private float lastJudgeArea = float.NaN;
+    private float lastStyleOverlay = float.NaN;
     private float lastJudgeInfo = float.NaN;
     private float lastComboInfo = float.NaN;
     private float lastOuterBrightness = float.NaN;
@@ -67,7 +75,7 @@ public class DisplayTimelineController : MonoBehaviour
     internal void Configure(
         List<DisplayChange> displayEvents,
         List<SubtitleChange> subtitleEvents,
-        bool showJudgeLine,
+        int judgeLineStyle,
         bool showJudgeInfo,
         bool showComboInfo,
         bool showJudgeText,
@@ -75,9 +83,9 @@ public class DisplayTimelineController : MonoBehaviour
         float outerBrightness,
         int comboDisplay,
         List<ColorChange> colorTable = null,
-        bool showJudgeArea = false,
         bool showSongDetail = true)
     {
+        CancelJudgeLineTransition();
         timeProvider = GameObject.Find("AudioTimeProvider")?.GetComponent<AudioTimeProvider>();
         bgManager = GameObject.Find("Background")?.GetComponent<BGManager>();
         objectCounter = GameObject.Find("ObjectCounter")?.GetComponent<ObjectCounter>();
@@ -106,7 +114,7 @@ public class DisplayTimelineController : MonoBehaviour
             if (renderer != null && !originalJudgeLineRgb.ContainsKey(renderer))
                 originalJudgeLineRgb[renderer] = renderer.color;
 
-        EnsureJudgeArea(outlineObject);
+        EnsureStyleOverlay(outlineObject);
 
         judgeLineColors.Clear();
         if (colorTable != null)
@@ -141,8 +149,9 @@ public class DisplayTimelineController : MonoBehaviour
             }
         }
 
-        initialJudgeLine = showJudgeLine ? 1f : 0f;
-        initialJudgeArea = showJudgeArea ? 1f : 0f;
+        initialJudgeLineStyle = MajdataCore.JudgeLineStyles.Supported(judgeLineStyle);
+        initialJudgeLine = judgeLineStyle == 0 ? 0f : 1f;
+        initialStyleOverlay = judgeLineStyle == 2 ? 1f : 0f;
         initialJudgeInfo = showJudgeInfo ? 1f : 0f;
         initialComboInfo = showComboInfo ? 1f : 0f;
         initialJudgeText = showJudgeText ? 1f : 0f;
@@ -156,6 +165,14 @@ public class DisplayTimelineController : MonoBehaviour
         if (displayEvents != null)
         {
             events.AddRange(displayEvents);
+            foreach (var ev in displayEvents)
+                if (ev.property == "JudgeLineStyle")
+                {
+                    events.Add(new DisplayChange { time = ev.time, property = "JudgeLineOpacity",
+                        target = ev.target == 0 ? 0 : 1, duration = ev.duration, resetToDefault = ev.resetToDefault });
+                    events.Add(new DisplayChange { time = ev.time, property = "JudgeStyleOverlayOpacity",
+                        target = ev.target == 2 ? 1 : 0, duration = ev.duration, resetToDefault = ev.resetToDefault });
+                }
             events.Sort((left, right) => left.time.CompareTo(right.time));
             foreach (var item in events)
             {
@@ -169,8 +186,8 @@ public class DisplayTimelineController : MonoBehaviour
         }
         hasDisplayEvents = events.Count > 0;
         tracks.Clear();
-        tracks["ShowJudgeLine"] = CreateTrack("ShowJudgeLine", initialJudgeLine);
-        tracks["ShowJudgeArea"] = CreateTrack("ShowJudgeArea", initialJudgeArea);
+        tracks["JudgeLineOpacity"] = CreateTrack("JudgeLineOpacity", initialJudgeLine);
+        tracks["JudgeStyleOverlayOpacity"] = CreateTrack("JudgeStyleOverlayOpacity", initialStyleOverlay);
         tracks["ShowJudgeInfo"] = CreateTrack("ShowJudgeInfo", initialJudgeInfo);
         tracks["ShowComboInfo"] = CreateTrack("ShowComboInfo", initialComboInfo);
         tracks["ShowJudgeText"] = CreateTrack("ShowJudgeText", initialJudgeText);
@@ -195,6 +212,8 @@ public class DisplayTimelineController : MonoBehaviour
 
     public void SetPlaybackActive(bool active)
     {
+        var keepStandbyTransition = !active && !playbackActive && judgeStyleTransitionStart >= 0f;
+        if (!keepStandbyTransition) CancelJudgeLineTransition();
         if (active && !HasRequiredTracks())
         {
             playbackActive = false;
@@ -210,17 +229,27 @@ public class DisplayTimelineController : MonoBehaviour
             ApplyAt(timeProvider != null ? timeProvider.AudioTime : 0f);
         }
         else
+        {
             RestoreStandby();
+            if (keepStandbyTransition)
+            {
+                ApplyJudgeLineTransition(Time.unscaledTime);
+                enabled = true;
+            }
+        }
     }
 
     public void PausePlayback()
     {
+        if (judgeStyleTransitionStart >= 0f)
+            ApplyJudgeLineTransition(judgeStyleTransitionStart + 0.25f);
         playbackActive = false;
         enabled = false;
     }
 
     public void SetPausedTimelineTime(float time)
     {
+        CancelJudgeLineTransition();
         playbackActive = false;
         SetJudgeLinePlaybackScale();
         InvalidateAppliedValues();
@@ -229,32 +258,48 @@ public class DisplayTimelineController : MonoBehaviour
     }
 
     public void SetImmediateDisplay(
-        bool showJudgeLine,
+        int judgeLineStyle,
         bool showJudgeInfo,
         bool showComboInfo,
         bool showJudgeText,
         float innerBrightness,
-        float outerBrightness,
-        bool showJudgeArea = false)
+        float outerBrightness)
     {
+        // Standby settings can arrive before the first chart ever calls Configure.
+        RefreshJudgeLineReference();
+        EnsureStyleOverlay(GameObject.Find("Outline"));
+        bgManager ??= GameObject.Find("Background")?.GetComponent<BGManager>();
+        objectCounter ??= GameObject.Find("ObjectCounter")?.GetComponent<ObjectCounter>();
+        noteEffectManager ??= GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
+        var nextStyle = MajdataCore.JudgeLineStyles.Supported(judgeLineStyle);
+        var styleChanged = initialJudgeLineStyle != nextStyle;
+        if (styleChanged) BeginJudgeLineTransition(nextStyle);
+        else CancelJudgeLineTransition();
         var now = timeProvider != null ? timeProvider.AudioTime : 0f;
-        var judgeLineTarget = showJudgeLine ? 1f : 0f;
-        var judgeAreaTarget = showJudgeArea ? 1f : 0f;
-        initialJudgeLine = showJudgeLine ? 1f : 0f;
-        initialJudgeArea = showJudgeArea ? 1f : 0f;
+        var judgeLineTarget = judgeLineStyle == 0 ? 0f : 1f;
+        var styleOverlayTarget = judgeLineStyle == 2 ? 1f : 0f;
+        initialJudgeLineStyle = MajdataCore.JudgeLineStyles.Supported(judgeLineStyle);
+        initialJudgeLine = judgeLineStyle == 0 ? 0f : 1f;
+        initialStyleOverlay = judgeLineStyle == 2 ? 1f : 0f;
         initialJudgeInfo = showJudgeInfo ? 1f : 0f;
         initialComboInfo = showComboInfo ? 1f : 0f;
         initialJudgeText = showJudgeText ? 1f : 0f;
         initialInnerBrightness = Mathf.Clamp01(innerBrightness);
         initialOuterBrightness = Mathf.Clamp01(outerBrightness);
-        if (tracks.TryGetValue("ShowJudgeLine", out var judgeLineTrack))
+        if (tracks.TryGetValue("JudgeLineOpacity", out var judgeLineTrack))
+        {
+            judgeLineTrack.SetDefault(initialJudgeLine);
             judgeLineTrack.TransitionTo(now, judgeLineTarget, 0.25f);
+        }
         else
-            tracks["ShowJudgeLine"] = CreateTrack("ShowJudgeLine", initialJudgeLine);
-        if (tracks.TryGetValue("ShowJudgeArea", out var judgeAreaTrack))
-            judgeAreaTrack.TransitionTo(now, judgeAreaTarget, 0.25f);
+            tracks["JudgeLineOpacity"] = CreateTrack("JudgeLineOpacity", initialJudgeLine);
+        if (tracks.TryGetValue("JudgeStyleOverlayOpacity", out var styleOverlayTrack))
+        {
+            styleOverlayTrack.SetDefault(initialStyleOverlay);
+            styleOverlayTrack.TransitionTo(now, styleOverlayTarget, 0.25f);
+        }
         else
-            tracks["ShowJudgeArea"] = CreateTrack("ShowJudgeArea", initialJudgeArea);
+            tracks["JudgeStyleOverlayOpacity"] = CreateTrack("JudgeStyleOverlayOpacity", initialStyleOverlay);
         tracks["ShowJudgeInfo"] = CreateTrack("ShowJudgeInfo", initialJudgeInfo);
         tracks["ShowComboInfo"] = CreateTrack("ShowComboInfo", initialComboInfo);
         tracks["ShowJudgeText"] = CreateTrack("ShowJudgeText", initialJudgeText);
@@ -265,12 +310,19 @@ public class DisplayTimelineController : MonoBehaviour
             ApplyAt(now);
         else
             RestoreStandby();
+        if (styleChanged)
+        {
+            ApplyJudgeLineTransition(Time.unscaledTime);
+            enabled = true;
+        }
     }
 
     private void Update()
     {
         if (playbackActive && timeProvider != null)
             ApplyAt(timeProvider.AudioTime);
+        if (judgeStyleTransitionStart >= 0f)
+            ApplyJudgeLineTransition(Time.unscaledTime);
     }
 
     private void OnGUI()
@@ -440,6 +492,7 @@ public class DisplayTimelineController : MonoBehaviour
 
     private void OnDestroy()
     {
+        if (fadingJudgeLine != null) Destroy(fadingJudgeLine.gameObject);
         if (ownedSubtitleFont != null)
             Destroy(ownedSubtitleFont);
         foreach (var font in ownedSubtitleFonts)
@@ -467,7 +520,11 @@ public class DisplayTimelineController : MonoBehaviour
             if (font == null)
                 continue;
             var characters = string.Concat(group.Select(item => item.text));
+#if UNITY_6000_6_OR_NEWER
+            var key = font.GetEntityId().ToString() + ":" + group.Key.Size + ":" + characters;
+#else
             var key = font.GetInstanceID() + ":" + group.Key.Size + ":" + characters;
+#endif
             if (!warmedSubtitleGlyphs.Add(key))
                 continue;
             font.RequestCharactersInTexture(
@@ -512,11 +569,13 @@ public class DisplayTimelineController : MonoBehaviour
         if (judgeLines.Length == 0 || judgeLines[0] == null)
             RefreshJudgeLineReference();
         var gameplayVisible = !showSongDetailIntro || time >= IntroGameplayRevealTime;
-        var judgeLine = gameplayVisible ? tracks["ShowJudgeLine"].Evaluate(time) : 0f;
-        var judgeAreaRaw = !gameplayVisible || !tracks.TryGetValue("ShowJudgeArea", out var jaTrack)
+        var style = EvaluateJudgeLineStyle(time);
+        ApplyJudgeLineStyle(style);
+        var judgeLine = gameplayVisible ? tracks["JudgeLineOpacity"].Evaluate(time) : 0f;
+        var styleOverlayRaw = !gameplayVisible || !tracks.TryGetValue("JudgeStyleOverlayOpacity", out var jaTrack)
             ? 0f
             : jaTrack.Evaluate(time);
-        var judgeAreaVal = Mathf.Min(judgeAreaRaw, judgeLine);
+        var styleOverlayVal = style == 2 ? Mathf.Min(styleOverlayRaw, judgeLine) : 0f;
         var judgeInfo = tracks["ShowJudgeInfo"].Evaluate(time);
         var comboInfo = tracks["ShowComboInfo"].Evaluate(time);
         var judgeText = tracks["ShowJudgeText"].Evaluate(time);
@@ -558,14 +617,15 @@ public class DisplayTimelineController : MonoBehaviour
             judgeLineTintInitialized = true;
         }
         lastJudgeLine = judgeLine;
+        ApplyExpandedJudgeLine(time, judgeLine);
 
-        if (judgeArea != null && !Mathf.Approximately(judgeAreaVal, lastJudgeArea))
+        if (styleOverlay != null && !Mathf.Approximately(styleOverlayVal, lastStyleOverlay))
         {
-            var ac = judgeArea.color;
-            ac.a = judgeAreaVal;
-            judgeArea.color = ac;
-            judgeArea.forceRenderingOff = judgeAreaVal <= 0.001f;
-            lastJudgeArea = judgeAreaVal;
+            var ac = styleOverlay.color;
+            ac.a = styleOverlayVal;
+            styleOverlay.color = ac;
+            styleOverlay.forceRenderingOff = styleOverlayVal <= 0.001f;
+            lastStyleOverlay = styleOverlayVal;
         }
 
         if (!Mathf.Approximately(judgeInfo, lastJudgeInfo) ||
@@ -651,7 +711,7 @@ public class DisplayTimelineController : MonoBehaviour
         {
             if (item.time > time)
                 break;
-            value = Mathf.RoundToInt(item.target);
+            value = item.resetToDefault ? initialComboDisplay : Mathf.RoundToInt(item.target);
         }
         return value;
     }
@@ -663,43 +723,189 @@ public class DisplayTimelineController : MonoBehaviour
     }
 
     // Keep the overlay on the outline's parent so both sprites share the same scene transform.
-    private void EnsureJudgeArea(GameObject outlineObject)
+    private int EvaluateJudgeLineStyle(float time)
+    {
+        var style = initialJudgeLineStyle;
+        if (eventsByProperty.TryGetValue("JudgeLineStyle", out var changes))
+            foreach (var change in changes)
+            {
+                if (change.time > time) break;
+                // Keep the preceding image during a fade to off.
+                var target = change.resetToDefault ? initialJudgeLineStyle : (int)change.target;
+                if (target != 0) style = MajdataCore.JudgeLineStyles.Supported(target);
+            }
+        return style;
+    }
+
+    private void BeginJudgeLineTransition(int nextStyle)
+    {
+        ApplyJudgeLineStyle(initialJudgeLineStyle);
+        crossfadeJudgeLineImage = (initialJudgeLineStyle == 3) != (nextStyle == 3) ||
+                                 initialJudgeLineStyle == 0 || nextStyle == 0;
+        fadingOverlayAlpha = styleOverlay != null ? styleOverlay.color.a : 0f;
+        if (crossfadeJudgeLineImage && judgeLines.Length > 0 && judgeLines[0] != null)
+        {
+            var source = judgeLines[0];
+            if (fadingJudgeLine == null)
+                fadingJudgeLine = new GameObject("JudgeLineTransition").AddComponent<SpriteRenderer>();
+            fadingJudgeLine.transform.SetParent(source.transform.parent, false);
+            fadingJudgeLine.transform.localPosition = source.transform.localPosition;
+            fadingJudgeLine.transform.localRotation = source.transform.localRotation;
+            fadingJudgeLine.transform.localScale = source.transform.localScale;
+            fadingJudgeLine.sprite = source.sprite;
+            fadingJudgeLine.sharedMaterial = source.sharedMaterial;
+            fadingJudgeLine.sortingLayerID = source.sortingLayerID;
+            fadingJudgeLine.sortingOrder = source.sortingOrder;
+            fadingJudgeLine.color = source.color;
+            fadingJudgeLineAlpha = source.forceRenderingOff ? 0f : source.color.a;
+            fadingJudgeLine.forceRenderingOff = false;
+        }
+        else if (fadingJudgeLine != null) fadingJudgeLine.forceRenderingOff = true;
+        judgeStyleTransitionStart = Time.unscaledTime;
+    }
+
+    private void ApplyJudgeLineTransition(float now)
+    {
+        var progress = Mathf.Clamp01((now - judgeStyleTransitionStart) / 0.25f);
+        var targetAlpha = playbackActive ? lastJudgeLine : initialJudgeLineStyle == 0 ? 0f : 1f;
+        if (crossfadeJudgeLineImage)
+        {
+            foreach (var renderer in judgeLines)
+            {
+                if (renderer == null) continue;
+                var color = renderer.color;
+                color.a = targetAlpha * progress;
+                renderer.color = color;
+                renderer.forceRenderingOff = color.a <= 0.001f;
+            }
+            if (fadingJudgeLine != null)
+            {
+                var color = fadingJudgeLine.color;
+                color.a = fadingJudgeLineAlpha * (1f - progress);
+                fadingJudgeLine.color = color;
+                fadingJudgeLine.forceRenderingOff = color.a <= 0.001f;
+            }
+        }
+        if (styleOverlay != null)
+        {
+            var target = playbackActive ? lastStyleOverlay : initialJudgeLineStyle == 2 ? 1f : 0f;
+            var color = styleOverlay.color;
+            color.a = Mathf.Lerp(fadingOverlayAlpha, target, progress);
+            styleOverlay.color = color;
+            styleOverlay.forceRenderingOff = color.a <= 0.001f;
+        }
+        if (progress < 1f) return;
+        judgeStyleTransitionStart = -1f;
+        InvalidateAppliedValues();
+        if (!playbackActive) enabled = false;
+    }
+
+    private void CancelJudgeLineTransition()
+    {
+        judgeStyleTransitionStart = -1f;
+        if (fadingJudgeLine != null) fadingJudgeLine.forceRenderingOff = true;
+    }
+
+    private void ApplyJudgeLineStyle(int style)
+    {
+        foreach (var renderer in judgeLines)
+        {
+            if (renderer == null) continue;
+            var skin = renderer.GetComponent<CustomSkin>();
+            var sprite = skin != null ? skin.JudgeLineBase : null;
+            if (style == 3)
+            {
+                if (magicalJudgeLine == null)
+                {
+                    var path = System.IO.Path.Combine(Application.streamingAssetsPath, "JudgeLines", "3.png");
+                    if (System.IO.File.Exists(path))
+                    {
+                        var loaded = SpriteLoader.LoadSpriteFromFile(path);
+                        // The eight lamp centres are 543.5 px from (644,608) in this asset.
+                        // Align those centres with the gameplay ring at radius 4.8.
+                        magicalJudgeLine = Sprite.Create(loaded.texture, loaded.rect, new Vector2(644f / 1294f, 1f - 608f / 1219f),
+                            543.5f / 4.8f);
+                        Destroy(loaded);
+                    }
+                }
+                sprite = magicalJudgeLine != null ? magicalJudgeLine : sprite;
+            }
+            if (sprite != null && renderer.sprite != sprite) renderer.sprite = sprite;
+        }
+    }
+
+    private void ApplyExpandedJudgeLine(float time, float opacity)
+    {
+        DisplayChange active = null;
+        if (eventsByProperty.TryGetValue("JudgeLineExpand", out var changes))
+            foreach (var change in changes)
+            {
+                if (change.time > time) break;
+                active = change;
+            }
+        // Zero removes only the additional ring. Selecting the latest event
+        // restores its on/off state when seeking in either direction.
+        if (active == null || active.target == 0f || judgeLineTransform == null)
+        {
+            if (expandedJudgeLine != null) expandedJudgeLine.forceRenderingOff = true;
+            return;
+        }
+        if (expandedJudgeLine == null)
+        {
+            var go = new GameObject("ExpandedJudgeLine");
+            go.transform.SetParent(transform, false);
+            expandedJudgeLine = go.AddComponent<SpriteRenderer>();
+        }
+        var source = judgeLines[0];
+        var skin = source.GetComponent<CustomSkin>();
+        expandedJudgeLine.sprite = skin != null ? skin.JudgeLineBase : null;
+        expandedJudgeLine.sortingLayerID = source.sortingLayerID;
+        expandedJudgeLine.sortingOrder = source.sortingOrder + 1;
+        var progress = active.duration <= 0 ? 1f : Mathf.Clamp01((time - (float)active.time) / active.duration);
+        expandedJudgeLine.transform.SetPositionAndRotation(judgeLineTransform.position,
+            judgeLineTransform.rotation * Quaternion.Euler(0, 0, active.target * progress));
+        expandedJudgeLine.transform.localScale = judgeLineTransform.lossyScale;
+        expandedJudgeLine.color = new Color(1, 1, 1, opacity);
+        expandedJudgeLine.forceRenderingOff = opacity <= 0.001f;
+    }
+
+    private void EnsureStyleOverlay(GameObject outlineObject)
     {
         if (outlineObject == null)
             return;
         var skin = outlineObject.GetComponent<CustomSkin>();
-        var sprite = skin != null ? skin.JudgeArea : null;
+        var sprite = skin != null ? skin.StyleOverlay : null;
 
-        if (judgeArea == null)
+        if (styleOverlay == null)
         {
-            var existing = outlineObject.transform.Find("JudgeAreaOverlay");
+            var existing = outlineObject.transform.Find("JudgeLineStyleLayer");
             if (existing == null)
-                existing = GameObject.Find("JudgeAreaOverlay")?.transform;
+                existing = GameObject.Find("JudgeLineStyleLayer")?.transform;
             if (existing != null)
-                judgeArea = existing.GetComponent<SpriteRenderer>();
+                styleOverlay = existing.GetComponent<SpriteRenderer>();
         }
-        if (judgeArea == null)
+        if (styleOverlay == null)
         {
-            var go = new GameObject("JudgeAreaOverlay");
-            judgeArea = go.AddComponent<SpriteRenderer>();
+            var go = new GameObject("JudgeLineStyleLayer");
+            styleOverlay = go.AddComponent<SpriteRenderer>();
         }
-        judgeArea.transform.SetParent(outlineObject.transform.parent, false);
-        judgeArea.transform.localPosition = outlineObject.transform.localPosition;
-        judgeArea.transform.localRotation = outlineObject.transform.localRotation;
-        judgeArea.transform.localScale = Vector3.one;
+        styleOverlay.transform.SetParent(outlineObject.transform.parent, false);
+        styleOverlay.transform.localPosition = outlineObject.transform.localPosition;
+        styleOverlay.transform.localRotation = outlineObject.transform.localRotation;
+        styleOverlay.transform.localScale = Vector3.one;
 
         var outlineRenderer = outlineObject.GetComponent<SpriteRenderer>();
         if (outlineRenderer != null)
         {
-            judgeArea.sortingLayerID = outlineRenderer.sortingLayerID;
-            judgeArea.sortingOrder = outlineRenderer.sortingOrder - 1;
+            styleOverlay.sortingLayerID = outlineRenderer.sortingLayerID;
+            styleOverlay.sortingOrder = outlineRenderer.sortingOrder - 1;
         }
-        judgeArea.sprite = sprite;
-        var c = judgeArea.color;
+        styleOverlay.sprite = sprite;
+        var c = styleOverlay.color;
         c.a = 0f;
-        judgeArea.color = c;
-        judgeArea.forceRenderingOff = true;
-        lastJudgeArea = float.NaN;
+        styleOverlay.color = c;
+        styleOverlay.forceRenderingOff = true;
+        lastStyleOverlay = float.NaN;
     }
 
     private void SetJudgeLinePlaybackScale()
@@ -739,13 +945,15 @@ public class DisplayTimelineController : MonoBehaviour
 
     private void RestoreStandby()
     {
+        if (expandedJudgeLine != null) expandedJudgeLine.forceRenderingOff = true;
         SetJudgeLinePlaybackScale();
+        ApplyJudgeLineStyle(initialJudgeLineStyle);
         foreach (var renderer in judgeLines)
         {
             if (renderer == null)
                 continue;
             renderer.enabled = true;
-            renderer.forceRenderingOff = false;
+            renderer.forceRenderingOff = initialJudgeLineStyle == 0;
             var color = renderer.color;
             if (originalJudgeLineRgb.TryGetValue(renderer, out var original))
             {
@@ -757,12 +965,12 @@ public class DisplayTimelineController : MonoBehaviour
             renderer.color = color;
         }
 
-        if (judgeArea != null)
+        if (styleOverlay != null)
         {
-            var ac = judgeArea.color;
-            ac.a = 0f;
-            judgeArea.color = ac;
-            judgeArea.forceRenderingOff = true;
+            var ac = styleOverlay.color;
+            ac.a = initialJudgeLineStyle == 2 ? 1f : 0f;
+            styleOverlay.color = ac;
+            styleOverlay.forceRenderingOff = initialJudgeLineStyle != 2;
         }
 
         objectCounter?.SetSideDisplays(false, false);
@@ -774,7 +982,7 @@ public class DisplayTimelineController : MonoBehaviour
 
     private bool HasRequiredTracks()
     {
-        return tracks.ContainsKey("ShowJudgeLine") &&
+        return tracks.ContainsKey("JudgeLineOpacity") &&
                tracks.ContainsKey("ShowJudgeInfo") &&
                tracks.ContainsKey("ShowComboInfo") &&
                tracks.ContainsKey("ShowJudgeText") &&
@@ -785,7 +993,7 @@ public class DisplayTimelineController : MonoBehaviour
     private void InvalidateAppliedValues()
     {
         lastJudgeLine = float.NaN;
-        lastJudgeArea = float.NaN;
+        lastStyleOverlay = float.NaN;
         lastJudgeInfo = float.NaN;
         lastComboInfo = float.NaN;
         lastOuterBrightness = float.NaN;
@@ -804,7 +1012,7 @@ public class DisplayTimelineController : MonoBehaviour
     private sealed class DisplayTrack
     {
         private readonly List<DisplayChange> events;
-        private readonly float initial;
+        private float initial;
         private int cursor;
         private float current;
         private float transitionStart = float.MinValue;
@@ -834,12 +1042,14 @@ public class DisplayTimelineController : MonoBehaviour
                 transitionStart = (float)item.time;
                 transitionDuration = Mathf.Max(0f, item.duration);
                 transitionFrom = current;
-                transitionTarget = Mathf.Clamp01(item.target);
+                transitionTarget = item.resetToDefault ? initial : Mathf.Clamp01(item.target);
             }
 
             return ValueAt(time, transitionStart, transitionDuration,
                 transitionFrom, transitionTarget);
         }
+
+        public void SetDefault(float value) => initial = Mathf.Clamp01(value);
 
         public void TransitionTo(float time, float target, float duration)
         {

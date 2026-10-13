@@ -24,6 +24,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
     // D-zone routes are rebuilt in code and may add bars, which the Animator cannot
     // reach, so those routes drive the fade-in themselves.
     private bool routeRebuilt;
+    private Vector3[] rebuiltGuidePath;
+    private float[] rebuiltGuideDistances;
+    private float rebuiltGuideRotationOffset;
     public bool isReverse;
     public int rotationPosition = -1;
     public bool isJustR;
@@ -173,6 +176,18 @@ public class SlideDrop : NoteLongDrop, IFlasher
         if (isInitialized)
             return;
         isInitialized = true;
+        var skin = ResolveCustomSkin(isBreak ? spriteBreak : isEach ? spriteEach : spriteNormal);
+        if (skin != null)
+            spriteNormal = spriteEach = spriteBreak = skin;
+        // The parsed segment is authoritative for both prefab placement and
+        // generated D-zone geometry, including snapshots carrying legacy flags.
+        if (pathSegment != null)
+        {
+            startPosition = pathSegment.startPosition;
+            endPosition = pathSegment.endPosition;
+            isDZone = pathSegment.startIsDZone;
+            isDZoneEnd = pathSegment.endIsDZone;
+        }
         slideOK = transform.GetChild(transform.childCount - 1).gameObject; //slideok is the last one        
         if (objectCounter == null) objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
 
@@ -373,7 +388,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         var startIsDZone = isReverse ? isDZoneEnd : isDZone;
         var endIsDZone = isReverse ? isDZone : isDZoneEnd;
 
-        if (!startIsDZone && !endIsDZone)
+        if (!startIsDZone && !endIsDZone && pathSegment?.middleIsDZone != true)
         {
             slidePositions.Add(getPositionFromDistance(4.8f, physicalStart));
             routeBarPositions.AddRange(slideBars.Select(bar => bar.transform.position));
@@ -455,6 +470,13 @@ public class SlideDrop : NoteLongDrop, IFlasher
         }
         deformedRoute[0] = start;
         deformedRoute[^1] = end;
+        if (pathKind is DZonePathKind.ViaCenter or DZonePathKind.AnchoredMiddle or DZonePathKind.Lightning)
+        {
+            rebuiltGuidePath = (Vector3[])deformedRoute.Clone();
+            if (isReverse) Array.Reverse(rebuiltGuidePath);
+            rebuiltGuideDistances = SlideGuideGeometry.Distances(rebuiltGuidePath);
+            rebuiltGuideRotationOffset = spriteTangentOffset + 18f - (isReverse ? 180f : 0f);
+        }
 
         var deformedDistances = BuildCumulativeDistances(deformedRoute);
         var deformedLength = deformedDistances[^1];
@@ -678,7 +700,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         return route;
     }
 
-    private static Vector3[] BuildLightningRoute(
+    internal static Vector3[] BuildLightningRoute(
         IReadOnlyList<Vector3> originalRoute,
         Vector3 start,
         Vector3 end)
@@ -1370,17 +1392,18 @@ public class SlideDrop : NoteLongDrop, IFlasher
     }
     private bool IgnoreSensorGroup(SensorGroup group)
     {
-        // Mixed A/D slides cross both sensor rings, so no ring is excluded.
-        if (isDZone != isDZoneEnd)
-            return false;
-
-        return isDZone
-            ? group == SensorGroup.A || group == SensorGroup.B
-            : group == SensorGroup.E || group == SensorGroup.D;
+        var mixedMiddle = pathSegment?.hasMiddle == true && pathSegment.middleIsDZone != isDZone;
+        return !TouchSlideSensorRoute.AllowsKeyPathGroup(group.ToString()[0], isDZone, isDZoneEnd, mixedMiddle);
     }
 
     void GetSensors(RectTransform[] sensors)
     {
+        // The expanded D-ring and selectable P/Q routes do not have the
+        // original prefab's fixed-area judgement table. AstroDX groups its
+        // regular slide arrows by their nearest sensor; use that rule only for
+        // these Alpha routes. Ordinary 4.4.0 slides keep their existing areas.
+        var useClosestSensor = isDZone || isDZoneEnd || pathSegment?.middleIsDZone == true ||
+            slideType.StartsWith("pq", StringComparison.Ordinal);
         var regions = new List<(Sensor Sensor, Vector3 Position, float RadiusSquared)>();
         foreach (var rect in sensors)
         {
@@ -1394,6 +1417,24 @@ public class SlideDrop : NoteLongDrop, IFlasher
         Sensor lastSensor = null;
         foreach (var pos in routeBarPositions)
         {
+            if (useClosestSensor)
+            {
+                Sensor closest = null;
+                var bestDistance = float.PositiveInfinity;
+                foreach (var region in regions)
+                {
+                    var distance = (pos - region.Position).sqrMagnitude;
+                    if (distance >= bestDistance) continue;
+                    bestDistance = distance;
+                    closest = region.Sensor;
+                }
+                if (closest != null && closest != lastSensor)
+                {
+                    judgeSensors.Add(closest);
+                    lastSensor = closest;
+                }
+                continue;
+            }
             foreach (var region in regions)
             {
                 var sensor = region.Sensor;
@@ -1414,7 +1455,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     {
         if (JudgmentDisabled || JudgmentSuspended)
             return;
-        if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
+        if (!isMine && InputManager.Mode is (AutoPlayMode.Enable or AutoPlayMode.Random))
             return;
 
         /// time      is when the Slide starts
@@ -1435,6 +1476,30 @@ public class SlideDrop : NoteLongDrop, IFlasher
             canCheck = true;
 
         BindJudgeInputWhenReady();
+
+        if (isMine && !isJudged)
+        {
+            Check();
+            // MajdataPlay clears an untouched terminal mine when its judgement
+            // point arrives; intermediate links wait for their own duration.
+            var mineClearTime = ConnectInfo.IsConnSlide && !ConnectInfo.IsGroupPartEnd
+                ? time + LastFor : judgeTiming;
+            if (!isFinished && timeProvider.AudioTime >= mineClearTime)
+            {
+                judgeResult = JudgeType.Perfect;
+                isJudged = true;
+                HideBar(logicalBarCount);
+            }
+        }
+        // The mine is safe after the judgement point, but its guide star still
+        // travels to the end of the authored path before the object retires.
+        if (isMine && isJudged && judgeResult == JudgeType.Perfect &&
+            timeProvider.AudioTime >= time + LastFor)
+        {
+            judgeQueue.Clear();
+            DestroySelf();
+            return;
+        }
 
         if (timing > 0)
             Running();
@@ -1484,40 +1549,18 @@ public class SlideDrop : NoteLongDrop, IFlasher
             foreach (var bar in slideBars)
                 if (bar != null)
                     bar.SetActive(true);
-        // During Slide fade-in, opacity rises from 0 to 0.55 over 200ms
+        // Fade continuously from the configured appearance time to the head beat.
+        // Sampling the chart clock also makes seeks deterministic.
         var startiming = timeProvider.AudioTime - timeStart;
         if (startiming <= 0f)
         {
-            if (IsPausedTimelinePreview)
-                star_slide.SetActive(false);
-            if (fadeInTime >= -0.0001f)
-            {
-                if (fadeInAnimator != null)
-                    fadeInAnimator.enabled = false;
-                setSlideBarAlpha(startiming >= 0f ? 1f : 0f);
-                return;
-            }
-            if (startiming >= -0.05f)
-            {
-                if (fadeInAnimator != null)
-                    fadeInAnimator.enabled = false;
-                setSlideBarAlpha(1f);
-            }
-            else if (routeRebuilt)
-            {
-                var lead = fullFadeInTime - fadeInTime;
-                var progress = lead > 0.0001f
-                    ? Mathf.Clamp01((startiming - fadeInTime) / lead)
-                    : (startiming >= fadeInTime ? 1f : 0f);
-                setSlideBarAlpha(progress * 0.55f);
-            }
-            else if (fadeInAnimator != null &&
-                     !fadeInAnimator.enabled && startiming >= fadeInTime)
-            {
-                fadeInAnimator.enabled = true;
-            }
+            star_slide.SetActive(false);
+            if (fadeInAnimator != null) fadeInAnimator.enabled = false;
+            var alpha = fadeInTime >= -0.0001f
+                ? (startiming >= 0f ? 1f : 0f)
+                : Mathf.InverseLerp(fadeInTime, 0f, startiming);
+            setSlideBarAlpha(alpha);
             return;
-            
         }
         if (fadeInAnimator != null)
             fadeInAnimator.enabled = false;
@@ -1547,6 +1590,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 1f);
             star_slide.transform.position = slidePositions[0];
             applyStarRotation(slideRotations[0]);
+            if (rebuiltGuidePath != null) UpdateRebuiltGuide(0f);
         }
         else
         {
@@ -1574,6 +1618,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
     public void Check()
     {
         if (JudgmentDisabled || JudgmentSuspended)
+            return;
+        if (isMine && isJudged)
             return;
         if (isFinished || !canCheck)
             return;
@@ -1651,6 +1697,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     /// </summary>
     void Running()
     {
+        if (isMine || JudgmentDisabled || JudgmentSuspended) return;
         if (star_slide == null)
             return;
         else if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random or AutoPlayMode.Disable)
@@ -1734,7 +1781,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 else
                     judge = JudgeType.Perfect;
             }            
-            judgeResult = judge ?? JudgeType.Miss;
+            judgeResult = isMine ? JudgeType.Miss : judge ?? JudgeType.Miss;
             SetJust();
             isJudged = true;
         }
@@ -1747,6 +1794,9 @@ public class SlideDrop : NoteLongDrop, IFlasher
     {
         switch (judgeResult)
         {
+            case JudgeType.Miss:
+                slideOK.GetComponent<LoadJustSprite>().setMiss();
+                break;
             case JudgeType.FastGreat2:
             case JudgeType.FastGreat1:
             case JudgeType.FastGreat:
@@ -1909,6 +1959,22 @@ public class SlideDrop : NoteLongDrop, IFlasher
     /// Updates the guide Star state
     /// <para>Includes position and angle</para>
     /// </summary>
+    internal override void RestoreTimelineState(float at)
+    {
+        if (!JudgmentDisabled && !isMine && at > time && judgeQueue.Count > 0)
+        {
+            var progress = GetSlidePathProgress(at);
+            var boundary = Mathf.FloorToInt(progress * logicalBarCount);
+            while (judgeQueue.Count > 0 && judgeQueue[0].SlideIndex <= boundary)
+            {
+                HideBar(judgeQueue[0].SlideIndex);
+                RemoveJudgeAreas(1);
+            }
+            canCheck = true;
+        }
+        base.RestoreTimelineState(at);
+    }
+
     void UpdateStar()
     {
         spriteRenderer_star.color = Color.white;
@@ -1923,7 +1989,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         var pos = indexProcess - index;
         // A fake slide is never traced: the star travels but the trail stays put,
         // exactly like a missed slide. Timeline preview still wipes as it goes.
-        if (previewOnly && process > 0f && areaStep.Count > 0)
+        if ((previewOnly || isMine) && process > 0f && areaStep.Count > 0)
         {
             var barIndex = areaStep[
                 Mathf.Clamp(
@@ -1937,13 +2003,14 @@ public class SlideDrop : NoteLongDrop, IFlasher
         {
             star_slide.transform.position = slidePositions.LastOrDefault();
             applyStarRotation(slideRotations.LastOrDefault());
+            if (rebuiltGuidePath != null) UpdateRebuiltGuide(1f);
             if (timeProvider.AudioTime < time + LastFor)
                 return;
             // Auto-play traces the slide on the player's behalf, but a fake slide
             // is not there to be traced. Hand play already refuses it, so letting
             // auto-play wipe the trail and retire the note made the same chart
             // behave two different ways. It ends like a missed slide either way.
-            if (!isFake &&
+            if (!isFake && !isMine &&
                 InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
             {
                 var autoBarIndex = areaStep[(int)(process * (areaStep.Count - 1))];
@@ -1964,6 +2031,10 @@ public class SlideDrop : NoteLongDrop, IFlasher
             else if (isFinished && isJudged)
                 DestroySelf();
         }
+        else if (rebuiltGuidePath != null)
+        {
+            UpdateRebuiltGuide(process);
+        }
         else
         {
             var a = slidePositions[index + 1];
@@ -1983,13 +2054,20 @@ public class SlideDrop : NoteLongDrop, IFlasher
                 applyStarRotation(newRotation);
             }
         } 
-        if (!isFake &&
+        if (!isFake && !isMine &&
             InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
         {
             var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
             RemoveJudgeAreas((int)(process * (judgeQueue.Count - 1)));
             HideBar(barIndex);
         }
+    }
+
+    private void UpdateRebuiltGuide(float progress)
+    {
+        var pose = SlideGuideGeometry.Evaluate(rebuiltGuidePath, rebuiltGuideDistances, progress);
+        star_slide.transform.position = pose.Position;
+        applyStarRotation(RotationFromTangent(pose.Tangent, rebuiltGuideRotationOffset));
     }
 
     private float GetSlidePathProgress(float audioTime)

@@ -32,6 +32,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
 
     public int endPosition;
     public int sortIndex;
+    public int guideStarSortOrder;
 
     public float fadeInTime;
     public float starSpeed;
@@ -120,6 +121,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
 
     private bool isDestroying = false;
     private float lastAudioTime = float.MinValue;
+    private float restoredThroughTime = float.MinValue;
 
     bool isChecking = false;
     bool isFinished { get => _judgeQueues.All(x => x.Count == 0); }
@@ -159,6 +161,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
         {
             star_slide[i] = Instantiate(star_slidePrefab, notes);
             spriteRenderer_star[i] = star_slide[i].GetComponent<SpriteRenderer>();
+            StarDisplayOrder.Register(star_slide[i], guideStarSortOrder);
             
             if (isBreak) spriteRenderer_star[i].sprite = breakStar;
             else if (isEach) spriteRenderer_star[i].sprite = eachStar;
@@ -237,6 +240,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
                 sr.sprite = normalSlide[i];
             }
 
+            sr.sprite = ResolveCustomSkin(sr.sprite) ?? sr.sprite;
             sbRender.Add(sr);
             sr.color = new Color(1f, 1f, 1f, 0f);
             sr.sortingOrder = sortIndex--;
@@ -288,6 +292,8 @@ public class WifiDrop : NoteLongDrop,IFlasher
         inputManager = GameObject.Find("Input").GetComponent<InputManager>();
         boundSensors.AddRange(allSensors);
         InvalidateLiveVisual();
+        if (timelineRestorePending)
+            RestoreTimelineState(timeProvider.AudioTime);
     }
     private void BindJudgeInputWhenReady()
     {
@@ -315,6 +321,21 @@ public class WifiDrop : NoteLongDrop,IFlasher
             Running();        
 
         BindJudgeInputWhenReady();
+
+        if (isMine && !isJudged)
+        {
+            CheckAll();
+            var safeTime = time + LastFor;
+            if (!isFinished && timeProvider.AudioTime >= safeTime)
+            {
+                judgeResult = JudgeType.Perfect;
+                isJudged = true;
+                foreach (var queue in _judgeQueues) queue.Clear();
+                HideBar(areaStep.LastOrDefault());
+                DestroySelf();
+                return;
+            }
+        }
 
         if (isFinished)
         {
@@ -430,8 +451,12 @@ public class WifiDrop : NoteLongDrop,IFlasher
         var stayTime = (time + LastFor) - judgeTime; // Dwell time
         if (!isJudged)
         {
-            arriveTime = timeProvider.AudioTime;
             var triggerTime = timeProvider.AudioTime;
+            // A seek past DJAuto's tail judgment restores an already completed hit;
+            // the first resumed frame must not rate that historical hit as Late.
+            if (InputManager.Mode == AutoPlayMode.DJAuto && restoredThroughTime >= judgeTime)
+                triggerTime = judgeTime;
+            arriveTime = triggerTime;
 
             const float totalInterval = 1.2f; // Seconds
             const float nPInterval = 0.4666667f; // Base Perfect interval
@@ -471,7 +496,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
                     judge = JudgeType.Perfect;
             }
 
-            judgeResult = (JudgeType)judge;
+            judgeResult = isMine ? JudgeType.Miss : (JudgeType)judge;
             SetJust();
             isJudged = true;
         }
@@ -488,6 +513,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
     }
     void Running()
     {
+        if (isMine || JudgmentDisabled || JudgmentSuspended) return;
         if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random or AutoPlayMode.Disable)
             return;
         foreach (var star in star_slide)
@@ -588,6 +614,8 @@ public class WifiDrop : NoteLongDrop,IFlasher
         else
         {
             UpdateStar();
+            // Destroy is deferred until frame end; UpdateStar can already remove the guides.
+            if (!enabled) return;
             Running();
         }
         CheckAll();
@@ -597,7 +625,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
         var process = SvController.GetTypedOnlyProgress(
             time, LastFor, timeProvider.AudioTime,
             SvController.ForSameStream(scrollType, "slide"));
-        if (JudgmentDisabled)
+        if (!isFake && isMine && !JudgmentDisabled)
         {
             RestoreBars();
             if (process > 0f && areaStep.Count > 0)
@@ -630,14 +658,17 @@ public class WifiDrop : NoteLongDrop,IFlasher
                     star.SetActive(false);
                 return;
             }
-            switch (InputManager.Mode)
+            switch (isMine ? AutoPlayMode.Disable : InputManager.Mode)
             {
                 case AutoPlayMode.Enable:
                 case AutoPlayMode.Random:
-                    var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
-                    HideBar(barIndex);
-                    DestroySelf();
-                    judgeQueues.Clear();
+                    if (!isFake)
+                    {
+                        var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
+                        HideBar(barIndex);
+                        DestroySelf();
+                        judgeQueues.Clear();
+                    }
                     return;
             }
             if (isFinished && isJudged)
@@ -659,7 +690,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
         // Auto-play wipes the trail as it traces, which a fake slide must not do:
         // it is not there to be hit, so it has to end looking like a miss whether
         // or not auto-play is on.
-        if (!isFake &&
+        if (!isFake && !isMine &&
             InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
         {
             var barIndex = areaStep[(int)(process * (areaStep.Count - 1))];
@@ -673,6 +704,9 @@ public class WifiDrop : NoteLongDrop,IFlasher
     {
         switch (judgeResult)
         {
+            case JudgeType.Miss:
+                slideOK.GetComponent<LoadJustSprite>().setMiss();
+                break;
             case JudgeType.FastGreat2:
             case JudgeType.FastGreat1:
             case JudgeType.FastGreat:
@@ -701,6 +735,26 @@ public class WifiDrop : NoteLongDrop,IFlasher
     }
     public bool CanShine() => canShine;
 
+    internal override void RestoreTimelineState(float at)
+    {
+        // WiFi stays inactive until its star activates it. Keep the restore pending
+        // until Start has built the three judgment queues.
+        if (judgeQueueTemplate.Count == 0) return;
+        if (!JudgmentDisabled && !isMine && at > time)
+        {
+            var progress = SvController.GetTypedOnlyProgress(time, LastFor, at, SvController.ForSameStream(scrollType, "slide"));
+            var boundary = areaStep.Count > 0 ? areaStep[Mathf.Clamp((int)(progress * (areaStep.Count - 1)), 0, areaStep.Count - 1)] : 0;
+            // Keep the current section, including the final section, for contact judgment.
+            foreach (var queue in _judgeQueues)
+                while (queue.Count > 0 && queue[0].SlideIndex < boundary) queue.RemoveAt(0);
+            HideBar(boundary);
+            canCheck = true;
+        }
+        lastAudioTime = at;
+        restoredThroughTime = at;
+        base.RestoreTimelineState(at);
+    }
+
     public void RefreshAfterResume()
     {
         if (timeProvider.AudioTime + 0.001f < lastAudioTime)
@@ -724,6 +778,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
         isChecking = false;
         isJudged = false;
         arriveTime = -1f;
+        restoredThroughTime = float.MinValue;
     }
 
     private void RestoreVisualState()
@@ -768,6 +823,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
 
     void DestroySelf()
     {
+        enabled = false;
         foreach (GameObject obj in slideBars)
             obj.SetActive(false);
 

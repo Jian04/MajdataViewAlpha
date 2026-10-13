@@ -136,6 +136,7 @@ public class DisplayChange
     public string property;
     public float target;
     public float duration;
+    public bool resetToDefault;
 }
 
 public class SubtitleChange
@@ -157,6 +158,14 @@ public class SubtitleChange
 
 public class EffectChange
 {
+    public EffectChange ForPV()
+    {
+        var copy = (EffectChange)MemberwiseClone();
+        if (!rotatePV) copy.intensity = 0f;
+        return copy;
+    }
+    public bool rotatePV = false;
+    public bool gradient = true;
     public double time;
     public string effect;
     public float duration;
@@ -185,6 +194,8 @@ public class MediaChange
     public double sourceOffset;
     public double duration;
     public bool timelineClip;
+    public double opacity = 1d;
+    public double brightness;
 }
 
 internal class SimaiTimingPoint
@@ -213,7 +224,8 @@ internal enum SimaiNoteType
     Slide,
     Hold,
     Touch,
-    TouchHold
+    TouchHold,
+    NoiseZone
 }
 
 internal class SimaiNote
@@ -287,6 +299,7 @@ internal class SimaiNote
 internal class EditRequestjson
 {
     public int protocolVersion = 1;
+    public string recordBatch = "";
     public string language = "en-US";
     public float audioSpeed;
     public float mediaAudioVolume = 1f;
@@ -297,27 +310,28 @@ internal class EditRequestjson
     public bool clipBackgroundToRing;
     public bool showJudgeInfo;
     public bool showComboInfo;
-    public bool showJudgeLine = true;
+    public int judgeLineStyle = 3;
     public bool showJudgeText = true;
     public bool showMineHitFeedback = true;
-    public bool showJudgeArea = false;
     public EditorComboIndicator comboStatusType;
     public EditorPlayMethod editorPlayMethod;
     public EditorControlMethod control;
     public string jsonPath;
+    public string chartDirectory;
     public float noteSpeed;
     public float starSpeed;
     public long startAt;
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
+    public int starDisplayMode = 1;
     public string skin = "dx";
     public string tapSkin = "dx";
     public string holdSkin = "dx";
     public string starSkin = "dx";
     public bool pinkStar;
     public string standbyTheme = "dark";
-    public string introBgTheme = "default";
+    public string introBgTheme = "magical";
     public bool previewFlow;
     public bool deferPlaybackStart;
     public float previewTimelineTime;

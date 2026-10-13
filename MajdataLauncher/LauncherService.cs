@@ -18,8 +18,26 @@ internal sealed class LauncherService
         Settings = LoadSettings();
     }
 
+    public void LaunchIndependent()
+    {
+        var editPath = ResolveExecutable(Settings.EditPath, EditCandidates());
+        var viewPath = ResolveExecutable(Settings.ViewPath, ViewCandidates());
+        if (editPath == null) throw new FileNotFoundException(L("MissingEdit"));
+        if (viewPath == null) throw new FileNotFoundException(L("MissingView"));
+        var session = MajdataCore.AlphaSession.Create();
+        using var view = session.StartProcess(viewPath, true);
+        try { using var edit = session.StartProcess(editPath, false); }
+        catch { view.CloseMainWindow(); throw; }
+    }
+
     public async Task LaunchAsync(IProgress<string> progress, CancellationToken cancellationToken)
     {
+        if (!IsUsableEditorRunning())
+        {
+            LaunchIndependent();
+            progress.Report(L("ReadyAll"));
+            return;
+        }
         var viewPath = ResolveExecutable(Settings.ViewPath, ViewCandidates());
         var editPath = ResolveExecutable(Settings.EditPath, EditCandidates());
         if (editPath == null)
@@ -142,7 +160,7 @@ internal sealed class LauncherService
     }
 
     private static bool IsAnyProcessRunning(params string[] names) =>
-        names.Any(name => Process.GetProcessesByName(name).Length > 0);
+        names.Any(name => Process.GetProcessesByName(name).Any(p => !MajdataCore.AlphaSession.IsRegisteredProcess(p.Id, true)));
 
     private static bool IsUsableEditorRunning()
     {
@@ -151,7 +169,7 @@ internal sealed class LauncherService
         {
             try
             {
-                if (!process.HasExited &&
+                if (!MajdataCore.AlphaSession.IsRegisteredProcess(process.Id, false) && !process.HasExited &&
                     (process.MainWindowHandle != IntPtr.Zero ||
                      DateTime.Now - process.StartTime < TimeSpan.FromSeconds(15)))
                     return true;

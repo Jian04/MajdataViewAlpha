@@ -1,12 +1,12 @@
 # MajdataViewAlpha
 
-基于 [MajdataView / MajdataEdit 4.4.0](https://github.com/LingFeng-bbben/MajdataView) 扩展，感谢原作者 bbben（LingFeng-bbben）及原项目贡献者。本项目遵循 GPL-3.0。
+基于 [MajdataView / MajdataEdit 4.4.0](https://github.com/LingFeng-bbben/MajdataView) 扩展，感谢原作者 bbben（LingFeng-bbben）及原项目贡献者。Alpha 版本由 [Jian04](https://github.com/Jian04) 维护，本项目遵循 GPL-3.0。
 
 ## v0.6.0 新增功能
 
 ### 音符、噪域与判定线
 
-- **噪域 `X`**：`XD1[8:1]`、`XC[4:1]` 等事件，按 Touch 流速、SV、HS 提前显示暖红预警，到指定时间生成带 Glitch、折射和辉光的区域，持续期间禁用对应判定区。相邻区域连成外框，后来区域从相邻块扩张，结束时向相邻块或自身中心缩回；短噪域保留可见的 Glitch。噪域不计物量、分数或占手，结束时间包含其持续时长。[完整说明](NOISE_ZONES.md)。
+- **噪域 `X`**：`XD1[8:1]`、`XC[4:1]` 等事件，按 Touch 流速、SV、HS 提前显示暖红预警，到指定时间生成带 Glitch、折射和辉光的区域，持续期间禁用对应判定区。相邻区域连成外框，后来区域从相邻块扩张，结束时向相邻块或自身中心缩回；短噪域按真实时长显示，`[1:0]` 仅显示预警。噪域不计物量、分数或占手，结束时间包含其持续时长。[完整说明](NOISE_ZONES.md)。
 - **噪域分类控制**：全局 `SV` / `HS` 默认包含噪域；全局 `COLOR` / `SIZE` / `ALPHA` 及 V 版本默认不包含。可显式写 `<COLOR*blockarea=00BBFF>`、`<SIZEV*blockarea=(0.8,1.2)>`、`<ALPHAV*blockarea=0.5>`、`<SV*blockarea=2>`。
 - **图片继承扩展**：`~[图片]` 支持 Tap、Hold、Touch、Star 和 Slide 对应皮肤，例如 `1h[8:1]~[hold.png]`；轨迹继承的载体只用于显示，不进入判定物量和分数。
 - **判定线**：设置中可视化切换默认、判定区、Magical 样式；`JUDGELINE` 使用 `0/False` 关闭、数字选择样式，取消独立 `JUDGEAREA`。`JUDGELINEEXPAND` 在原线外附加白线，旋转到 22.5° 接 D 区音符，支持过渡时间、方向和关闭，例如 `<JUDGELINEEXPAND*(True,8:1,CW)>`、`<JUDGELINEEXPAND*(False)>`。
@@ -18,6 +18,7 @@
 - **万花筒角度**：第 2 参数为旋转角度，可为负数，过渡时旋转到目标角度；0° 仍开启，例如 `<KALEIDOSCOPE*(True,45,8:1)>`。
 - **黑角渐变**：`VIGNETTE` 增加圆周渐变开关，默认开启、可缺省，避免硬截断黑色。
 - **恢复设置默认值**：内外亮度、中央显示、判定文字、判定统计和判定线支持 `Default`，如 `<INNERBRIGHTNESS*(Default,0.5)>`、`<COMBODISPLAY*(Default)>`。
+- **旋转与 PV**：`ROTATE` 可选是否同时旋转 PV，默认不旋转 PV，例如 `<ROTATE*(True,90,8:1,False)>`。
 - **语法提示**：统一函数头、参数解释与示例；根据光标位置高亮参数，同一参数可用 Tab 切换常用开关、时长等值；帮助包含 Simai 和 Alpha 两个章节。
 
 ### 编辑器与桌宠
@@ -25,6 +26,8 @@
 - **工具侧边栏**：录制、语法帮助、Edit / View 设置、多窗口、联机和在线谱面集中为可切换页面；支持调整宽度、铺满 Edit，以及拖出为独立窗口。
 - **设置与外观**：Edit 设置和 View 设置分开，设置修改自动保存，快捷键可修改和重置；背景、音符和判定线可视化选择。新增 Magical、X-Verse-X、MATE 背景及入退场动画，Magical 为默认主题。
 - **编辑工具**：分拍格式刷与时长刷，支持指定 Hold / Slide 等时长、最大 / 最小时长；选区一键保护套、绝赞、镜像、全谱整理与撤销；手按 BPM 工具增加自动检测。
+- **文本与音符流**：Ctrl + 滚轮缩放谱面编辑文字；光标位于独立音符流内时，可从工具或右键菜单合并到主流，保留槽位时间与 Alpha 指令。
+- **新建谱面**：支持从音频或本地视频新建；视频保存在原文件夹并命名为 `pv.mp4`，自动提取 44100 Hz 的 `track.mp3` 并创建 `maidata.txt`。
 - **波形与诊断**：噪域显示为红色标记，音符位于其上；拖动预览、文本跟随独立开关。语法错误、静态无理、DJAuto 动态无理分别计数，可点击定位详情，检查包含独立音符流。
 - **桌宠**：默认迪拉熊，可切换 Uni；启动与工具栏吸附同步播放跳入 / 跳出动画，支持拖入按钮和拖出。写谱、语法错误、预览动作各自调度，缺失帧回退，动作播完后有冷却。脚底固定，持续轻微呼吸；左键点击压下再回弹。
 
@@ -43,7 +46,7 @@
 
 ## 相对原版新增功能
 
-以下为相对 MajdataView / MajdataEdit 4.4.0 的累计新增功能，包含 v0.5.3 与 v0.6.0。
+以下为相对 MajdataView / MajdataEdit 4.4.0 的累计新增功能。
 
 ### 谱面语法与音符控制
 
@@ -93,5 +96,5 @@
 ## Contribute
 
 - [MajdataView / MajdataEdit](https://github.com/LingFeng-bbben/MajdataView)：原项目与制谱基础，感谢 bbben 和原项目贡献者。
-- [Phira-Pro](https://github.com/Phira-Pro/Phira-Pro)：噪域的 BlockCompose、EdgeMask、GlowMask、ActiveBlock / DisabledBlock 渲染与参考素材；保留 GPL-3.0 来源说明。素材及代码出处见 [来源记录](Assets/Resources/NoiseZone/SOURCE.md)。
+- [Phira-Pro](https://github.com/Phira-Pro/Phira-Pro)：噪域的 BlockCompose、EdgeMask、GlowMask、ActiveBlock / DisabledBlock 渲染与参考素材；保留 GPL-3.0 来源说明。
 - [MajdataPlay](https://github.com/TeamMajdata/MajdataPlay)：Alpha 播放器的判定与输入基线；MajdataPlayAlpha 兼容项目与 View 的语法、显示效果同步维护。

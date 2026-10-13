@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Brush = System.Drawing.Brush;
@@ -50,6 +51,7 @@ public partial class NoteDensityWindow : Window
     private int renderQueued;
     private int renderedWidth;
     private int renderedHeight;
+    private double dragStartX, dragStartOffset;
 
     private static string L(string key, params object[] args)
     {
@@ -96,8 +98,38 @@ public partial class NoteDensityWindow : Window
         Loaded += (_, _) => QueueRender();
         ContentRendered += (_, _) => QueueRender();
         DensityImage.SizeChanged += (_, _) => QueueRender();
+        DensityScroller.SizeChanged += (_, _) => UpdatePlotWidth();
+        DensityImage.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            dragStartX = e.GetPosition(DensityScroller).X;
+            dragStartOffset = DensityScroller.HorizontalOffset;
+            DensityImage.CaptureMouse();
+            e.Handled = true;
+        };
+        DensityImage.PreviewMouseMove += (_, e) =>
+        {
+            if (!DensityImage.IsMouseCaptured) return;
+            DensityScroller.ScrollToHorizontalOffset(
+                dragStartOffset + dragStartX - e.GetPosition(DensityScroller).X);
+        };
+        DensityImage.PreviewMouseLeftButtonUp += (_, e) =>
+        {
+            if (!DensityImage.IsMouseCaptured) return;
+            DensityImage.ReleaseMouseCapture(); e.Handled = true;
+        };
+        UpdatePlotWidth();
         ThemeManager.ThemeChanged += QueueRender;
         Closed += (_, _) => ThemeManager.ThemeChanged -= QueueRender;
+    }
+
+    private void UpdatePlotWidth()
+    {
+        var viewport = Math.Max(1, DensityScroller.ViewportWidth);
+        // Keep a few seconds per bar on a long song; the scrollbar and direct
+        // drag expose the rest of the timeline without shrinking every peak.
+        DensityImage.Width = Math.Max(viewport, Math.Min(16000, length * 7));
+        DensityImage.Height = Math.Max(1, DensityScroller.ViewportHeight);
+        QueueRender();
     }
 
     private void QueueRender()
@@ -253,7 +285,7 @@ public partial class NoteDensityWindow : Window
         var interval = candidates[^1];
         foreach (var candidate in candidates)
         {
-            if (length / candidate <= 14)
+            if (length / candidate <= Math.Max(2, plotWidth / 58))
             {
                 interval = candidate;
                 break;
@@ -267,7 +299,9 @@ public partial class NoteDensityWindow : Window
         {
             var x = x0 + (float)(time / length * plotWidth);
             graphics.DrawLine(gridPen, x, topY, x, baseY);
-            graphics.DrawString(FormatTime(time), font, labelBrush, x + 1f, baseY + 2f);
+            var label = FormatTime(time);
+            var labelWidth = graphics.MeasureString(label, font).Width;
+            graphics.DrawString(label, font, labelBrush, Math.Min(x + 1f, x0 + plotWidth - labelWidth), baseY + 2f);
         }
     }
 

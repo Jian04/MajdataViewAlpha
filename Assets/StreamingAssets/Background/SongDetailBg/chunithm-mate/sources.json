@@ -1,0 +1,42 @@
+{
+  "retrieved": "2026-09-16",
+  "credit": "© SEGA",
+  "source": "https://chunithm.sega.jp/$site/components/chuniMainBg/",
+  "assets": [
+    {
+      "sha256": "BDAD7B220B1A666200DE7238C1DB6D501CF9E13AFF06EF3147C2635285B0C6D9",
+      "file": "bg.jpg",
+      "url": "https://chunithm.sega.jp/$site/components/chuniMainBg/bg.jpg"
+    },
+    {
+      "sha256": "9E63AC19E13744430415197CD4209259C9485A32CD96723E2FB5376208643637",
+      "file": "mate_flot-1.png",
+      "url": "https://chunithm.sega.jp/$site/components/chuniMainBg/mate_flot-1.png"
+    },
+    {
+      "sha256": "B10CB2E486B8A590254588EFFF3B23F359A759C0A599AFA4F60FBDA9EE1BEC70",
+      "file": "mate_flot-2.png",
+      "url": "https://chunithm.sega.jp/$site/components/chuniMainBg/mate_flot-2.png"
+    },
+    {
+      "sha256": "875C3F50E9E8DF07B4DF73F2C349E34FE645930BE346F325A7409121AD456F9E",
+      "file": "mate_flot-3.png",
+      "url": "https://chunithm.sega.jp/$site/components/chuniMainBg/mate_flot-3.png"
+    },
+    {
+      "sha256": "4D7D8663F2DB9135C42D81334103325650A6AECFAF86994A8C655DAE732CD9B4",
+      "file": "mate_flot-4.png",
+      "url": "https://chunithm.sega.jp/$site/components/chuniMainBg/mate_flot-4.png"
+    },
+    {
+      "sha256": "B11428842775A521B323DC6C96B4B62A230219C5C07949EC2CD4EE5F111CF55F",
+      "file": "mate_flot-5.png",
+      "url": "https://chunithm.sega.jp/$site/components/chuniMainBg/mate_flot-5.png"
+    },
+    {
+      "sha256": "7BB1A3154D5ABC6B07034AC1801CB68F079BE079C5C9BCF8795E18981FEE3A2B",
+      "file": "mate_flot-6.png",
+      "url": "https://chunithm.sega.jp/$site/components/chuniMainBg/mate_flot-6.png"
+    }
+  ]
+}

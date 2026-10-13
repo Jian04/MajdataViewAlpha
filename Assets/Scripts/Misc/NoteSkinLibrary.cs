@@ -1,6 +1,11 @@
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+#if UNITY_6000_6_OR_NEWER
+using UnityObjectId = UnityEngine.EntityId;
+#else
+using UnityObjectId = System.Int32;
+#endif
 #nullable enable
 
 /// <summary>
@@ -22,7 +27,7 @@ public static class NoteSkinLibrary
 {
     private static string chartFolder = string.Empty;
     private static readonly Dictionary<string, Texture2D?> textures = new();
-    private static readonly Dictionary<(string, int), Sprite?> sprites = new();
+    private static readonly Dictionary<(string, UnityObjectId), Sprite?> sprites = new();
 
     /// <summary>
     /// Points the library at the folder holding the chart being played. Switching
@@ -76,7 +81,11 @@ public static class NoteSkinLibrary
             ? model.rect.width / model.pixelsPerUnit
             : 0f;
 
+#if UNITY_6000_6_OR_NEWER
+        var key = (safe, model == null ? default(UnityObjectId) : model.GetEntityId());
+#else
         var key = (safe, model == null ? 0 : model.GetInstanceID());
+#endif
         if (sprites.TryGetValue(key, out var cachedSprite))
         {
             if (cachedSprite == null)
@@ -94,11 +103,20 @@ public static class NoteSkinLibrary
         var pixelsPerUnit = modelWidth > 0.0001f
             ? texture.width / modelWidth
             : 100f;
+        // Preserve the model's nine-slice proportions for stretched Hold bodies.
+        var border = Vector4.zero;
+        if (model != null && model.rect.width > 0f && model.rect.height > 0f)
+        {
+            var scaleX = texture.width / model.rect.width;
+            var scaleY = texture.height / model.rect.height;
+            border = new Vector4(model.border.x * scaleX, model.border.y * scaleY,
+                model.border.z * scaleX, model.border.w * scaleY);
+        }
         var sprite = Sprite.Create(
             texture,
             new Rect(0f, 0f, texture.width, texture.height),
             new Vector2(0.5f, 0.5f),
-            pixelsPerUnit);
+            pixelsPerUnit, 0, SpriteMeshType.FullRect, border);
         sprite.name = safe;
         sprites[key] = sprite;
         return sprite;

@@ -45,7 +45,9 @@ public partial class MainWindow
                 track = clip.TrackIndex,
                 sourceOffset = clip.SourceOffset,
                 duration = clip.Duration,
-                timelineClip = true
+                timelineClip = true,
+                opacity = clip.Opacity,
+                brightness = clip.Brightness
             });
             events.Add(new MediaChange
             {
@@ -178,11 +180,10 @@ public partial class MainWindow
     private void MediaTimelinePanel_PlayheadChanged(object? sender, MediaPlayheadRequest request)
     {
         CancelNotePreview();
-        if (isPlaying)
-            TogglePause();
+        PrepareTimelineDrag();
         SetTimelinePosition(request.Time);
         SimaiProcess.ClearNoteListPlayedState();
-        if (request.Time <= songLength)
+        if (FollowPlayCheck.IsChecked == true && request.Time >= 0d && request.Time <= songLength)
             SeekTextFromTime();
         DrawWave();
     }
@@ -386,7 +387,18 @@ public partial class MainWindow
             var length = prepared.Length;
             length = Math.Min(length, mixed.Length - destinationStart);
             for (var i = 0; i < length; i++)
-                mixed[destinationStart + i] += prepared.Source.Samples[sourceStart + i];
+            {
+                var elapsed = i / (double)TimelineWaveSamplesPerSecond;
+                var gain = clip.Volume;
+                if (clip.FadeIn > 0d) gain *= Math.Clamp(elapsed / clip.FadeIn, 0d, 1d);
+                if (clip.FadeOut > 0d)
+                {
+                    var fadeStart = Math.Max(0d, clip.Duration - clip.FadeOut);
+                    if (elapsed >= fadeStart)
+                        gain *= Math.Clamp(1d - (elapsed - fadeStart) / clip.FadeOut, 0d, 1d);
+                }
+                mixed[destinationStart + i] += (int)Math.Round(prepared.Source.Samples[sourceStart + i] * gain);
+            }
         }
 
         var full = new short[mixed.Length];

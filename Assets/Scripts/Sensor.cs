@@ -6,7 +6,12 @@ using UnityEngine;
 public class Sensor : MonoBehaviour
 {
     public bool IsJudging { get; set; } = false;
-    public SensorStatus Status = SensorStatus.Off;
+    private SensorStatus rawStatus = SensorStatus.Off;
+    public SensorStatus Status
+    {
+        get => NoiseZoneInputGate.IsBlocked(Type) ? SensorStatus.Off : rawStatus;
+        set => rawStatus = value;
+    }
     public SensorType Type;
     public SensorGroup Group 
     { 
@@ -44,6 +49,7 @@ public class Sensor : MonoBehaviour
     // One stale note must not abort other handlers or leave the sensor permanently on.
     private void Dispatch(InputEventArgs args)
     {
+        if (NoiseZoneInputGate.IsBlocked(Type)) return;
         var handlers = OnStatusChanged;
         if (handlers == null)
             return;
@@ -62,6 +68,7 @@ public class Sensor : MonoBehaviour
 
     public void SetOn(Guid id)
     {
+        if (NoiseZoneInputGate.IsBlocked(Type)) return;
         if (tasks.Contains(id))
             return;
         var oStatus = Status;
@@ -123,6 +130,7 @@ public class Sensor : MonoBehaviour
     }
     public void Click()
     {
+        if (NoiseZoneInputGate.IsBlocked(Type)) return;
         if (Status == SensorStatus.On)
             return;
         else if (OnStatusChanged != null)
@@ -146,11 +154,12 @@ public class Sensor : MonoBehaviour
         }
     }
 
-    // DJAuto is a synthetic arcade pulse. It must not be swallowed by a
-    // physical input that is still On or by a stale IsJudging flag.
+    // DJAuto uses the same sensor occupancy as slide tracing. A tap cannot
+    // generate a fresh click while another note already holds this sensor.
     public bool PulseForAutoPlay()
     {
-        if (OnStatusChanged == null)
+        if (NoiseZoneInputGate.IsBlocked(Type)) return false;
+        if (OnStatusChanged == null || Status == SensorStatus.On)
             return false;
 
         var previousStatus = Status;

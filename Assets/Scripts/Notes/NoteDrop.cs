@@ -103,6 +103,8 @@ public class NoteDrop : MonoBehaviour
     public string scrollType;
     public bool previewOnly;
     public bool isFake;
+    internal bool timelineRestorePending;
+    internal virtual void RestoreTimelineState(float at) { timelineRestorePending = false; }
 
     // Where this note came from in the chart text, so a note that builds but
     // cannot be drawn can be marked in the editor instead of just going missing.
@@ -138,7 +140,7 @@ public class NoteDrop : MonoBehaviour
     public const float MissWindow = 0.15f;
     protected bool JudgmentDisabled => previewOnly || isFake;
     protected bool JudgmentSuspended =>
-        timeProvider == null || !timeProvider.isStart;
+        timelineRestorePending || timeProvider == null || !timeProvider.isStart;
     protected bool IsPausedTimelinePreview =>
         previewOnly &&
         timeProvider != null &&

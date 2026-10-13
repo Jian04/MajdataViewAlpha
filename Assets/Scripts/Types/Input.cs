@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 using System;
 using UnityEngine;
 
@@ -18,7 +18,12 @@ namespace Assets.Scripts.Types
         public KeyCode BindingKey { get; set; }
         public SensorType Type { get; set; }
         public bool IsJudging { get; set; }
-        public SensorStatus Status { get; set; }
+        private SensorStatus rawStatus;
+        public SensorStatus Status
+        {
+            get => NoiseZoneInputGate.IsBlocked(Type) ? SensorStatus.Off : rawStatus;
+            set => rawStatus = value;
+        }
         public event EventHandler<InputEventArgs>? OnStatusChanged;
         public Button(KeyCode bindingKey,SensorType type)
         {
@@ -30,6 +35,7 @@ namespace Assets.Scripts.Types
         }
         public void PushEvent(InputEventArgs args)
         {
+            if (NoiseZoneInputGate.IsBlocked(Type)) return;
             if (OnStatusChanged is not null)
                 OnStatusChanged(this,args);
         }

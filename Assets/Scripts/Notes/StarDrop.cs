@@ -24,6 +24,7 @@ public class StarDrop : TapBase
     private void Start()
     {
         PreLoad();
+        StarDisplayOrder.Register(gameObject, noteSortOrder, isHead: true);
 
         if (!isFakeStar && slide != null)
         {
@@ -37,6 +38,9 @@ public class StarDrop : TapBase
 
         if (isDouble)
         {
+            var skin = ResolveCustomSkin(isBreak ? breakSpr_Double : isEach ? eachSpr_Double : tapSpr_Double);
+            if (skin != null)
+                tapSpr_Double = eachSpr_Double = breakSpr_Double = skin;
             exSpriteRender.sprite = exSpr_Double;
             spriteRenderer.sprite = tapSpr_Double;
             if (isEX) exSpriteRender.color = usePinkStarExColor ? PinkStarExColor : exEffectTap;
@@ -250,7 +254,7 @@ public class StarDrop : TapBase
     private void ActivateSlideWhenDue()
     {
         if (isFakeStar || slide == null || slide.activeSelf ||
-            timeProvider == null || !timeProvider.isStart)
+            timeProvider == null || (!timeProvider.isStart && !IsPausedTimelinePreview))
             return;
 
         if (timeProvider.AudioTime >= time + slideAppearanceStartOffset)

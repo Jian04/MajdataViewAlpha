@@ -11,7 +11,7 @@ public class VisualChartEditor : MonoBehaviour
 {
     private const float DragSeconds = 0.22f;
     private const float TapRingRadiusRatio = 1.025f;
-    private const string EditEndpoint = "http://127.0.0.1:8014/";
+    private static string EditEndpoint => MajdataCore.AlphaSession.EditEndpoint;
 
     private AudioTimeProvider timeProvider;
     private JsonDataLoader dataLoader;
@@ -419,14 +419,18 @@ public class VisualChartEditor : MonoBehaviour
             slideStart = slideStart
         });
         // Do not use UnityWebRequest: system proxies can prevent it from reaching local Edit
-        _ = LocalHttp.Client
-            .PostAsync(EditEndpoint,
-                new System.Net.Http.StringContent(payload, Encoding.UTF8, "application/json"))
+        var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, EditEndpoint);
+        request.Content = new System.Net.Http.StringContent(payload, Encoding.UTF8, "application/json");
+        request.Headers.Add("X-Majdata-Session", MajdataCore.AlphaSession.Current?.Id ?? "legacy");
+        _ = LocalHttp.Client.SendAsync(request)
             .ContinueWith(task =>
             {
                 if (task.IsFaulted)
                     Debug.LogWarning("[VE] send failed: " +
                                      task.Exception?.GetBaseException().Message);
+                else if (task.Status == System.Threading.Tasks.TaskStatus.RanToCompletion)
+                    task.Result.Dispose();
+                request.Dispose();
             }, System.Threading.Tasks.TaskScheduler.Default);
     }
 }

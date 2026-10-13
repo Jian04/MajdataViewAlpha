@@ -45,8 +45,8 @@ namespace MajdataEdit;
 
 public partial class MainWindow : Window
 {
-    private const string majSettingFilename = "majSetting.json";
-    private const string editorSettingFilename = "EditorSetting.json";
+    private static readonly string majSettingFilename = MajdataCore.AlphaSession.FileName("majSetting.json");
+    private static readonly string editorSettingFilename = MajdataCore.AlphaSession.SettingsPath("EditorSetting.json");
     public static readonly string MAJDATA_VERSION_STRING = $"v{Assembly.GetExecutingAssembly().GetName().Version!.ToString(3)}";
     public static readonly SemVersion MAJDATA_VERSION = SemVersion.Parse(MAJDATA_VERSION_STRING, SemVersionStyles.Any);
 
@@ -185,17 +185,13 @@ public partial class MainWindow : Window
 
     private void SeekTextFromTime()
     {
-        //Console.WriteLine("SeekText");
-        var time = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
-        var timingList = new List<SimaiTimingPoint>();
-        timingList.AddRange(SimaiProcess.timinglist);
-        var noteList = SimaiProcess.notelist;
-        if (SimaiProcess.timinglist.Count <= 0) return;
-        timingList.Sort((x, y) => Math.Abs(time - x.time).CompareTo(Math.Abs(time - y.time)));
-        var theNote = timingList[0];
-        timingList.Clear();
-        timingList.AddRange(SimaiProcess.timinglist);
-        var indexOfTheNote = timingList.IndexOf(theNote);
+        var time = GetTimelinePosition();
+        var timingList = SimaiProcess.timinglist;
+        if (timingList.Count == 0) return;
+        // Follow the next slot, including empty slots, rather than whichever
+        // neighbour is closest. The yellow caret stays at the next timing mark.
+        var theNote = timingList.FirstOrDefault(point => point.time >= time - 0.000001d)
+                      ?? timingList[^1];
         // SimaiTimingPoint stores the column after consuming the timing comma.
         // AvalonEdit uses a direct character column, so select immediately before
         // that comma to keep the caret on the same timing slot as the playhead.
@@ -270,8 +266,20 @@ public partial class MainWindow : Window
     }
 
     //*FILE CONTROL
-    private void initFromFile(string path) //file name should not be included in path
+    private void initFromFile(string path) => InstallChartFromFile(path, null);
+    private void InstallChartFromFile(string path, EditorSongAudio? preparedAudio)
     {
+        var useOgg = File.Exists(path + "/track.ogg");
+        var originalAudioPath = path + "/track" + (useOgg ? ".ogg" : ".mp3");
+        var dataPath = path + "/maidata.txt";
+        if (!File.Exists(originalAudioPath))
+        { MessageBox.Show(GetLocalizedString("NoTrack"), GetLocalizedString("Error")); return; }
+        if (!File.Exists(dataPath))
+        { MessageBox.Show(GetLocalizedString("NoMaidata_txt"), GetLocalizedString("Error")); return; }
+        var nextAudioPath = MediaTools.FindCachedTimelineAudio(path) ?? originalAudioPath;
+        using var nextAudio = preparedAudio ?? EditorSongAudio.Prepare(nextAudioPath, editorAudioDevice, audioOutputUnavailable);
+
+        if (!installingRoomSong && chartRoom?.IsHost != true) chartRoom?.Close();
         if (soundSetting != null) soundSetting.Close();
         if (editorSetting == null) ReadEditorSetting();
 
@@ -283,22 +291,6 @@ public partial class MainWindow : Window
         timelineAudioBuildTask = null;
         timelineAudioSourcePath = null;
         loadedTrackPath = null;
-
-        var useOgg = File.Exists(path + "/track.ogg");
-
-        var originalAudioPath = path + "/track" + (useOgg ? ".ogg" : ".mp3");
-        var dataPath = path + "/maidata.txt";
-        if (!File.Exists(originalAudioPath))
-        {
-            MessageBox.Show(GetLocalizedString("NoTrack"), GetLocalizedString("Error"));
-            return;
-        }
-
-        if (!File.Exists(dataPath))
-        {
-            MessageBox.Show(GetLocalizedString("NoMaidata_txt"), GetLocalizedString("Error"));
-            return;
-        }
 
         var viewHasPreviousChart =
             lastEditorState != EditorControlMethod.Stop ||
@@ -334,18 +326,9 @@ public partial class MainWindow : Window
             bgmStream = -1024;
         }
 
-        var decodeStream = Bass.BASS_StreamCreateFile(audioPath, 0L, 0L, BASSFlag.BASS_STREAM_DECODE | BASSFlag.BASS_STREAM_PRESCAN);
-        if (decodeStream == 0)
-            throw new InvalidOperationException(string.Format(
-                GetLocalizedString("AudioDecodeFailed"), Bass.BASS_ErrorGetCode()));
-
-        bgmStream = BassFx.BASS_FX_TempoCreate(decodeStream, BASSFlag.BASS_FX_FREESOURCE);
-        if (bgmStream == 0)
-        {
-            Bass.BASS_StreamFree(decodeStream);
-            throw new InvalidOperationException(string.Format(
-                GetLocalizedString("AudioDecodeFailed"), Bass.BASS_ErrorGetCode()));
-        }
+        bgmStream = nextAudio.TakeStream();
+        audioOutputUnavailable = nextAudio.DecodeOnly;
+        Bass.BASS_SetDevice(editorAudioDevice = nextAudio.DecodeOnly ? 0 : editorAudioDevice);
         loadedTrackPath = audioPath;
 
         Bass.BASS_ChannelSetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_BGM_Level);
@@ -371,12 +354,13 @@ public partial class MainWindow : Window
         Bass.BASS_ChannelSetAttribute(holdRiserStream, BASSAttribute.BASS_ATTRIB_VOL,
             editorSetting!.Default_Hanabi_Level);
         SetMineVolume(editorSetting!.Default_Mine_Level);
-        var info = Bass.BASS_ChannelGetInfo(bgmStream);
-        if (info.freq != 44100) MessageBox.Show(GetLocalizedString("Warn44100Hz"), GetLocalizedString("Attention"));
-        ReadWaveFromFile();
+        if (nextAudio.Frequency != 44100 && !installingRoomSong && !IsBatchWorker && chartQueueStop == null)
+            MessageBox.Show(GetLocalizedString("Warn44100Hz"), GetLocalizedString("Attention"));
+        InstallSongWaveforms(nextAudio.Waveforms, nextAudio.Length);
         SimaiProcess.ClearData();
 
         if (!SimaiProcess.ReadData(dataPath)) return;
+        RememberChartVersion(dataPath);
 
 
         isLoading = true;
@@ -427,6 +411,8 @@ public partial class MainWindow : Window
 
     private void TryOpenLastChart()
     {
+        // New groups start empty; do not silently reopen another group's chart.
+        if (MajdataCore.AlphaSession.Current?.ShowIdentity == true) return;
         var path = editorSetting?.LastChartPath;
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
             return;
@@ -453,20 +439,22 @@ public partial class MainWindow : Window
             if (isLoading || string.IsNullOrEmpty(GetRawFumenText()))
             {
                 ClearBasicParseErrors();
+                StaticMuriRow.Visibility = DynamicMuriRow.Visibility = Visibility.Visible;
+                StaticMuriCount.Content = DynamicMuriCount.Content = 0;
+                muriSource = playedMuriSource = null;
                 return;
             }
 
-            if (chartParsePending)
-            {
-                SimaiProcess.Serialize(GetRawFumenText());
-                chartParsePending = false;
-            }
+            // Validate the current document, independently of preview/caret parsing.
+            SimaiProcess.Serialize(GetRawFumenText());
+            chartParsePending = false;
 
             var errors = ValidateTimingsForView(SimaiProcess.notelist);
+            RefreshStaticMuri();
             errors.AddRange(SimaiProcess.ValidateAlphaCommands(GetRawFumenText())
                 .Select(error => new BasicParseError(error.PositionX, error.PositionY, error.Message)));
             errors = errors
-                .GroupBy(error => error.PositionY)
+                .GroupBy(error => (error.PositionY, error.PositionX))
                 .Select(group => group.First())
                 .ToList();
             if (suppressActiveSlot)
@@ -490,6 +478,7 @@ public partial class MainWindow : Window
     // Errors found in the chart text, kept apart from the beats View reported it
     // could not build so a new validation pass does not wipe View's report.
     private List<BasicParseError> textParseErrors = new();
+    private readonly List<ICSharpCode.AvalonEdit.Document.TextAnchor> diagnosedSlotAnchors = new();
 
     private List<BasicParseError> SuppressActiveTimingSlotErrors(List<BasicParseError> errors)
     {
@@ -498,11 +487,20 @@ public partial class MainWindow : Window
 
         var source = GetRawFumenText();
         var caret = Math.Clamp((int)GetRawFumenPosition(), 0, source.Length);
-        var (slotStart, slotEnd) = GetTimingSlotBounds(source, caret);
+        var (slotStart, slotEnd) = GetSyntaxSlotBounds(source, caret);
+        // Once a slot has been diagnosed, entering it must not clear its errors.
+        // A new validation can clear it only when its edited content is valid.
+        var previouslyMarked = diagnosedSlotAnchors.Any(anchor =>
+        {
+            if (anchor.IsDeleted) return false;
+            var offset = fumenEditor.RawToNormalizedOffset(anchor.Offset);
+            return offset >= slotStart && offset <= slotEnd;
+        });
+        if (previouslyMarked) return errors;
         return errors.Where(error =>
         {
             var offset = GetTextOffset(source, error.PositionY, error.PositionX);
-            return offset < slotStart || offset >= slotEnd;
+            return offset < slotStart || offset > slotEnd;
         }).ToList();
     }
 
@@ -513,7 +511,7 @@ public partial class MainWindow : Window
 
         var source = GetRawFumenText();
         var caret = Math.Clamp((int)GetRawFumenPosition(), 0, source.Length);
-        var (slotStart, _) = GetTimingSlotBounds(source, caret);
+        var (slotStart, _) = GetSyntaxSlotBounds(source, caret);
         if (slotStart == lastSyntaxValidationSlotStart)
             return;
 
@@ -521,9 +519,18 @@ public partial class MainWindow : Window
         SyntaxCheck();
     }
 
+    private static (int Start, int End) GetSyntaxSlotBounds(string source, int caret)
+    {
+        var (start, end) = GetTimingSlotBounds(source, caret);
+        // A newline finishes the active editing fragment, but never advances song time.
+        var lineStart = caret == 0 ? 0 : source.LastIndexOf('\n', caret - 1) + 1;
+        var lineEnd = source.IndexOf('\n', caret);
+        return (Math.Max(start, lineStart), Math.Min(end, lineEnd < 0 ? source.Length : lineEnd));
+    }
+
     private static (int Start, int End) GetTimingSlotBounds(string source, int caret)
     {
-        var commas = FindTimingCommas(source);
+        var commas = FindTimingCommas(source, includeInvalidSeparators: true);
         var start = 0;
         var end = source.Length;
         foreach (var comma in commas)
@@ -572,6 +579,16 @@ public partial class MainWindow : Window
     private void SetBasicParseErrors(IEnumerable<BasicParseError> errors)
     {
         textParseErrors = errors.ToList();
+        diagnosedSlotAnchors.Clear();
+        var source = GetRawFumenText();
+        foreach (var error in textParseErrors)
+        {
+            var anchor = FumenContent.Document.CreateAnchor(fumenEditor.NormalizedToRawOffset(
+                GetTextOffset(source, error.PositionY, error.PositionX)));
+            anchor.SurviveDeletion = true;
+            anchor.MovementType = ICSharpCode.AvalonEdit.Document.AnchorMovementType.BeforeInsertion;
+            diagnosedSlotAnchors.Add(anchor);
+        }
         ApplyParseErrorMarks();
     }
 
@@ -605,76 +622,58 @@ public partial class MainWindow : Window
             latestParseErrors = errorList;
             basicParseErrorRenderer.SetErrors(
                 errorList.Select(e => (e.PositionY, e.PositionX, e.Message)));
-            ErrCount.Visibility = errorList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            ErrCount_Label.Visibility = errorList.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            ErrCount.Visibility = Visibility.Visible;
+            ErrCount_Label.Visibility = Visibility.Visible;
             ErrCount.Content = errorList.Count.ToString(CultureInfo.InvariantCulture);
             if (errorList.Count > 0)
-                PetStatusClient.Notify("error",
+                PetStatusClient.Notify("syntax-error",
                     string.Format(GetLocalizedString("FoundSyntaxErrors"), errorList.Count));
+            else
+                PetStatusClient.Notify("syntax-ok", "Ready");
         });
     }
 
     private void ClearBasicParseErrors()
     {
+        diagnosedSlotAnchors.Clear();
         textParseErrors = new List<BasicParseError>();
         Dispatcher.Invoke(() =>
         {
             latestParseErrors = new List<BasicParseError>();
             basicParseErrorRenderer.Clear();
-            ErrCount.Visibility = Visibility.Collapsed;
-            ErrCount_Label.Visibility = Visibility.Collapsed;
+            ErrCount.Visibility = Visibility.Visible;
+            ErrCount_Label.Visibility = Visibility.Visible;
             ErrCount.Content = "0";
+            PetStatusClient.Notify("syntax-ok", "Ready");
         });
     }
     private void ReadWaveFromFile()
     {
-        densityAudioEnvelopeSource = null;
-        densityAudioEnvelope = Array.Empty<float>();
-        var useOgg = File.Exists(maidataDir + "/track.ogg");
-        var bgmDecode = Bass.BASS_StreamCreateFile(maidataDir + "/track" + (useOgg ? ".ogg" : ".mp3"), 0L, 0L, BASSFlag.BASS_STREAM_DECODE);
+        var source = GetCurrentTrackPath();
         try
         {
-            songLength = Bass.BASS_ChannelBytes2Seconds(bgmDecode,
-                Bass.BASS_ChannelGetLength(bgmDecode, BASSMode.BASS_POS_BYTE));
-            waveformDisplayLength = songLength;
-            Bass.BASS_StreamFree(bgmDecode);
-            var bgmSample = Bass.BASS_SampleLoad(maidataDir + "/track" + (useOgg ? ".ogg" : ".mp3"), 0, 0, 1, BASSFlag.BASS_DEFAULT);
-            try
-            {
-                var bgmInfo = Bass.BASS_SampleGetInfo(bgmSample);
-                var freq = bgmInfo.freq;
-                var sampleCount = (long)(songLength * freq * 2);
-                var bgmRAW = new short[sampleCount];
-                Bass.BASS_SampleGetData(bgmSample, bgmRAW);
-
-                waveRaws[0] = new short[sampleCount / 20 + 1];
-                for (var i = 0; i < sampleCount; i += 20) waveRaws[0][i / 20] = bgmRAW[i];
-                waveRaws[1] = new short[sampleCount / 50 + 1];
-                for (var i = 0; i < sampleCount; i += 50) waveRaws[1][i / 50] = bgmRAW[i];
-                waveRaws[2] = new short[sampleCount / 100 + 1];
-                for (var i = 0; i < sampleCount; i += 100) waveRaws[2][i / 100] = bgmRAW[i];
-            }
-            finally
-            {
-                if (bgmSample != 0)
-                    Bass.BASS_SampleFree(bgmSample);
-            }
+            Bass.BASS_SetDevice(editorAudioDevice);
+            var waveform = EditorSongAudio.ReadWaveform(source ?? "");
+            InstallSongWaveforms(waveform.Samples, waveform.Length);
         }
         catch (Exception e)
         {
-            MessageBox.Show(string.Format(
-                GetLocalizedString("AudioDecodeFailed"),
-                e.Message + Bass.BASS_ErrorGetCode()));
-            Bass.BASS_StreamFree(bgmDecode);
-            Process.Start("https://github.com/LingFeng-bbben/MajdataEdit/issues/26");
+            MessageBox.Show(string.Format(GetLocalizedString("AudioDecodeFailed"), e.Message));
         }
     }
-
+    private void InstallSongWaveforms(short[][] samples, double length)
+    {
+        densityAudioEnvelopeSource = null;
+        densityAudioEnvelope = Array.Empty<float>();
+        songLength = length;
+        waveformDisplayLength = length;
+        for (var level = 0; level < waveRaws.Length; level++) waveRaws[level] = samples[level];
+    }
     private void SetSavedState(bool state)
     {
         if (state && MediaTimelinePanel.HasPendingChanges)
             state = false;
-        LevelSelector.Opacity = state ? 1d : 0.68d;
+        LevelSelector.Opacity = 1d;
         UnsavedDifficultyFrame.Visibility = state ? Visibility.Collapsed : Visibility.Visible;
         if (state)
         {
@@ -686,8 +685,8 @@ public partial class MainWindow : Window
         else
         {
             isSaved = false;
-            LevelSelector.IsEnabled = false;
-            LevelSelector.ToolTip = GetLocalizedString("Unsaved");
+            LevelSelector.IsEnabled = true;
+            LevelSelector.ToolTip = "切换难度时可选择保存、放弃或取消";
             TheWindow.Title = GetWindowsTitleString(GetLocalizedString("Unsaved") + SimaiProcess.title!);
             AutoSaveManager.Of().SetFileChanged();
         }
@@ -715,6 +714,7 @@ public partial class MainWindow : Window
     private void SaveFumen(bool writeToDisk = false)
     {
         if (selectedDifficulty == -1) return;
+        if (writeToDisk && (guestChartPendingSave || chartRoom?.IsGuest == true)) { SaveGuestChart(); return; }
         SimaiProcess.fumens[selectedDifficulty] = GetRawFumenText();
         // Saving in the middle of typing an offset used to throw "Input string
         // was not in a correct format" and abandon the save, and since the box
@@ -730,17 +730,33 @@ public partial class MainWindow : Window
                 Filter = "maidata.txt|maidata.txt",
                 OverwritePrompt = true
             };
-            if ((bool)saveDialog.ShowDialog()!) maidataDir = new FileInfo(saveDialog.FileName).DirectoryName!;
+            if (saveDialog.ShowDialog() != true) return;
+            maidataDir = new FileInfo(saveDialog.FileName).DirectoryName!;
         }
 
-        SimaiProcess.SaveData(maidataDir + "/maidata.bak.txt");
         SaveSetting();
         if (writeToDisk)
         {
-            SimaiProcess.SaveData(maidataDir + "/maidata.txt");
-            if (!MediaTimelinePanel.CommitPendingChanges())
-                return;
-            SetSavedState(true);
+            // Serialize cross-process saves and refuse stale whole-document overwrites.
+            using var saveMutex = new Mutex(false, "Local\\MajdataAlpha.ChartSave");
+            bool acquired;
+            try { acquired = saveMutex.WaitOne(TimeSpan.FromSeconds(5)); }
+            catch (AbandonedMutexException) { acquired = true; }
+            if (!acquired) { MessageBox.Show("另一个实例正在保存，请稍后再试。"); return; }
+            try
+            {
+                if (chartRoom?.IsHost != true && ChartWasChangedElsewhere(maidataDir + "/maidata.txt"))
+                {
+                    MessageBox.Show("这份谱面已被其他实例或程序修改。当前编辑内容仍保留，请复制当前稿或另存后重新打开，避免覆盖他人的修改。", "谱面版本冲突");
+                    return;
+                }
+                SimaiProcess.SaveData(maidataDir + "/maidata.txt");
+                RememberChartVersion(maidataDir + "/maidata.txt");
+                if (!MediaTimelinePanel.CommitPendingChanges())
+                    return;
+                SetSavedState(true);
+            }
+            finally { saveMutex.ReleaseMutex(); }
         }
     }
 
@@ -857,7 +873,7 @@ public partial class MainWindow : Window
         Bass.BASS_ChannelGetAttribute(hanabiStream, BASSAttribute.BASS_ATTRIB_VOL, ref setting.Hanabi_Level);
         setting.Mine_Level = MineVolume;
         var json = JsonConvert.SerializeObject(setting);
-        File.WriteAllText(maidataDir + "/" + majSettingFilename, json);
+        File.WriteAllText(MajdataCore.AlphaSession.ChartWorkFile(maidataDir, "majSetting.json"), json);
     }
 
     private static int FindFirstPopulatedDifficulty()
@@ -870,7 +886,7 @@ public partial class MainWindow : Window
 
     private void ReadSetting()
     {
-        var path = maidataDir + "/" + majSettingFilename;
+        var path = MajdataCore.AlphaSession.ChartWorkFile(maidataDir, "majSetting.json");
         if (!File.Exists(path)) return;
         var setting = JsonConvert.DeserializeObject<MajSetting>(File.ReadAllText(path));
         if (setting == null)
@@ -881,24 +897,24 @@ public partial class MainWindow : Window
         LevelSelector.SelectedIndex = difficulty;
         selectedDifficulty = difficulty;
         SetBgmPosition(setting.lastEditTime);
-        Bass.BASS_ChannelSetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, setting.BGM_Level);
-        Bass.BASS_ChannelSetAttribute(trackStartStream, BASSAttribute.BASS_ATTRIB_VOL, setting.BGM_Level);
-        Bass.BASS_ChannelSetAttribute(allperfectStream, BASSAttribute.BASS_ATTRIB_VOL, setting.BGM_Level);
-        Bass.BASS_ChannelSetAttribute(fanfareStream, BASSAttribute.BASS_ATTRIB_VOL, setting.BGM_Level);
-        Bass.BASS_ChannelSetAttribute(clockStream, BASSAttribute.BASS_ATTRIB_VOL, setting.BGM_Level);
-        Bass.BASS_ChannelSetAttribute(answerStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Answer_Level);
-        Bass.BASS_ChannelSetAttribute(judgeStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Judge_Level);
-        Bass.BASS_ChannelSetAttribute(judgeBreakStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Break_Level);
-        Bass.BASS_ChannelSetAttribute(judgeBreakSlideStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Break_Slide_Level);
-        Bass.BASS_ChannelSetAttribute(slideStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Slide_Level);
-        Bass.BASS_ChannelSetAttribute(breakSlideStartStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Slide_Level);
-        Bass.BASS_ChannelSetAttribute(breakStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Break_Level);
-        Bass.BASS_ChannelSetAttribute(breakSlideStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Break_Slide_Level);
-        Bass.BASS_ChannelSetAttribute(judgeExStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Ex_Level);
-        Bass.BASS_ChannelSetAttribute(touchStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Touch_Level);
-        Bass.BASS_ChannelSetAttribute(hanabiStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Hanabi_Level);
-        Bass.BASS_ChannelSetAttribute(holdRiserStream, BASSAttribute.BASS_ATTRIB_VOL, setting.Hanabi_Level);
-        SetMineVolume(setting.Mine_Level);
+        Bass.BASS_ChannelSetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_BGM_Level);
+        Bass.BASS_ChannelSetAttribute(trackStartStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_BGM_Level);
+        Bass.BASS_ChannelSetAttribute(allperfectStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_BGM_Level);
+        Bass.BASS_ChannelSetAttribute(fanfareStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_BGM_Level);
+        Bass.BASS_ChannelSetAttribute(clockStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_BGM_Level);
+        Bass.BASS_ChannelSetAttribute(answerStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Answer_Level);
+        Bass.BASS_ChannelSetAttribute(judgeStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Judge_Level);
+        Bass.BASS_ChannelSetAttribute(judgeBreakStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Break_Level);
+        Bass.BASS_ChannelSetAttribute(judgeBreakSlideStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Break_Slide_Level);
+        Bass.BASS_ChannelSetAttribute(slideStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Slide_Level);
+        Bass.BASS_ChannelSetAttribute(breakSlideStartStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Slide_Level);
+        Bass.BASS_ChannelSetAttribute(breakStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Break_Level);
+        Bass.BASS_ChannelSetAttribute(breakSlideStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Break_Slide_Level);
+        Bass.BASS_ChannelSetAttribute(judgeExStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Ex_Level);
+        Bass.BASS_ChannelSetAttribute(touchStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Touch_Level);
+        Bass.BASS_ChannelSetAttribute(hanabiStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Hanabi_Level);
+        Bass.BASS_ChannelSetAttribute(holdRiserStream, BASSAttribute.BASS_ATTRIB_VOL, editorSetting!.Default_Hanabi_Level);
+        SetMineVolume(editorSetting!.Default_Mine_Level);
 
         SaveSetting(); // Overwrite settings from older versions.
     }
@@ -925,11 +941,11 @@ public partial class MainWindow : Window
 
         File.WriteAllText(editorSettingFilename, JsonConvert.SerializeObject(editorSetting, Formatting.Indented));
 
-        var esp = new EditorSettingPanel(true)
+        var esp = new EditSettingsPanel(true)
         {
             Owner = this
         };
-        esp.ShowDialog();
+        ShowTool(esp, "Edit 设置");
     }
 
     private void ReadEditorSetting()
@@ -938,6 +954,29 @@ public partial class MainWindow : Window
         var json = File.ReadAllText(editorSettingFilename);
         var storedSettings = JObject.Parse(json);
         editorSetting = JsonConvert.DeserializeObject<EditorSetting>(json)!;
+        if (!storedSettings.ContainsKey(nameof(EditorSetting.QuickControlDefaultsVersion)))
+        {
+            editorSetting.EnableVisualChartEditor = true;
+            editorSetting.TextFollow = true;
+            editorSetting.DragPreview = true;
+            editorSetting.QuickControlDefaultsVersion = 1;
+        }
+        if (!storedSettings.ContainsKey(nameof(EditorSetting.JudgeLinePresetVersion)))
+        {
+            if (!storedSettings.ContainsKey(nameof(EditorSetting.JudgeLineStyle)) || editorSetting.JudgeLineStyle == 2)
+                editorSetting.JudgeLineStyle = 3;
+            editorSetting.JudgeLinePresetVersion = 1;
+        }
+        if (!storedSettings.ContainsKey(nameof(EditorSetting.JudgeLineStyle)))
+            editorSetting.JudgeLineStyle = storedSettings.Value<bool?>("ShowJudgeLine") == false ? 0
+                : storedSettings.Value<bool?>("ShowJudgeArea") == false ? 1 : 3;
+        if (!storedSettings.ContainsKey(nameof(EditorSetting.BackgroundPresetVersion)))
+        {
+            // Adopt the new default once; later user selections remain persistent.
+            editorSetting.EditorBackgroundStyle = "magical";
+            editorSetting.ViewIntroStyle = "magical";
+            editorSetting.BackgroundPresetVersion = 1;
+        }
         if (!storedSettings.ContainsKey(nameof(EditorSetting.FontPresetVersion)))
         {
             editorSetting.ViewDisplayFontPreset = editorSetting.ViewDisplayFontPreset switch
@@ -961,7 +1000,8 @@ public partial class MainWindow : Window
         editorSetting.HoldSkin = string.IsNullOrWhiteSpace(editorSetting.HoldSkin) ? editorSetting.Skin : editorSetting.HoldSkin;
         editorSetting.StarSkin = string.IsNullOrWhiteSpace(editorSetting.StarSkin) ? editorSetting.Skin : editorSetting.StarSkin;
         const string legacyPinkSuffix = "-pink";
-        if (editorSetting.StarSkin.EndsWith(legacyPinkSuffix, StringComparison.OrdinalIgnoreCase))
+        if (editorSetting.StarSkin.EndsWith(legacyPinkSuffix, StringComparison.OrdinalIgnoreCase) &&
+            MajdataCore.SkinPaths.Folder(MajdataCore.SkinPaths.Roots(AppContext.BaseDirectory), editorSetting.StarSkin, null) == null)
         {
             editorSetting.StarSkin = editorSetting.StarSkin[..^legacyPinkSuffix.Length];
             editorSetting.PinkStar = true;
@@ -981,18 +1021,7 @@ public partial class MainWindow : Window
 
         LocalizeDictionary.Instance.Culture = new CultureInfo(editorSetting.Language);
         MajdataCore.ParserMessageLocale.SetCulture(editorSetting.Language);
-        AddGesture(editorSetting.PlayPauseKey, "PlayAndPause");
-        AddGesture(editorSetting.PlayStopKey, "StopPlaying");
-        AddGesture(editorSetting.SaveKey, "SaveFile");
-        AddGesture(editorSetting.SendViewerKey, "SendToView");
-        AddGesture(editorSetting.IncreasePlaybackSpeedKey, "IncreasePlaybackSpeed");
-        AddGesture(editorSetting.DecreasePlaybackSpeedKey, "DecreasePlaybackSpeed");
-        AddGesture("Ctrl+f", "Find");
-        AddGesture(editorSetting.MirrorLeftRightKey, "MirrorLR");
-        AddGesture(editorSetting.MirrorUpDownKey, "MirrorUD");
-        AddGesture(editorSetting.Mirror180Key, "Mirror180");
-        AddGesture(editorSetting.Mirror45Key, "Mirror45");
-        AddGesture(editorSetting.MirrorCcw45Key, "MirrorCcw45");
+        RefreshShortcutBindings();
         FumenContent.FontSize = editorSetting.FontSize;
         ApplyEditorAppearance();
 
@@ -1006,7 +1035,12 @@ public partial class MainWindow : Window
 
     public void SaveEditorSetting()
     {
-        File.WriteAllText(editorSettingFilename, JsonConvert.SerializeObject(editorSetting, Formatting.Indented));
+        var json = JsonConvert.SerializeObject(editorSetting, Formatting.Indented);
+        File.WriteAllText(editorSettingFilename, json);
+        // New independent sessions inherit the latest editor preferences.
+        var baseline = Path.Combine(AppContext.BaseDirectory, "EditorSetting.json");
+        if (!IsBatchWorker && !string.Equals(Path.GetFullPath(editorSettingFilename), baseline, StringComparison.OrdinalIgnoreCase))
+            File.WriteAllText(baseline, json);
     }
 
     private static bool IsLightEditorTheme(string? themeName) =>
@@ -1037,12 +1071,21 @@ public partial class MainWindow : Window
             _ => new System.Windows.Media.FontFamily("Cascadia Mono, JetBrains Mono, Cascadia Code, Consolas")
         };
         FumenContent.FontSize = Math.Clamp(editorSetting.FontSize, 8f, 32f);
+        var editorFont = FumenContent.FontFamily;
+        var spacedFont = new System.Windows.Media.FontFamily
+        {
+            LineSpacing = editorFont.LineSpacing * 1.2d,
+            Baseline = editorFont.Baseline
+        };
+        spacedFont.FamilyMaps.Add(new System.Windows.Media.FontFamilyMap
+        {
+            Target = editorFont.BaseUri == null ? editorFont.Source : new Uri(editorFont.BaseUri, editorFont.Source).AbsoluteUri
+        });
+        FumenContent.FontFamily = spacedFont;
         var textView = FumenContent.TextArea.TextView;
         textView.ClearValue(TextBlock.LineHeightProperty);
         textView.ClearValue(TextBlock.LineStackingStrategyProperty);
         textView.UpdateLayout();
-        TextBlock.SetLineHeight(textView, textView.DefaultLineHeight * 1.10d);
-        TextBlock.SetLineStackingStrategy(textView, LineStackingStrategy.BlockLineHeight);
         ThemeManager.ApplyEditor(FumenContent, theme);
         // The colourizer is asked for its brushes while a line is being drawn, and
         // AvalonEdit keeps the lines it has already drawn. Without this the syntax
@@ -1073,11 +1116,38 @@ public partial class MainWindow : Window
         DrawWave();
     }
 
+    private readonly List<InputBinding> customShortcutBindings = new();
+    internal void RefreshShortcutBindings()
+    {
+        foreach (var binding in customShortcutBindings) FumenContent.InputBindings.Remove(binding);
+        customShortcutBindings.Clear();
+        if (editorSetting == null) return;
+        AddGesture(editorSetting.PlayPauseKey, "PlayAndPause");
+        AddGesture(editorSetting.PlayStopKey, "StopPlaying");
+        AddGesture(editorSetting.SaveKey, "SaveFile");
+        AddGesture(editorSetting.SendViewerKey, "SendToView");
+        AddGesture(editorSetting.IncreasePlaybackSpeedKey, "IncreasePlaybackSpeed");
+        AddGesture(editorSetting.DecreasePlaybackSpeedKey, "DecreasePlaybackSpeed");
+        AddGesture(editorSetting.FindKey, "Find");
+        AddGesture(editorSetting.MirrorLeftRightKey, "MirrorLR");
+        AddGesture(editorSetting.MirrorUpDownKey, "MirrorUD");
+        AddGesture(editorSetting.Mirror180Key, "Mirror180");
+        AddGesture(editorSetting.Mirror45Key, "Mirror45");
+        AddGesture(editorSetting.MirrorCcw45Key, "MirrorCcw45");
+    }
     private void AddGesture(string keyGusture, string command)
     {
+        if (string.IsNullOrWhiteSpace(keyGusture)) return;
         var gesture = (InputGesture) new KeyGestureConverter().ConvertFromString(keyGusture)!;
         var inputBinding = new InputBinding((ICommand)FumenContent.Resources[command], gesture);
         FumenContent.InputBindings.Add(inputBinding);
+        customShortcutBindings.Add(inputBinding);
+    }
+    internal static bool ShortcutMatches(KeyEventArgs e, string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+        try { return new KeyGestureConverter().ConvertFromString(key) is KeyGesture gesture && gesture.Matches(e.Source, e); }
+        catch (NotSupportedException) { return false; }
     }
 
     // This update very freqently to Draw FFT wave.
@@ -1085,7 +1155,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            DrawFFT();
+
             DrawWave();
         }
         catch (Exception ex)
@@ -1120,6 +1190,8 @@ public partial class MainWindow : Window
 
     private void QueueNotePreview(bool chartChanged = false)
     {
+        if (chartQueueStop != null && !IsBatchWorker) return;
+        if (editorSetting?.DragPreview == false) return;
         if (isLoading || isPlaying || stopPending)
             return;
         // Focusing the editor is part of Pause itself and raises SelectionChanged.
@@ -1285,7 +1357,7 @@ public partial class MainWindow : Window
         {
             if (generation != notePreviewGeneration)
                 return;
-            WebControl.RequestPOST("http://localhost:8013/", requestJson);
+            WebControl.RequestPOST(MajdataCore.AlphaSession.ViewEndpoint, requestJson);
         }
     }
 
@@ -1387,7 +1459,7 @@ public partial class MainWindow : Window
                 }
                 completion.TrySetResult(
                     WebControl.RequestPOST(
-                        "http://localhost:8013/",
+                        MajdataCore.AlphaSession.ViewEndpoint,
                         requestJson) != "ERROR");
             }
         }
@@ -1420,7 +1492,7 @@ public partial class MainWindow : Window
             control = EditorControlMethod.Preview,
             jsonPath = string.IsNullOrWhiteSpace(maidataDir)
                 ? null
-                : Path.Combine(maidataDir, "majdata.json"),
+                : MajdataCore.AlphaSession.ChartWorkFile(maidataDir, "majdata.json"),
             language = editorSetting?.Language ?? "en-US",
             noteSpeed = editorSetting?.playSpeed ?? 7f,
             touchSpeed = editorSetting?.touchSpeed ?? 7.5f,
@@ -1431,8 +1503,9 @@ public partial class MainWindow : Window
             holdSkin = editorSetting?.HoldSkin ?? editorSetting?.Skin ?? "dx",
             starSkin = editorSetting?.StarSkin ?? editorSetting?.Skin ?? "dx",
             pinkStar = editorSetting?.PinkStar ?? false,
+            starDisplayMode = editorSetting?.StarDisplayMode ?? 1,
             standbyTheme = IsLightEditorTheme(editorSetting?.EditorTheme) ? "light" : "dark",
-            introBgTheme = editorSetting?.ViewIntroStyle ?? "circleplus",
+            introBgTheme = editorSetting?.ViewIntroStyle ?? "magical",
             backgroundFitMode = editorSetting?.BackgroundFitMode ?? 0,
             clipBackgroundToRing = editorSetting?.ClipBackgroundToRing ?? false,
             songDetailStyle = editorSetting?.SongDetailStyle ?? 1,
@@ -1563,18 +1636,15 @@ public partial class MainWindow : Window
 
     private void QueueWaveResize()
     {
-        // WPF stretches the existing bitmap while the edge is moving, so both
-        // edges zoom the same time window. The rebuild must not run during the
-        // drag: a GDI redraw on the UI thread costs tens of milliseconds, and a
-        // hand-drag pauses often enough that a short debounce fired repeatedly
-        // and showed up as periodic stutter.
+        // Coalesce size notifications to the next render tick. Keep the bitmap
+        // unscaled until then instead of stretching text and snapping back later.
         waveResizeDebounceTimer ??=
             new System.Windows.Threading.DispatcherTimer(
                 System.Windows.Threading.DispatcherPriority.Render)
             {
-                Interval = TimeSpan.FromMilliseconds(250)
+                Interval = TimeSpan.FromMilliseconds(16)
             };
-        waveResizeDebounceTimer.Stop();
+        if (waveResizeDebounceTimer.IsEnabled) return;
         waveResizeDebounceTimer.Tick -= WaveResizeDebounceTimer_Tick;
         waveResizeDebounceTimer.Tick += WaveResizeDebounceTimer_Tick;
         waveResizeDebounceTimer.Start();
@@ -1632,9 +1702,11 @@ public partial class MainWindow : Window
             graphics.PixelOffsetMode = PixelOffsetMode.Default;
             var currentTime = GetTimelinePosition();
 
-            var waveBackground = WaveThemeColor(
-                ThemeManager.CurrentTheme.waveBackground,
-                Color.FromArgb(255, 6, 7, 9));
+            // Always opaque: animated chart backgrounds must not show through
+            // the timeline. Only the editor's light/dark mode chooses this base.
+            var waveBackground = ThemeManager.CurrentIsLight
+                ? Color.FromArgb(255, 80, 87, 96)
+                : Color.FromArgb(255, 21, 26, 34);
             graphics.Clear(waveBackground);
             var resample = (int)deltatime - 1;
             if (resample > 1 && resample <= 3) resample = 1;
@@ -1721,6 +1793,25 @@ public partial class MainWindow : Window
             var noteStart = FindFirstWaveItemAtOrAfter(
                 SimaiProcess.notelist,
                 viewport.StartTime - cachedWaveMaxVisualDuration);
+            // Draw every noise zone below every note, including notes in earlier
+            // slots whose holds or slides continue into a later noise zone.
+            for (var noiseIndex = noteStart; noiseIndex < SimaiProcess.notelist.Count; noiseIndex++)
+            {
+                var timing = SimaiProcess.notelist[noiseIndex];
+                if (timing == null || timing.time > viewport.EndTime) break;
+                var notes = timing.noteList.Count > 0 ? timing.noteList : timing.getNotes();
+                foreach (var zone in notes)
+                {
+                    if (zone.noteType != SimaiNoteType.NoiseZone) continue;
+                    var end = timing.time + Math.Max(1d / 60d, zone.holdTime);
+                    if (end < viewport.StartTime) continue;
+                    var position = zone.touchArea == 'C' ? 4.5f :
+                        zone.touchArea is 'D' or 'E' ? zone.startPosition - 0.5f : zone.startPosition;
+                    DrawWaveNoiseZone(graphics, viewport.TimeToX(timing.time),
+                        viewport.TimeToX(end), position * 6.875f + 8f, width,
+                        zone.startPosition + zone.touchArea * 17);
+                }
+            }
             for (var noteIndex = noteStart;
                  noteIndex < SimaiProcess.notelist.Count;
                  noteIndex++)
@@ -1734,7 +1825,7 @@ public partial class MainWindow : Window
                 {
                     visualEndTime = visibleNote.noteType switch
                     {
-                        SimaiNoteType.Hold or SimaiNoteType.TouchHold =>
+                        SimaiNoteType.Hold or SimaiNoteType.TouchHold or SimaiNoteType.NoiseZone =>
                             Math.Max(visualEndTime, note.time + visibleNote.holdTime),
                         SimaiNoteType.Slide =>
                             Math.Max(visualEndTime, visibleNote.slideStartTime + visibleNote.slideTime),
@@ -1754,13 +1845,14 @@ public partial class MainWindow : Window
                 var isEach = MajdataCore.EachRule.IsEach(
                     note.isEach,
                     notes.Count(
-                        o => MajdataCore.EachRule.CountsTowardEach(o.isSlideNoHead)));
-                var slideCount = notes.Count(o => o.noteType == SimaiNoteType.Slide);
+                        o => o.noteType != SimaiNoteType.NoiseZone && MajdataCore.EachRule.CountsTowardEach(o.isSlideNoHead)));
+                var slideCount = notes.Count(o => o.noteType == SimaiNoteType.Slide && !o.isTrajectoryOnly);
 
                 var x = viewport.TimeToX(note.time);
 
                 foreach (var noteD in notes)
                 {
+                    if (noteD.noteType == SimaiNoteType.NoiseZone) continue;
                     var waveformPosition = noteD.isTrajectoryOnly
                         ? noteD.trajectoryCarrierPosition
                         : noteD.startPosition;
@@ -1926,6 +2018,11 @@ public partial class MainWindow : Window
             DrawMediaTrimMarker(graphics, SimaiProcess.mediaTrimEnd, "END", Color.Magenta,
                 viewport, height);
 
+            using (var playhead = new Pen(Color.Red, 3f))
+            {
+                var playheadX = viewport.TimeToX(currentTime);
+                graphics.DrawLine(playhead, playheadX, 15f, playheadX, 62f);
+            }
             graphics.Flush();
             WaveBitmap.AddDirtyRect(new Int32Rect(0, 0, WaveBitmap.PixelWidth, WaveBitmap.PixelHeight));
         }
@@ -2027,7 +2124,7 @@ public partial class MainWindow : Window
             {
                 var endTime = note.noteType switch
                 {
-                    SimaiNoteType.Hold or SimaiNoteType.TouchHold => timing.time + note.holdTime,
+                    SimaiNoteType.Hold or SimaiNoteType.TouchHold or SimaiNoteType.NoiseZone => timing.time + note.holdTime,
                     SimaiNoteType.Slide => note.slideStartTime + note.slideTime,
                     _ => timing.time
                 };
@@ -2081,19 +2178,6 @@ public partial class MainWindow : Window
 
     private static Color DarkWaveColor(Color color) =>
         Color.FromArgb(color.A, color.R * 11 / 20, color.G * 11 / 20, color.B * 11 / 20);
-
-    private static Color WaveThemeColor(string value, Color fallback)
-    {
-        try
-        {
-            var color = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(value);
-            return Color.FromArgb(color.A, color.R, color.G, color.B);
-        }
-        catch
-        {
-            return fallback;
-        }
-    }
 
     private static void DrawWaveRing(Graphics graphics, float x, float y, float radius, Color color)
     {
@@ -2178,6 +2262,33 @@ public partial class MainWindow : Window
         graphics.DrawPolygon(border, outer);
         graphics.DrawLine(highlight, x0 + tip, y - radius + 0.65f,
             Math.Max(x0 + tip, x1 - tip), y - radius + 0.65f);
+    }
+
+    private static void DrawWaveNoiseZone(Graphics graphics, float start, float end,
+        float y, float viewportWidth, int seed)
+    {
+        if (!float.IsFinite(start) || !float.IsFinite(end)) return;
+        var x0 = Math.Max(-2f, start);
+        var x1 = Math.Min(viewportWidth + 2f, Math.Max(end, start + 3f));
+        if (x1 <= x0) return;
+        var body = new RectangleF(x0, y - 3.15f, x1 - x0, 6.3f);
+        using var fill = new LinearGradientBrush(body, Color.FromArgb(220, 255, 73, 98),
+            Color.FromArgb(145, 125, 11, 40), LinearGradientMode.Vertical);
+        using var border = new Pen(Color.FromArgb(230, 255, 116, 131), .75f);
+        using var light = new Pen(Color.FromArgb(160, 255, 189, 186), .65f);
+        graphics.FillRectangle(fill, body);
+        graphics.DrawRectangle(border, body.X, body.Y, body.Width, body.Height);
+        graphics.DrawLine(light, x0, y - 2.2f, x1, y - 2.2f);
+        using var pixel = new SolidBrush(Color.FromArgb(170, 255, 94, 119));
+        // Deterministic edges avoid flickering on every redraw. Limit work to the
+        // visible viewport even when a very long zone starts outside it.
+        for (var i = 0; i < (x1 - x0) / 11f; i++)
+        {
+            var offset = (i * 13 + seed) % 7;
+            var px = x0 + i * 11f + offset;
+            graphics.FillRectangle(pixel, px, y + (i % 2 == 0 ? -4.6f : 3.15f),
+                1.5f + offset * .3f, 1.4f);
+        }
     }
 
     private static void DrawWaveTouchHold(
@@ -2468,7 +2579,7 @@ public partial class MainWindow : Window
             return;
         try
         {
-            visualEditListener.Prefixes.Add("http://127.0.0.1:8014/");
+            visualEditListener.Prefixes.Add(MajdataCore.AlphaSession.EditEndpoint);
             visualEditListener.Start();
             visualEditCancellation = new CancellationTokenSource();
             _ = Task.Run(ReceiveVisualEditMessages);
@@ -2498,6 +2609,12 @@ public partial class MainWindow : Window
             try
             {
                 context = await visualEditListener.GetContextAsync();
+                if ((context.Request.Headers["X-Majdata-Session"] ?? "legacy") !=
+                    (MajdataCore.AlphaSession.Current?.Id ?? "legacy"))
+                {
+                    context.Response.StatusCode = 409;
+                    continue;
+                }
                 using var reader = new StreamReader(context.Request.InputStream);
                 var body = await reader.ReadToEndAsync();
                 LogVisualEdit("received: " + body);
@@ -2691,7 +2808,7 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private static HashSet<int> FindTimingCommas(string text)
+    private static HashSet<int> FindTimingCommas(string text, bool includeInvalidSeparators = false)
     {
         var result = new HashSet<int>();
         var squareDepth = 0;
@@ -2743,6 +2860,7 @@ public partial class MainWindow : Window
                 case '(': roundDepth++; break;
                 case ')': roundDepth = Math.Max(0, roundDepth - 1); break;
                 case ',' when squareDepth == 0 && roundDepth == 0:
+                case '，' when includeInvalidSeparators && squareDepth == 0 && roundDepth == 0:
                     result.Add(index);
                     break;
             }
@@ -3396,8 +3514,7 @@ public partial class MainWindow : Window
     private void ScrollWave(double delta, bool syncCaret = false)
     {
         CancelNotePreview();
-        if (isPlaying)
-            TogglePause();
+        PrepareTimelineDrag();
         var time = GetTimelinePosition();
         var width = WaveBitmap?.PixelWidth ??
                     Math.Max(1, (int)Math.Round(MusicWave.ActualWidth));
@@ -3405,7 +3522,7 @@ public partial class MainWindow : Window
         delta /= viewport.PixelsPerSecond;
         SetTimelinePosition(time + delta);
         SimaiProcess.ClearNoteListPlayedState();
-        if (syncCaret &&
+        if (syncCaret && FollowPlayCheck.IsChecked == true &&
             GetTimelinePosition() >= 0d &&
             GetTimelinePosition() <= songLength)
             SeekTextFromTime();
@@ -3537,7 +3654,8 @@ public partial class MainWindow : Window
             throw new InvalidOperationException(string.Format(
                 GetLocalizedString("AudioDecodeFailed"), Bass.BASS_ErrorGetCode()));
 
-        bgmStream = BassFx.BASS_FX_TempoCreate(decodeStream, BASSFlag.BASS_FX_FREESOURCE);
+        bgmStream = BassFx.BASS_FX_TempoCreate(decodeStream, BASSFlag.BASS_FX_FREESOURCE |
+            (audioOutputUnavailable ? BASSFlag.BASS_STREAM_DECODE : BASSFlag.BASS_DEFAULT));
         if (bgmStream == 0)
         {
             Bass.BASS_StreamFree(decodeStream);
@@ -3654,8 +3772,21 @@ public partial class MainWindow : Window
         return addSpaceAfter ? localizedString + " " : localizedString;
     }
 
-    private void TogglePlay(PlayMethod playMethod = PlayMethod.Normal)
+    private async void TogglePlay(PlayMethod playMethod = PlayMethod.Normal)
     {
+        if (Op_Button.IsEnabled == false) return;
+        if (!IsBatchWorker && chartQueueStop != null)
+        {
+            Op_Button.IsEnabled = false;
+            try { await StopChartListAsync(); }
+            catch (Exception error)
+            {
+                MessageBox.Show(this, error.Message, "结束播放队列", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            finally { Op_Button.IsEnabled = true; }
+        }
+        if (playMethod is not (PlayMethod.Record60 or PlayMethod.Record120) && !RestoreAudioOutput()) return;
         if (Op_Button.IsEnabled == false) return;
         var previewToDrain = pendingNotePreviewSend;
         // An in-flight TimelinePreview may already have reached View even though
@@ -3682,7 +3813,7 @@ public partial class MainWindow : Window
         FumenContent.Focus();
         SaveFumen();
         if (CheckAndStartView()) return;
-        var CusorTime = SimaiProcess.Serialize(GetRawFumenText(), GetRawFumenPosition()); //scan first
+        var CusorTime = GetCaretTimingTime(); // Same closing-slot timestamp as the waveform caret.
         if (!ValidateMediaFiles())
             return;
         Op_Button.IsEnabled = false;
@@ -3746,9 +3877,9 @@ public partial class MainWindow : Window
                         playMethod,
                         controlGeneration: playGeneration));
                 pendingPlaySend = opSend;
-                Task.Run(() =>
+                Task.Run(async () =>
                 {
-                    if (!opSend.Result)
+                    if (!await opSend)
                     {
                         Dispatcher.Invoke(() =>
                         {
@@ -3757,11 +3888,8 @@ public partial class MainWindow : Window
                         });
                         return;
                     }
-                    while (DateTime.Now.Ticks < opStartAt.Ticks)
-                        if (lastEditorState != EditorControlMethod.Start ||
-                            playGeneration != viewControlGeneration ||
-                            !isPlaying)
-                            return;
+                    var remaining = opStartAt - DateTime.Now;
+                    if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
                     Dispatcher.Invoke(() =>
                     {
                         if (!isPlaying || playGeneration != viewControlGeneration)
@@ -3788,13 +3916,13 @@ public partial class MainWindow : Window
                 playStartTime = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
                 generateSoundEffectList(playStartTime, isOpIncluded);
 
-                if (lastEditorState == EditorControlMethod.Pause &&
+                if (lastEditorState == EditorControlMethod.Pause && !roomChartNeedsReload &&
                     (pendingScrubStop == null || pendingScrubStop.IsCompleted))
                 {
                     startAt = resumeFromTimelinePreview
                         ? DateTime.Now.Add(ViewClockLeadTime)
                         : DateTime.Now;
-                    var continueAt = startAt;
+                    var continueAt = DateTime.MinValue;
                     var resumePreview = resumeFromTimelinePreview;
                     var previewDrain = previewToDrain;
                     var continueSend = Task.Run(async () =>
@@ -3807,24 +3935,31 @@ public partial class MainWindow : Window
                             try { await previewDrain; }
                             catch { }
                         }
+                        if (resumePreview && !sendRequestContinue(DateTime.Now,
+                            controlGeneration: playGeneration, resumeFromTimelinePreview: true,
+                            deferPlaybackStart: true)) return false;
+                        if (!isPlaying || playGeneration != viewControlGeneration) return false;
+                        continueAt = DateTime.Now.Add(ViewClockLeadTime);
                         return sendRequestContinue(
                             continueAt,
                             controlGeneration: playGeneration,
-                            resumeFromTimelinePreview: resumePreview);
+                            resumeFromTimelinePreview: false);
                     });
                     pendingPlaySend = continueSend;
-                    Task.Run(() =>
+                    Task.Run(async () =>
                     {
-                        if (!continueSend.Result)
+                        if (!await continueSend)
                         {
                             Dispatcher.Invoke(() => RestoreFailedPlaybackStart(playGeneration));
                             return;
                         }
-                        while (DateTime.Now.Ticks < continueAt.Ticks)
-                            if (lastEditorState != EditorControlMethod.Start) return;
+                        var remaining = continueAt - DateTime.Now;
+                        if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
                         Dispatcher.Invoke(() =>
                         {
                             if (!isPlaying || playGeneration != viewControlGeneration) return;
+                            Bass.BASS_ChannelSetPosition(bgmStream, playStartTime +
+                                Math.Max(0d, (DateTime.Now - continueAt).TotalSeconds) * GetPlaybackSpeed());
                             SimaiProcess.ClearNoteListPlayedState();
                             StartSELoop();
                             waveStopMonitorTimer.Start();
@@ -3855,19 +3990,20 @@ public partial class MainWindow : Window
                         return true;
                     });
                     pendingPlaySend = runSend;
-                    Task.Run(() =>
+                    Task.Run(async () =>
                     {
-                        if (!runSend.Result)
+                        if (!await runSend)
                         {
                             Dispatcher.Invoke(() => RestoreFailedPlaybackStart(playGeneration));
                             return;
                         }
-                        while (DateTime.Now.Ticks < runAt.Ticks)
-                            if (lastEditorState != EditorControlMethod.Start) return;
+                        var remaining = runAt - DateTime.Now;
+                        if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
                         Dispatcher.Invoke(() =>
                         {
                             if (!isPlaying || playGeneration != viewControlGeneration) return;
-                            Bass.BASS_ChannelSetPosition(bgmStream, bgmStartPos);
+                            Bass.BASS_ChannelSetPosition(bgmStream, bgmStartPos +
+                                Math.Max(0d, (DateTime.Now - runAt).TotalSeconds) * GetPlaybackSpeed());
                             SimaiProcess.ClearNoteListPlayedState();
                             StartSELoop();
                             waveStopMonitorTimer.Start();
@@ -3887,6 +4023,8 @@ public partial class MainWindow : Window
     {
         if (generation != viewControlGeneration)
             return;
+
+        chartQueueCompletion?.TrySetResult(false);
 
         isPlaying = false;
         isPlan2Stop = false;
@@ -3969,7 +4107,6 @@ public partial class MainWindow : Window
         double len = 0;
         foreach (var tp in SimaiProcess.notelist)
         {
-            len = Math.Max(len, tp.time);
             foreach (var note in tp.getNotes())
                 len = Math.Max(len, note.noteType == SimaiNoteType.Slide
                     ? note.slideStartTime + note.slideTime
@@ -3988,7 +4125,7 @@ public partial class MainWindow : Window
             editorSetting?.SongDetailStyle ?? 0,
             editorSetting?.ShowSongDetail ?? true,
             editorSetting?.ShowAllPerfect ?? true,
-            editorSetting?.ViewIntroStyle ?? "default");
+            editorSetting?.ViewIntroStyle ?? "magical");
     }
 
     internal void ApplyRecordDisplaySettings(
@@ -4008,6 +4145,9 @@ public partial class MainWindow : Window
         {
             "circleplus" => "circleplus",
             "circle" => "circle",
+            "chunithm-xversex" => "chunithm-xversex",
+            "chunithm-mate" => "chunithm-mate",
+            "magical" => "magical",
             _ => "default"
         };
         if (editorSetting.SongDetailStyle == normalizedStyle &&
@@ -4147,7 +4287,15 @@ public partial class MainWindow : Window
         }
         TheWindow.Title = GetWindowsTitleString(SimaiProcess.title);
         SetSavedState(false);
-        SchedulePreBakeSongDetail();
+        SaveSongMetadataIfLocal();
+    }
+
+    internal void SaveSongMetadataIfLocal()
+    {
+        if (!guestChartPendingSave && chartRoom?.IsGuest != true &&
+            !string.IsNullOrEmpty(maidataDir) && selectedDifficulty >= 0 &&
+            File.Exists(Path.Combine(maidataDir, "maidata.txt")))
+            SaveFumen(true);
     }
 
     internal void ApplyRecordUtageInfo(string label, bool coop)
@@ -4273,8 +4421,19 @@ public partial class MainWindow : Window
         });
     }
 
-    private void ToggleStop()
+    private void ToggleStop() => StopPlayback(false);
+
+    private void StopPlayback(bool naturalEnd)
     {
+        if (multiAudioMuted)
+        {
+            multiAudioMuted = false;
+            var level = editorSetting?.Default_BGM_Level ?? 1f;
+            Bass.BASS_ChannelSetAttribute(bgmStream, BASSAttribute.BASS_ATTRIB_VOL, level);
+            Bass.BASS_ChannelSetAttribute(trackStartStream, BASSAttribute.BASS_ATTRIB_VOL, level);
+        }
+        queueNaturalEnd = naturalEnd;
+        chartQueueCompletion?.TrySetResult(naturalEnd);
         CancelNotePreview();
         var generation = ++viewControlGeneration;
         pausePending = false;
@@ -4350,6 +4509,7 @@ public partial class MainWindow : Window
                 {
                     if (generation == flowPreviewGeneration)
                     {
+                        chartQueueCompletion?.TrySetResult(false);
                         flowPreviewActive = false;
                         flowPreviewAwaitingView = false;
                         isPlaying = false;
@@ -4417,7 +4577,7 @@ public partial class MainWindow : Window
                 await Task.Delay(TimeSpan.FromSeconds(remaining));
             if (!flowPreviewActive || generation != flowPreviewGeneration)
                 return;
-            Dispatcher.Invoke(ToggleStop);
+            Dispatcher.Invoke(() => StopPlayback(true));
         });
     }
 
@@ -4506,7 +4666,7 @@ public partial class MainWindow : Window
             control = EditorControlMethod.Stop
         };
         var json = JsonConvert.SerializeObject(requestStop);
-        var response = WebControl.RequestPOST("http://localhost:8013/", json);
+        var response = WebControl.RequestPOST(MajdataCore.AlphaSession.ViewEndpoint, json);
         if (response == "ERROR")
         {
             pausePending = false;
@@ -4534,7 +4694,7 @@ public partial class MainWindow : Window
             control = EditorControlMethod.Pause
         };
         var json = JsonConvert.SerializeObject(requestStop);
-        var response = WebControl.RequestPOST("http://localhost:8013/", json);
+        var response = WebControl.RequestPOST(MajdataCore.AlphaSession.ViewEndpoint, json);
         if (response == "ERROR")
         {
             pausePending = false;
@@ -4559,7 +4719,7 @@ public partial class MainWindow : Window
             editorPlayMethod = EditorPlayMethod.Disabled
         };
         var response = WebControl.RequestPOST(
-            "http://localhost:8013/",
+            MajdataCore.AlphaSession.ViewEndpoint,
             JsonConvert.SerializeObject(request));
         return response != "ERROR";
     }
@@ -4670,25 +4830,26 @@ public partial class MainWindow : Window
         DateTime StartAt,
         float? startTimeOverride = null,
         int? controlGeneration = null,
-        bool resumeFromTimelinePreview = false)
+        bool resumeFromTimelinePreview = false,
+        bool? showIntroOverride = null,
+        bool deferPlaybackStart = false)
     {
         var request = new EditRequestjson
         {
             control = EditorControlMethod.Continue,
             language = editorSetting!.Language,
             startAt = StartAt.Ticks,
+            deferPlaybackStart = deferPlaybackStart,
             startTime = startTimeOverride ??
                 (float)Bass.BASS_ChannelBytes2Seconds(
                     bgmStream,
                     Bass.BASS_ChannelGetPosition(bgmStream)),
             audioSpeed = GetPlaybackSpeed(),
-            mediaAudioVolume = editorSetting.Default_BGM_Level,
-            showJudgeLine = editorSetting.ShowJudgeLine,
+            mediaAudioVolume = MultiMediaVolume,
+            judgeLineStyle = editorSetting.JudgeLineStyle,
             showJudgeText = editorSetting.ShowJudgeText,
             showMineHitFeedback = editorSetting.ShowMineHitFeedback,
-            // Hiding the judgment line always hides the judgment area.
-            showJudgeArea = editorSetting.ShowJudgeArea && editorSetting.ShowJudgeLine,
-            showSongDetail = editorSetting.ShowSongDetail,
+            showSongDetail = showIntroOverride ?? editorSetting.ShowSongDetail,
             showAllPerfect = editorSetting.ShowAllPerfect,
             showGeneratedMark = editorSetting.ShowGeneratedMark,
             viewDisplayFontPreset = editorSetting.ViewDisplayFontPreset,
@@ -4698,6 +4859,7 @@ public partial class MainWindow : Window
             holdSkin = editorSetting.HoldSkin,
             starSkin = editorSetting.StarSkin,
             pinkStar = editorSetting.PinkStar,
+            starDisplayMode = editorSetting.StarDisplayMode,
             standbyTheme = IsLightEditorTheme(editorSetting.EditorTheme) ? "light" : "dark",
             introBgTheme = editorSetting.ViewIntroStyle,
             backgroundFitMode = editorSetting.BackgroundFitMode,
@@ -4711,7 +4873,7 @@ public partial class MainWindow : Window
             // chart so it can swap them for playable ones in place instead of
             // reloading skin, background and timelines through a fresh Start.
             var jsonStruct = BuildSongDetailMajson();
-            var path = maidataDir + "/majdata.json";
+            var path = MajdataCore.AlphaSession.ChartWorkFile(maidataDir, "majdata.json");
             jsonStruct.filePath = path;
             File.WriteAllText(path, JsonConvert.SerializeObject(jsonStruct));
             request.jsonPath = path;
@@ -4721,7 +4883,7 @@ public partial class MainWindow : Window
             request.smoothSlideAnime = editorSetting.SmoothSlideAnime;
         }
         var json = JsonConvert.SerializeObject(request);
-        var response = WebControl.RequestPOST("http://localhost:8013/", json);
+        var response = WebControl.RequestPOST(MajdataCore.AlphaSession.ViewEndpoint, json);
         if (response == "ERROR")
         {
             ReportViewUnreachable();
@@ -4747,6 +4909,7 @@ public partial class MainWindow : Window
 
     internal void SendDisplaySettings()
     {
+        if (chartQueueStop != null && !IsBatchWorker) return;
         if (editorSetting == null)
             return;
 
@@ -4756,11 +4919,9 @@ public partial class MainWindow : Window
             language = editorSetting.Language,
             showJudgeInfo = editorSetting.ShowJudgeInfo,
             showComboInfo = editorSetting.ShowComboInfo,
-            showJudgeLine = editorSetting.ShowJudgeLine,
+            judgeLineStyle = editorSetting.JudgeLineStyle,
             showJudgeText = editorSetting.ShowJudgeText,
             showMineHitFeedback = editorSetting.ShowMineHitFeedback,
-            // Hiding the judgment line always hides the judgment area.
-            showJudgeArea = editorSetting.ShowJudgeArea && editorSetting.ShowJudgeLine,
             showSongDetail = editorSetting.ShowSongDetail,
             innerBackgroundCover = editorSetting.InnerBackgroundCover,
             outerBackgroundCover = editorSetting.OuterBackgroundCover,
@@ -4773,13 +4934,14 @@ public partial class MainWindow : Window
             holdSkin = editorSetting.HoldSkin,
             starSkin = editorSetting.StarSkin,
             pinkStar = editorSetting.PinkStar,
+            starDisplayMode = editorSetting.StarDisplayMode,
             standbyTheme = IsLightEditorTheme(editorSetting.EditorTheme) ? "light" : "dark",
             introBgTheme = editorSetting.ViewIntroStyle,
             backgroundFitMode = editorSetting.BackgroundFitMode,
             clipBackgroundToRing = editorSetting.ClipBackgroundToRing,
             songDetailStyle = editorSetting.SongDetailStyle
         };
-        WebControl.RequestPOST("http://localhost:8013/",
+        WebControl.RequestPOST(MajdataCore.AlphaSession.ViewEndpoint,
             JsonConvert.SerializeObject(request));
     }
 
@@ -4798,7 +4960,7 @@ public partial class MainWindow : Window
         else
             ClearBasicParseErrors();
 
-        var path = maidataDir + "/majdata.json";
+        var path = MajdataCore.AlphaSession.ChartWorkFile(maidataDir, "majdata.json");
         jsonStruct.filePath = path;
         var json = JsonConvert.SerializeObject(jsonStruct);
         File.WriteAllText(path, json);
@@ -4819,7 +4981,6 @@ public partial class MainWindow : Window
         float chartLen = 0f;
         foreach (var tp in jsonStruct.timingList)
         {
-            chartLen = Math.Max(chartLen, (float)tp.time);
             foreach (var note in tp.noteList)
             {
                 if (note.noteType == SimaiNoteType.Slide)
@@ -4847,16 +5008,15 @@ public partial class MainWindow : Window
             request.clipBackgroundToRing = editorSetting.ClipBackgroundToRing;
             request.showJudgeInfo = editorSetting.ShowJudgeInfo;
             request.showComboInfo = editorSetting.ShowComboInfo;
-            request.showJudgeLine = editorSetting.ShowJudgeLine;
+            request.judgeLineStyle = editorSetting.JudgeLineStyle;
             request.showJudgeText = editorSetting.ShowJudgeText;
             request.showMineHitFeedback = editorSetting.ShowMineHitFeedback;
-            // Hiding the judgment line always hides the judgment area.
-            request.showJudgeArea = editorSetting.ShowJudgeArea && editorSetting.ShowJudgeLine;
             request.skin = editorSetting.Skin;
             request.tapSkin = editorSetting.TapSkin;
             request.holdSkin = editorSetting.HoldSkin;
             request.starSkin = editorSetting.StarSkin;
             request.pinkStar = editorSetting.PinkStar;
+            request.starDisplayMode = editorSetting.StarDisplayMode;
             request.standbyTheme = IsLightEditorTheme(editorSetting.EditorTheme) ? "light" : "dark";
             request.introBgTheme = editorSetting.ViewIntroStyle;
             request.songDetailStyle = editorSetting.SongDetailStyle;
@@ -4877,7 +5037,7 @@ public partial class MainWindow : Window
             request.enableVisualChartEditor = editorSetting.EnableVisualChartEditor;
             request.comboStatusType = editorSetting!.comboStatusType;
             request.audioSpeed = GetPlaybackSpeed();
-            request.mediaAudioVolume = editorSetting.Default_BGM_Level;
+            request.mediaAudioVolume = MultiMediaVolume;
             request.smoothSlideAnime = editorSetting!.SmoothSlideAnime;
             request.editorPlayMethod = timelinePreview
                 ? EditorPlayMethod.Disabled
@@ -4889,10 +5049,16 @@ public partial class MainWindow : Window
             {
                 request.recordFrameRate = pendingRecordOptions.FrameRate >= 120 ? 120 : 60;
                 request.recordLayers = "";
-                request.recordFileName = "out.mp4";
+                request.recordFileName = pendingRecordOptions.FileName;
                 request.recordWidth = pendingRecordOptions.Width;
                 request.recordHeight = pendingRecordOptions.Height;
                 request.revealOutput = pendingRecordOptions.RevealOutput;
+                if (multiRecording)
+                {
+                    request.showSongDetail = multiIntroDuration > 0;
+                    request.recordBatch = multiBatch ?? "";
+                    request.audioSpeed = 1f;
+                }
             }
         });
 
@@ -4901,14 +5067,20 @@ public partial class MainWindow : Window
             var preBake = songDetailBakeTask;
             if (preBake != null && !preBake.IsCompleted)
                 preBake.GetAwaiter().GetResult();
-            lock (songDetailBakeLock)
+            try
             {
-                EnsureSongDetailCache(jsonStruct);
+                lock (songDetailBakeLock)
+                    EnsureSongDetailCache(jsonStruct);
+            }
+            catch (Exception exception)
+            {
+                ReportSongDetailError(exception);
+                return false;
             }
         }
 
         json = JsonConvert.SerializeObject(request);
-        var response = WebControl.RequestPOST("http://localhost:8013/", json);
+        var response = WebControl.RequestPOST(MajdataCore.AlphaSession.ViewEndpoint, json);
         if (response == "ERROR")
         {
             ReportViewUnreachable();
@@ -4917,6 +5089,7 @@ public partial class MainWindow : Window
         if (!controlGeneration.HasValue ||
             controlGeneration.Value == viewControlGeneration)
         {
+            roomChartNeedsReload = false;
             lastEditorState = request.control switch
             {
                 EditorControlMethod.Record => EditorControlMethod.Record,
@@ -4975,6 +5148,8 @@ public partial class MainWindow : Window
         jsonStruct.mediaTable = GetEffectiveMediaTable()
             .Where(item => item.kind != "audio" || !item.timelineClip)
             .ToList();
+        jsonStruct.hasAlphaEditorSyntax = SimaiProcess.meterTable.Count > 0 ||
+            SimaiProcess.mediaTrimStart.HasValue || SimaiProcess.mediaTrimEnd.HasValue;
         return jsonStruct;
     }
 
@@ -4985,12 +5160,12 @@ public partial class MainWindow : Window
     private static List<BasicParseError> ValidateTimingsForView(IEnumerable<SimaiTimingPoint> timingList)
     {
         var errors = new List<BasicParseError>();
-        var flaggedLines = new HashSet<int>();
+        var flaggedSlots = new HashSet<(int, int)>();
         foreach (var timing in timingList)
         {
             void AddError(string message)
             {
-                if (flaggedLines.Add(timing.rawTextPositionY))
+                if (flaggedSlots.Add((timing.rawTextPositionY, timing.rawTextPositionX)))
                     errors.Add(new BasicParseError(
                         timing.rawTextPositionX,
                         timing.rawTextPositionY,
@@ -5004,6 +5179,7 @@ public partial class MainWindow : Window
                 => AddError(LocalizeViewValidationMessage(error));
 
             var notes = timing.getNotes();
+            if (timing.notesContent.Contains('，')) AddError("请使用英文逗号 , 分隔节拍，不能使用中文逗号。");
             if (!string.IsNullOrWhiteSpace(timing.noteParseError))
                 AddError(timing.noteParseError);
             if (!string.IsNullOrWhiteSpace(timing.notesContent) && notes.Count == 0)
@@ -5177,9 +5353,11 @@ public partial class MainWindow : Window
         if (segments.Any(segment => segment.shape == "w") && subSlide.Count != 1)
             throw ChartError("WifiConnectionSlideUnsupported");
 
-        foreach (var slide in subSlide)
-            if (slide.Contains('[', StringComparison.Ordinal))
-                _ = GetTimeFromBeats(slide, timing.currentBpm);
+        // Skin annotations also use brackets. Validate the parsed duration,
+        // rather than taking the first bracket in the reconstructed slide.
+        foreach (var segment in segments)
+            if (!string.IsNullOrEmpty(segment.duration))
+                _ = GetTimeFromBeats(segment.duration, timing.currentBpm);
     }
 
 
@@ -5216,6 +5394,8 @@ public partial class MainWindow : Window
     // Pre-bake card PNGs after metadata changes to avoid first-play frame spikes.
     private void SchedulePreBakeSongDetail()
     {
+        if (editorSetting?.DisableAutomaticSongDetailRefresh == true)
+            return;
         if (selectedDifficulty < 0 || selectedDifficulty > 6)
             return;
         if (string.IsNullOrWhiteSpace(maidataDir))
@@ -5230,16 +5410,26 @@ public partial class MainWindow : Window
             // later must not make the first playback render a cache on demand.
             majson.songDetailStyle = 1;
         }
-        catch
+        catch (Exception exception)
         {
+            Console.WriteLine(exception);
+            if (editorSetting?.SongDetailStyle == 1)
+                ReportSongDetailError(exception);
             return;
         }
 
         songDetailBakeTask = Task.Run(() =>
         {
-            lock (songDetailBakeLock)
+            try
             {
-                EnsureSongDetailCache(majson);
+                lock (songDetailBakeLock)
+                    EnsureSongDetailCache(majson);
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(exception);
+                if (editorSetting?.SongDetailStyle == 1)
+                    ReportSongDetailError(exception);
             }
         });
     }
@@ -5262,7 +5452,7 @@ public partial class MainWindow : Window
                 if (stem == null)
                     continue;
 
-                var path = Path.Combine(maidataDir, stem + ".sig");
+                var path = Path.Combine(SongDetailCacheDirectory(), stem + ".sig");
                 if (File.Exists(path))
                     File.Delete(path);
             }
@@ -5275,7 +5465,7 @@ public partial class MainWindow : Window
 
     private static string? GetSongDetailCacheStem(int difficulty)
     {
-        return difficulty switch
+        var stem = difficulty switch
         {
             0 => "songdetail_easy",
             1 => "songdetail_basic",
@@ -5286,6 +5476,7 @@ public partial class MainWindow : Window
             6 => "songdetail_original",
             _ => null
         };
+        return stem == null ? null : MajdataCore.AlphaSession.FileName(stem);
     }
 
     // Difficulty-specific asset suffix and level glyph atlas.
@@ -5322,6 +5513,44 @@ public partial class MainWindow : Window
         return false;
     }
 
+    private static bool IsAlphaChart(Majson majson)
+    {
+        if (majson.hasAlphaEditorSyntax || majson.svTable.Count > 0 ||
+            majson.hsTable.Count > 0 || majson.spawnTable.Count > 0 ||
+            majson.spawnModeTable.Count > 0 || majson.bounceTable.Count > 0 ||
+            majson.destroyTable.Count > 0 || majson.fakeTable.Count > 0 ||
+            majson.colorTable.Count > 0 || majson.sizeTable.Count > 0 ||
+            majson.alphaTable.Count > 0 || majson.displayTable.Count > 0 ||
+            majson.subtitleTable.Count > 0 || majson.effectTable.Count > 0 ||
+            majson.mediaTable.Count > 0)
+            return true;
+
+        foreach (var timing in majson.timingList)
+        {
+            if (timing.streamIndex > 0)
+                return true;
+            foreach (var note in timing.noteList)
+            {
+                if (note.isDZone || note.isDZoneEnd || note.isTouchSlide ||
+                    note.isMineHead || note.isMineSlide || note.isFake ||
+                    note.isFakeHead || note.isFakeSlide || note.isTrajectoryOnly ||
+                    note.touchRadius > 0f || !string.IsNullOrEmpty(note.noteSkin) ||
+                    note.noteType == SimaiNoteType.NoiseZone ||
+                    note.noteType == SimaiNoteType.TouchHold && note.touchArea != 'C' ||
+                    note.isHanabi && note.noteType is SimaiNoteType.Tap or SimaiNoteType.Hold or SimaiNoteType.Slide)
+                    return true;
+                foreach (var segment in note.slidePath)
+                    if (!string.IsNullOrEmpty(segment.slideCode) ||
+                        segment.shape is "rp" or "rq" or "P" or "Q" ||
+                        segment.start.isDZone || segment.middle.isDZone || segment.end.isDZone ||
+                        segment.start.HasCustomRadius || segment.end.HasCustomRadius ||
+                        segment.start.HasSkin || segment.end.HasSkin)
+                        return true;
+            }
+        }
+        return false;
+    }
+
     private string BuildSongDetailInfoFingerprint()
     {
         var coverPath = FindChartImage("Cover") ?? FindChartImage("bg") ?? "";
@@ -5353,18 +5582,65 @@ public partial class MainWindow : Window
     }
 
     // Bake a base PNG below the jacket and an overlay PNG above it.
-    private void EnsureSongDetailCache(Majson majson)
+    private static string SongDetailCacheDirectory()
+    {
+        var folder = Path.Combine(maidataDir, "figure");
+        Directory.CreateDirectory(folder);
+        return folder;
+    }
+
+    internal void ReportSongDetailError(Exception exception)
+    {
+        Dispatcher.BeginInvoke(new Action(() => MessageBox.Show(
+            "仿官封面加载失败：\n" + exception.Message,
+            "仿官封面", MessageBoxButton.OK, MessageBoxImage.Error)));
+    }
+
+    private string? FindSongDetailCachePath(int difficulty, string suffix)
+    {
+        var sessionStem = GetSongDetailCacheStem(difficulty);
+        if (sessionStem == null)
+            return null;
+        var folder = SongDetailCacheDirectory();
+        var path = Path.Combine(folder, sessionStem + suffix + ".png");
+        if (File.Exists(path))
+            return path;
+        // Cache names from earlier sessions remain valid when automatic refresh is disabled.
+        var stem = new[] { "songdetail_easy", "songdetail_basic", "songdetail_advanced",
+            "songdetail_expert", "songdetail_master", "songdetail_remaster", "songdetail_original" }[difficulty];
+        path = Path.Combine(folder, stem + suffix + ".png");
+        if (File.Exists(path))
+            return path;
+        return new DirectoryInfo(folder).EnumerateFiles(stem + "-*" + suffix + ".png")
+            .Where(file => suffix.Length != 0 ||
+                !file.Name.EndsWith("_overlay.png") && !file.Name.EndsWith("_full.png"))
+            .OrderByDescending(file => file.LastWriteTimeUtc)
+            .FirstOrDefault()?.FullName;
+    }
+
+    private void EnsureSongDetailCache(Majson majson, bool forceRefresh = false)
     {
         if (majson.songDetailStyle != 1 || string.IsNullOrWhiteSpace(maidataDir))
             return;
+
+        if (!forceRefresh && editorSetting?.DisableAutomaticSongDetailRefresh == true)
+        {
+            if (FindSongDetailCachePath(majson.diffNum, "") == null)
+                throw new FileNotFoundException("已关闭自动刷新，但当前难度没有仿官封面。请在录制页手动刷新预览。");
+            return;
+        }
 
         try
         {
             var partsDir = FindProjectAssetPath("Assets/SongDetailParts");
             var fontDir = FindProjectAssetPath("Assets/Resources/Fonts");
             var cacheStem = GetSongDetailCacheStem(majson.diffNum);
-            if (partsDir == null || fontDir == null || cacheStem == null)
-                return;
+            if (partsDir == null)
+                throw new DirectoryNotFoundException("找不到仿官封面素材目录 SongDetailParts。");
+            if (fontDir == null)
+                throw new DirectoryNotFoundException("找不到仿官封面字体目录 Resources/Fonts。");
+            if (cacheStem == null)
+                throw new InvalidDataException($"仿官封面不支持难度编号 {majson.diffNum}。");
 
             var (suffix, digitSheetName) = GetSongDetailPartNames(majson.diffNum);
             var bodyPath = Path.Combine(partsDir, $"UI_TST_MBase_{suffix}.png");
@@ -5372,22 +5648,25 @@ public partial class MainWindow : Window
             var lvPlatePath = Path.Combine(partsDir, $"UI_TST_MBase_LV_{suffix}.png");
             var digitSheetPath = Path.Combine(partsDir, digitSheetName + ".png");
             var infoOverlayPath = Path.Combine(partsDir, "InfoOverlay.png");
-            if (!File.Exists(bodyPath) || !File.Exists(tabPath) || !File.Exists(lvPlatePath) ||
-                !File.Exists(digitSheetPath) || !File.Exists(infoOverlayPath))
-                return;
+            foreach (var requiredPath in new[] { bodyPath, tabPath, lvPlatePath, digitSheetPath, infoOverlayPath })
+                if (!File.Exists(requiredPath))
+                    throw new FileNotFoundException("缺少仿官封面素材：" + requiredPath, requiredPath);
 
             // Reuse the cache until visible metadata or chart mode changes.
-            var outputPath = Path.Combine(maidataDir, cacheStem + ".png");
-            var overlayOutPath = Path.Combine(maidataDir, cacheStem + "_overlay.png");
-            var fullOutPath = Path.Combine(maidataDir, cacheStem + "_full.png");
-            var signaturePath = Path.Combine(maidataDir, cacheStem + ".sig");
+            var outputPath = Path.Combine(SongDetailCacheDirectory(), cacheStem + ".png");
+            var overlayOutPath = Path.Combine(SongDetailCacheDirectory(), cacheStem + "_overlay.png");
+            var fullOutPath = Path.Combine(SongDetailCacheDirectory(), cacheStem + "_full.png");
+            var textFolder = Path.Combine(SongDetailCacheDirectory(), cacheStem + "_text");
+            var signaturePath = Path.Combine(SongDetailCacheDirectory(), cacheStem + ".sig");
             var dxMaxScore = CountTotalNotes(majson) * 3;
-            var isDx = IsDxChart(majson);
+            var isAlpha = IsAlphaChart(majson);
+            var isDx = isAlpha || IsDxChart(majson);
             var isUtage = majson.diffNum == 6;
             var coverPath = FindChartImage("Cover") ?? FindChartImage("bg") ?? "";
-            var signature = BuildSongDetailSignature(majson, coverPath, dxMaxScore) + (isDx ? "|dx" : "|std");
-            if (File.Exists(outputPath) && File.Exists(overlayOutPath) && File.Exists(signaturePath) &&
-                (!File.Exists(coverPath) || File.Exists(fullOutPath)) &&
+            var signature = BuildSongDetailSignature(majson, coverPath, dxMaxScore) +
+                (isAlpha ? "|alpha" : isDx ? "|dx" : "|std");
+            if (!forceRefresh && File.Exists(outputPath) && File.Exists(overlayOutPath) && File.Exists(signaturePath) &&
+                File.Exists(fullOutPath) &&
                 string.Equals(File.ReadAllText(signaturePath), signature, StringComparison.Ordinal))
                 return;
 
@@ -5396,10 +5675,10 @@ public partial class MainWindow : Window
             const float bodyScaleX = 341f / 420f;
             const float bodyScaleY = 588f / 718f;
 
-            using (var canvas = new Bitmap(341, 588, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            using (var canvas = new Bitmap(341 * SongDetailRenderScale, 588 * SongDetailRenderScale, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
             using (var graphics = Graphics.FromImage(canvas))
             {
-                ConfigureCardGraphics(graphics);
+                ConfigureCardGraphics(graphics, SongDetailRenderScale);
 
                 using (var body = System.Drawing.Image.FromFile(bodyPath))
                     graphics.DrawImage(body, new RectangleF(
@@ -5419,6 +5698,7 @@ public partial class MainWindow : Window
 
                 // Place the mode badge on the tab and mirror its anchor for standard charts.
                 var iconName = isUtage ? "UI_TST_Infoicon_Utage.png"
+                    : isAlpha ? "UI_TST_Infoicon_AlphaMode.png"
                     : isDx ? "UI_TST_Infoicon_DeluxeMode.png" : "UI_TST_Infoicon_StandardMode.png";
                 var iconPath = Path.Combine(partsDir, iconName);
                 if (File.Exists(iconPath))
@@ -5452,30 +5732,39 @@ public partial class MainWindow : Window
                     graphics.DrawImage(info, new RectangleF(13f, 28f, 317f, 548f));
 
                 using var titleFonts = new PrivateFontCollection();
-                AddFontIfExists(titleFonts, Path.Combine(fontDir, "MicrosoftYaHei-Bold.ttc"));
-                AddFontIfExists(titleFonts, Path.Combine(fontDir, "NotoSansSC-VF.ttf"));
+                var titleFontPath = Path.Combine(fontDir, "FOT-NewRodin Pro EB.otf");
+                if (!File.Exists(titleFontPath))
+                    throw new FileNotFoundException("缺少仿官封面曲名字体：" + titleFontPath, titleFontPath);
+                titleFonts.AddFontFile(titleFontPath);
+                using var artistFonts = new PrivateFontCollection();
+                artistFonts.AddFontFile(Path.Combine(fontDir, "FOT-Seurat Pro DB.otf"));
                 using var smallFonts = new PrivateFontCollection();
                 AddFontIfExists(smallFonts, Path.Combine(fontDir, "Aileron-Regular.otf"));
+                using var labelFonts = new PrivateFontCollection();
+                AddFontIfExists(labelFonts, Path.Combine(fontDir, "MicrosoftYaHei-Bold.ttc"));
+                AddFontIfExists(labelFonts, Path.Combine(fontDir, "NotoSansSC-VF.ttf"));
 
                 if (isUtage)
                 {
                     DrawCondensedText(graphics,
                         string.IsNullOrWhiteSpace(majson.utageLabel) ? "宴" : majson.utageLabel,
-                        titleFonts, new RectangleF(20.8f, 20.6f, 151f, 48f),
+                        labelFonts, new RectangleF(20.8f, 20.6f, 151f, 48f),
                         22f,
                         Color.White, StringAlignment.Center, true);
                 }
 
-                // Bake the title into the same image as DXSCORE and the other labels.
-                // A live Unity Text layer used to use different font metrics and could
-                // disappear after scene reload, so the preview and View never matched.
-                DrawCondensedText(graphics, majson.title, titleFonts, new RectangleF(8, 403, 325, 42),
-                    22f, Color.White, StringAlignment.Center, true);
-                DrawCondensedText(graphics, majson.artist, titleFonts, new RectangleF(8, 443, 325, 38),
-                    17f, Color.FromArgb(235, 241, 255), StringAlignment.Center, false);
+                DrawCardMetadata(graphics, majson.title, titleFonts, new RectangleF(20, 403, 301, 42),
+                    22f, Color.White, StringAlignment.Center, Path.Combine(textFolder, "title.png"), 434f);
+                DrawCardMetadata(graphics, majson.artist, artistFonts, new RectangleF(20, 450, 301, 38),
+                    17f, Color.FromArgb(235, 241, 255), StringAlignment.Center, Path.Combine(textFolder, "artist.png"), 469.5f);
                 var designerText = string.IsNullOrWhiteSpace(majson.designer) ? "-" : majson.designer;
-                DrawFitText(graphics, designerText, smallFonts, new RectangleF(21, 548, 200, 26),
-                    18f, 10f, Color.FromArgb(17, 61, 103), StringAlignment.Near, false);
+                using var chineseDesignerFonts = new PrivateFontCollection();
+                var hasChineseDesigner = designerText.Any(c => c is >= '\u3400' and <= '\u9FFF' or >= '\uF900' and <= '\uFAFF');
+                if (hasChineseDesigner)
+                    chineseDesignerFonts.AddFontFile(Path.Combine(AppContext.BaseDirectory,
+                        "Resources", "Fonts", "GenSenRounded2TW-R.otf"));
+                DrawCardMetadata(graphics, designerText, hasChineseDesigner ? chineseDesignerFonts : artistFonts, new RectangleF(21, 547, 200, 26),
+                    16f, Color.FromArgb(17, 61, 103), StringAlignment.Near, Path.Combine(textFolder, "designer.png"));
                 // Draw the BPM label and value because the extracted overlay omits them.
                 DrawFitText(graphics, "BPM " + GetBpmTextForCache(majson), smallFonts,
                     new RectangleF(188, 546, 130, 26),
@@ -5494,20 +5783,32 @@ public partial class MainWindow : Window
                 ConfigureCardGraphics(overlayGraphics);
                 using (var plate = System.Drawing.Image.FromFile(lvPlatePath))
                     overlayGraphics.DrawImage(plate, new RectangleF(193f, 321f, 134f, 83.4f));
-                DrawLevelFromSheet(overlayGraphics, digitSheetPath,
-                    CleanLevelForCache(majson.level), new RectangleF(202f, 348f, 128f, 53f));
+                var levelText = CleanLevelForCache(majson.level);
+                var levelBox = new RectangleF(202f, 348f, 128f, 53f);
+                DrawLevelFromSheet(overlayGraphics, digitSheetPath, levelText, levelBox);
                 SavePngAtomically(overlayCanvas, overlayOutPath);
             }
 
             // Also bake a flattened preview using the same jacket geometry as View.
-            if (File.Exists(coverPath))
-                using (var full = new Bitmap(341, 588, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                using (var full = new Bitmap(341 * SongDetailRenderScale, 588 * SongDetailRenderScale, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
                 using (var fullGraphics = Graphics.FromImage(full))
                 {
-                    ConfigureCardGraphics(fullGraphics);
+                    ConfigureCardGraphics(fullGraphics, SongDetailRenderScale);
                     using (var baseImage = System.Drawing.Image.FromFile(outputPath))
                         fullGraphics.DrawImage(baseImage, new RectangleF(0f, 0f, 341f, 588f));
-                    DrawCover(fullGraphics, coverPath, new Rectangle(43, 98, 256, 258));
+                    foreach (var row in new[] {
+                        ("title.png", new RectangleF(20, 403, 301, 42)),
+                        ("artist.png", new RectangleF(20, 450, 301, 38)),
+                        ("designer.png", new RectangleF(21, 547, 200, 26)) })
+                    {
+                        var textPath = Path.Combine(textFolder, row.Item1);
+                        if (File.Exists(textPath))
+                            using (var textImage = System.Drawing.Image.FromFile(textPath))
+                                fullGraphics.DrawImage(textImage, row.Item2,
+                                    new RectangleF(0, 0, row.Item2.Width * SongDetailRenderScale, row.Item2.Height * SongDetailRenderScale), GraphicsUnit.Pixel);
+                    }
+                    if (File.Exists(coverPath))
+                        DrawCover(fullGraphics, coverPath, new Rectangle(43, 98, 256, 258));
                     using (var overlayImage = System.Drawing.Image.FromFile(overlayOutPath))
                         fullGraphics.DrawImage(overlayImage, new RectangleF(0f, 0f, 341f, 588f));
                     SavePngAtomically(full, fullOutPath);
@@ -5517,7 +5818,7 @@ public partial class MainWindow : Window
         }
         catch (Exception e)
         {
-            Console.WriteLine("Song detail cache failed: " + e.Message);
+            throw new InvalidOperationException("无法生成仿官封面：" + e.Message, e);
         }
     }
 
@@ -5564,14 +5865,15 @@ public partial class MainWindow : Window
         graphics.DrawImage(cover, target, source.X, source.Y, source.Width, source.Height, GraphicsUnit.Pixel);
     }
 
-    private static void ConfigureCardGraphics(Graphics graphics)
+    private static void ConfigureCardGraphics(Graphics graphics, int scale = 1)
     {
         graphics.CompositingMode = CompositingMode.SourceOver;
         graphics.CompositingQuality = CompositingQuality.HighQuality;
         graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
         graphics.SmoothingMode = SmoothingMode.HighQuality;
-        graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+        graphics.TextRenderingHint = TextRenderingHint.AntiAlias;
         graphics.Clear(Color.Transparent);
+        graphics.ScaleTransform(scale, scale);
     }
 
     // Draw level text from the difficulty atlas and scale the row to its plate.
@@ -5693,6 +5995,8 @@ public partial class MainWindow : Window
         var hasQuestion = display.Contains('?');
         if (hasDisplayPlus)
             DrawCell(10, hasQuestion ? slots[3] + 2f : slots[3] + 5f, -5f);
+        else if (display.EndsWith("-", StringComparison.Ordinal))
+            DrawCell(11, slots[3] + 5f, -5f);
         if (hasQuestion)
         {
             DrawQuestion(slots[3] + 5f);
@@ -5740,7 +6044,45 @@ public partial class MainWindow : Window
 
         using (var font = new System.Drawing.Font(family, chosen, style, GraphicsUnit.Pixel))
         using (var brush = new SolidBrush(color))
-            graphics.DrawString(text, font, brush, rect, drawFormat);
+        {
+            var height = Math.Max(rect.Height, graphics.MeasureString(text, font, PointF.Empty, measureFormat).Height + 1f);
+            graphics.DrawString(text, font, brush,
+                new RectangleF(rect.Left, rect.Top + (rect.Height - height) / 2f, rect.Width, height), drawFormat);
+        }
+    }
+
+    private static void DrawCardMetadata(Graphics graphics, string text, PrivateFontCollection fonts,
+        RectangleF rect, float fontSize, Color color, StringAlignment alignment, string textPath, float? baselineY = null)
+    {
+        text ??= "";
+        var family = fonts.Families.Length > 0 ? fonts.Families[0] : System.Drawing.FontFamily.GenericSansSerif;
+        using var font = new System.Drawing.Font(family, fontSize, System.Drawing.FontStyle.Regular, GraphicsUnit.Pixel);
+        using var format = (StringFormat)StringFormat.GenericTypographic.Clone();
+        format.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.NoClip | StringFormatFlags.MeasureTrailingSpaces;
+        var width = graphics.MeasureString(text, font, PointF.Empty, format).Width;
+        if (width <= rect.Width)
+        {
+            if (File.Exists(textPath)) File.Delete(textPath);
+            if (baselineY.HasValue)
+                DrawCondensedText(graphics, text, fonts, rect, fontSize, color, alignment, false, baselineY);
+            else
+                DrawFitText(graphics, text, fonts, rect, fontSize, fontSize, color, alignment, false);
+            return;
+        }
+
+        // Preserve GDI+ font metrics in View: scroll a baked natural-width strip,
+        // rather than replacing the text with Unity fonts or compressing it to fit.
+        Directory.CreateDirectory(Path.GetDirectoryName(textPath)!);
+        var stripWidth = (int)Math.Ceiling(width) + 2;
+        using var strip = new Bitmap(stripWidth * SongDetailRenderScale, (int)rect.Height * SongDetailRenderScale, PixelFormat.Format32bppArgb);
+        using var stripGraphics = Graphics.FromImage(strip);
+        ConfigureCardGraphics(stripGraphics, SongDetailRenderScale);
+        var stripRect = new RectangleF(0, 0, stripWidth, rect.Height);
+        if (baselineY.HasValue)
+            DrawCondensedText(stripGraphics, text, fonts, stripRect, fontSize, color, StringAlignment.Near, false, baselineY.Value - rect.Top);
+        else
+            DrawFitText(stripGraphics, text, fonts, stripRect, fontSize, fontSize, color, StringAlignment.Near, false);
+        SavePngAtomically(strip, textPath);
     }
 
     // Keep titles visually large like the arcade card while fitting long names into one line.
@@ -5754,7 +6096,8 @@ public partial class MainWindow : Window
         float fontSize,
         Color color,
         StringAlignment alignment,
-        bool bold)
+        bool bold,
+        float? baselineY = null)
     {
         text ??= "";
         if (text.Length == 0)
@@ -5774,8 +6117,19 @@ public partial class MainWindow : Window
         var state = graphics.Save();
         graphics.TranslateTransform(rect.Left, rect.Top);
         graphics.ScaleTransform(scaleX, 1f);
+        // Some CJK font families have a line box taller than their visible glyphs.
+        // GDI+ silently omits a line that does not fit the layout rectangle.
+        var layoutHeight = Math.Max(rect.Height, measured.Height + 1f);
+        var top = (rect.Height - layoutHeight) / 2f;
+        if (baselineY is float baseline)
+        {
+            // MeasureString's line height depends on the script in the text.
+            // Use the font ascent and a fixed row baseline for song metadata.
+            format.LineAlignment = StringAlignment.Near;
+            top = baseline - rect.Top - fontSize * family.GetCellAscent(style) / family.GetEmHeight(style);
+        }
         graphics.DrawString(text, font, brush,
-            new RectangleF(0f, 0f, rect.Width / scaleX, rect.Height), format);
+            new RectangleF(0f, top, rect.Width / scaleX, layoutHeight), format);
         graphics.Restore(state);
     }
 
@@ -5881,7 +6235,9 @@ public partial class MainWindow : Window
         level = level.Trim();
         if (level.StartsWith("Lv", StringComparison.OrdinalIgnoreCase))
             level = level.Substring(2).Trim();
-        return level;
+        var (number, hasPlus) = SplitLevelForCache(level);
+        return new string((number + (hasPlus ? "+" : ""))
+            .Where(c => c is >= '0' and <= '9' or '+' or '-').ToArray());
     }
 
     private static (string number, bool hasPlus) SplitLevelForCache(string level)
@@ -5910,7 +6266,8 @@ public partial class MainWindow : Window
     }
 
     // Increment when card rendering changes to invalidate old signatures.
-    private const string SongDetailCacheVersion = "v47";
+    private const int SongDetailRenderScale = 2;
+    private const string SongDetailCacheVersion = "v56";
 
     // Match View note counting; max DXSCORE is total notes multiplied by three.
     private static int CountTotalNotes(Majson majson)
@@ -5922,6 +6279,8 @@ public partial class MainWindow : Window
                 continue;
             foreach (var note in timing.noteList)
             {
+                if (note.isTrajectoryOnly)
+                    continue;
                 if (note.noteType == SimaiNoteType.Slide)
                 {
                     if (!note.isSlideNoHead && !note.isFakeHead)
@@ -5979,7 +6338,8 @@ public partial class MainWindow : Window
         string level,
         string bpm,
         string label,
-        bool coop)
+        bool coop,
+        bool forceRefresh = false)
     {
         if (selectedDifficulty < 0 || string.IsNullOrWhiteSpace(maidataDir))
             return null;
@@ -5992,11 +6352,18 @@ public partial class MainWindow : Window
         majson.wholeBpm = bpm.Trim();
         majson.utageLabel = string.IsNullOrWhiteSpace(label) ? "\u5bb4" : label.Trim();
         majson.utageCoop = coop;
-        lock (songDetailBakeLock)
-            EnsureSongDetailCache(majson);
-        var stem = GetSongDetailCacheStem(majson.diffNum);
-        var path = stem == null ? null : Path.Combine(maidataDir, stem + "_full.png");
-        return path != null && File.Exists(path) ? path : null;
+        try
+        {
+            lock (songDetailBakeLock)
+                EnsureSongDetailCache(majson, forceRefresh);
+            return FindSongDetailCachePath(majson.diffNum, "_full") ??
+                throw new FileNotFoundException("找不到仿官封面预览图，请手动刷新预览。");
+        }
+        catch (Exception exception)
+        {
+            ReportSongDetailError(exception);
+            return null;
+        }
     }
 
     internal string? GetSongDetailPreviewPath()
@@ -6006,7 +6373,7 @@ public partial class MainWindow : Window
         var stem = GetSongDetailCacheStem(selectedDifficulty);
         if (stem == null)
             return null;
-        var path = Path.Combine(maidataDir, stem + "_full.png");
+        var path = Path.Combine(SongDetailCacheDirectory(), stem + "_full.png");
         return File.Exists(path) ? path : null;
     }
 
@@ -6024,7 +6391,23 @@ public partial class MainWindow : Window
 
     private bool CheckAndStartView()
     {
-        if (Process.GetProcessesByName("MajdataView").Length == 0)
+        if (WebControl.BorrowsView)
+        {
+            using var borrowed = WebControl.ViewSession?.GetProcess(true);
+            if (borrowed == null) throw new IOException("原窗口的 View 已关闭，请重新开始播放队列。");
+            return false;
+        }
+        if (MajdataCore.AlphaSession.Current is { } session)
+        {
+            using var existing = session.GetProcess(true);
+            if (existing != null) return false;
+            var executable = FindMajdataViewExecutable();
+            if (executable == null) { MessageBox.Show(GetLocalizedString("ViewExecutableMissing")); return true; }
+            using var started = session.StartProcess(executable, true);
+            ScheduleViewWindowAlignment(150);
+            return true;
+        }
+        if (!Process.GetProcessesByName("MajdataView").Any(p => !MajdataCore.AlphaSession.IsRegisteredProcess(p.Id, true)))
         {
             var unityRunning = Process.GetProcessesByName("Unity").Length > 0;
             // Unity counts as View only while actually playing with View's port 8013 open.
@@ -6052,7 +6435,7 @@ public partial class MainWindow : Window
                 WorkingDirectory = Path.GetDirectoryName(viewPath) ?? Environment.CurrentDirectory,
                 UseShellExecute = true
             });
-            ScheduleViewWindowAlignment(2000);
+            ScheduleViewWindowAlignment(150);
             return true;
         }
 
@@ -6064,7 +6447,7 @@ public partial class MainWindow : Window
         try
         {
             using var client = new System.Net.Sockets.TcpClient();
-            return client.ConnectAsync("127.0.0.1", 8013).Wait(250);
+            return client.ConnectAsync("127.0.0.1", MajdataCore.AlphaSession.Current?.ViewPort ?? 8013).Wait(250);
         }
         catch
         {
@@ -6080,10 +6463,7 @@ public partial class MainWindow : Window
             Path.Combine(Environment.CurrentDirectory, "MajdataView.exe"),
             Path.Combine(baseDirectory, "MajdataView.exe"),
             // Release layout: App\MajdataEdit and App\MajdataView are siblings.
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "MajdataView", "MajdataView.exe")),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "MajdataView.exe")),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "release", "MaiChartAssistant", "MajdataView.exe")),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "..", "..", "..", "..", "..", "release", "MaiChartAssistant", "MajdataView.exe"))
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "MajdataView", "MajdataView.exe"))
         };
 
         return candidates.FirstOrDefault(File.Exists);
@@ -6133,7 +6513,7 @@ public partial class MainWindow : Window
 
     private void InternalSwitchWindow(bool moveToPlace = true)
     {
-        var windowPtr = FindWindow(null, "MajdataView");
+        var windowPtr = GetPairedViewWindow();
         //var thisWindow = FindWindow(null, this.Title);
         ShowWindow(windowPtr, 5); // Restore the window.
         SwitchToThisWindow(windowPtr, true);
@@ -6147,28 +6527,19 @@ public partial class MainWindow : Window
         if (lastEditorState == EditorControlMethod.Record)
             return;
 
-        var windowPtr = FindWindow(null, "MajdataView");
-        var source = PresentationSource.FromVisual(this);
-
-        double dpiX = 1, dpiY = 1;
-        if (source != null)
-        {
-            dpiX = 96.0 * source.CompositionTarget.TransformToDevice.M11;
-            dpiY = 96.0 * source.CompositionTarget.TransformToDevice.M22;
-        }
-
-        //Console.WriteLine(dpiX+" "+dpiY);
-        dpiX /= 96d;
-        dpiY /= 96d;
-
-        var Height = this.Height * dpiY;
-        var Left = this.Left * dpiX;
-        var Top = this.Top * dpiY;
+        var windowPtr = GetPairedViewWindow();
+        if (windowPtr == IntPtr.Zero ||
+            !GetWindowRect(new WindowInteropHelper(this).Handle, out var editorRect))
+            return;
+        // Both coordinates come from Win32 outer-window rectangles. Combining
+        // WPF's logical Top/Height with Unity's physical pixels made View start
+        // a little lower on mixed-DPI desktops and while Edit was still sizing.
+        var height = editorRect.Bottom - editorRect.Top;
         MoveWindow(windowPtr,
-            (int)(Left - Height + 20),
-            (int)Top,
-            (int)Height - 20,
-            (int)Height, true);
+            editorRect.Left - height + 20,
+            editorRect.Top,
+            height - 20,
+            height, true);
     }
 
     private void SetWindowGoldenPosition()
@@ -6307,7 +6678,7 @@ public partial class MainWindow : Window
 
     public string GetWindowsTitleString()
     {
-        return "MajdataEditAlpha";
+        return "MajdataEditAlpha v0.6.0" + (!identityVisible ? "" : " [" + MajdataCore.AlphaSession.Current.Label + "]");
     }
 
     public string GetWindowsTitleString(string info)

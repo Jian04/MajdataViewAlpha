@@ -126,4 +126,386 @@
     <data name="FIles" xml:space="preserve">
     <value>sdadad</value>
   </data>
+  <data name="StarDisplayMode" xml:space="preserve"><value>Star display mode</value></data>
+  <data name="StarDisplayModeLegacy" xml:space="preserve"><value>Legacy</value></data>
+  <data name="StarDisplayModeModern" xml:space="preserve"><value>Modern</value></data>
+  <data name="AlphaHelpStructuredText" xml:space="preserve"><value><![CDATA[
+# Alpha and Extended Syntax
+> This page follows the current parser and editor completion. The angle-command order matches completion: Note → Display → Filter → Media. Editor-only markers and extended note syntax appear first.
+## 1  Basic rules
+- Alpha commands use <COMMAND*arguments>. Names are case-insensitive; the uppercase completion form is recommended.
+- Commands sit on the chart timeline without consuming a comma slot and affect content from that time onward.
+- A command must come before the notes of its beat. One written after them is reported and does not run.
+- True / False controls state. NULL clears note properties that support reset.
+- Durations accept seconds (0.5, 2) or beat lengths (8:1, 16:3), using the nearest preceding BPM.
+- Per-type keys: tap, each, hold, slide, star, break, touch, touchhold. Visual COLOR/SIZE/ALPHA commands also support slidestar for moving guide stars. A typed value overrides the global value.
+- Type “<” for categorized completion. Tab cycles suggestions in the same argument; type a comma for the next argument.
+! Arguments drawn in grey italics may be left out. A grey italic ,duration means the final comma and the duration can both be omitted. Brackets that are drawn plainly, such as h[duration], are part of the syntax and are typed as written.
+E (120){4}<SV*1.5>1,2,<TEXT*("Chorus",2)>3,4,
+## 2  Editor markers and comments
+### Line and block comments
+S || comment text
+E (120){4}1,2,|| everything after this point on the line is ignored
+S |* multiline comment *|
+E |* Commas, notes, and Alpha commands may appear here across multiple lines. *|
+- “||” ignores the rest of its line. Everything between “|*” and “*|” is ignored while line positions are preserved.
+- Block comments cannot nest. Without a closing “*|”, everything from “|*” to the end of the file is ignored.
+### Waveform meter
+S @numerator/denominator
+E @4/4
+E @7/8
+- Both values must be positive integers. The marker changes the strong/weak beat grid from the current time; it does not change View speed or audio.
+- A marker must appear at the start of a timing cell before note characters; placing it on its own line is recommended.
+- Use “@” for meter. A legacy “&” meter may be interpreted as a maidata field after reload and should no longer be used.
+### Overlapping note stream
+S @{division}note stream,
+E @{4}1h,2h,3h,
+E {8}1,2,3,4,5,6,
+E @{2}1h,2h,
+E @{4}3,4,5,6,
+E {8}1,2,3,4,5,6,7,8,
+- An “@” immediately followed by “{” starts an independent note stream at the current time. It advances by its own division without advancing the main chart clock.
+- Multiple consecutive “@{division}” streams are supported. They all start at the current main-stream time and advance independently.
+- Wrap multiple lines in “@*” and “*@” to keep them in one stream; division and Alpha state continue across lines.
+- When the caret is inside a note stream, use “Merge note streams” from the context menu. The editor uses an exact common grid and keeps Alpha commands at their original times.
+- Notes at equal times are merged as Each. The example is equivalent to {8}1h/1,2,2h/3,4,3h/5,6,.
+- Put the stream on its own line before the main line it overlays. Other @ markers such as @4/4 and @RRGGBB are unaffected.
+### Editor background color
+S @RRGGBB
+E @3A587A
+S @NULL
+- Put the marker on its own line. It colors the following editor region only; @NULL restores the theme. Legacy “&RRGGBB / &NULL” is accepted.
+## 3  Extended note syntax
+### Non-C-area TouchHold
+S A/B/D/E area position + h[duration]
+E B1h[4:1] / E3hf[8:1]
+- A, B, D, and E areas support TouchHold. The area letter must be followed by a position from 1 to 8.
+### Custom Touch distance
+S area position~[distance]
+E E1~[4.8] / B3~[1.5] / A5~[4.8]b
+- ~[distance] keeps the area's own direction and only changes how far out the Touch is drawn. Judgement stays on that area's sensor.
+- The distance uses the same unit as SPAWN / DESTROY: the judgement ring is 4.8, area B defaults to 2.3, E to 3.0, A and D to 4.1. Values from 0 to 10 are accepted.
+- Touch only for now: the C area has no direction, a TouchHold's fans are tied to their distance, and a Slide cannot carry it either. All three are reported as errors.
+### Break Touch / TouchHold
+S area position + b
+S area position + h + b[duration]
+E B1b / E3b / Chb[4:1] / B1hb[8:1]
+- b makes a Touch or TouchHold a Break. h and b may appear in either order.
+### Headless Slide modifiers
+S start?-target[duration] / start!-target[duration]
+E 1?-5[8:1] / 1!-5[8:1] / A1?-A2[8:1] / A1!-A2[8:1]
+- Both ? and ! remove ordinary and Touch Slide heads. ? keeps the moving guide-star fade-in; ! hides the guide star until the Slide starts moving.
+### Firework modifier
+S keyf / keyhf[duration] / keyf-Slide[duration]
+E 1f / 1hf[8:1] / 1f-5[8:1] / Cf / Chf[8:1]
+- f adds the hit firework to a Tap, Hold, Touch, TouchHold, or Slide head. On Slides it belongs after the head position, not after a path segment.
+### Star-shaped TAP
+S key$ / key$$
+E 1$ / 2$$
+- $ changes a normal TAP into a non-rotating star; $$ uses the same star with fixed-speed rotation.
+### Touch Slide (AstroDX arc-direction compatibility)
+S start[-|<|>|<<|>>|^|v|p|q|pp|qq]target[duration]
+S startVturntarget[duration]
+S startPorbittarget[duration] / startQorbittarget[duration]
+E A1-A3[8:1] / A1<A3<A5[8:1] / 1d-E5[8:1]
+E A1VCE2[8:1]
+E A1pE5[8:1] / B1ppB5[8:1]
+E A1-E5[8:1] / 1P3E5Q0A5[8:1]
+E A1b-A2b[8:1] / A1!-A2[8:1] / A1?-A2[8:1]
+E A1<<E5[8:1] / A1<<<E5[8:1] / A1>>>E5[8:1]
+- A path with an A/B/C/D/E Touch endpoint is a Touch Slide; a normal key or D key may be used at the other end.
+- b on the head creates a Break head and b after the destination creates a Break path. Both ? and ! remove the head: ? keeps the moving guide-star fade-in, while ! hides it until the Slide starts moving. Duration is required.
+- A connected Touch Slide uses one total duration. Per-segment durations are rejected because View cannot preserve those segment boundaries yet.
+- Repeating the same < or > creates one continuous, equally spaced spiral: two symbols make one full loop before entering the target, three make two loops, and so on. Multi-loop syntax is Touch-Slide-only; ordinary numeric Slides and mixed directions are rejected.
+- Capital P / Q selects an orbit and enters/leaves it tangentially: 0 is the centre orbit, 1-8 are side orbits, and 9 is the outer ring. P runs counter-clockwise and Q clockwise.
+### SlideCode (MajdataPlay sensor-route and end-effect compatibility)
+S start + A/B/C/P/Q commands + Kend[duration]
+E 5Q9A1P98CQ49K5[8:1] / 1A3571P0K1[4:1]
+- The first 1-8 is the start. A visits an outer key, B an inner intersection, C the centre, P/Q orbit counter-clockwise/clockwise, and K1-K8 ends the path.
+- One command may take consecutive parameters: A357 visits A3, A5, A7; P98 transfers from orbit 9 to orbit 8.
+- P and Q cannot connect directly. Orbit 0 and orbit 9 also need an A, B, or C node between them.
+- Without K, 1Q85 is ordinary selectable PQ and retains the legacy pp/qq extra loop. With K, 1Q8K5 is SlideCode and uses the shortest tangent-and-arc connection. The two syntaxes are independent.
+### Mine, D-zone, and modifier placement
+S m = gray Mine; d = D-zone position
+E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
+- On Slides, placement matters: 1m-5 colors only the head, 1-5m colors only the path/moving star, and 1m-5m colors both.
+- A d after the start key selects the D-zone start; a d after the Slide target selects the D-zone end.
+### rp / rq reverse-arc Slides
+S startrptarget[duration] / startrqtarget[duration]
+E 1rp3[8:1] / 1rq7[8:1]
+- rp and rq travel opposite to the pp and qq arc directions.
+### Borrowed star trajectory ~[]
+S note~[a complete slide]
+E 1~[5-7[8:1]] / 1b~[5-7[8:1]] / 1$~[5-7[8:1]] / 1~[C1-A5[8:1]] / 1~[2P35[8:1]]
+- The note does not fall at the position it is written at. It travels the trajectory of the slide in the brackets, starting where that slide starts and taking the time that slide takes.
+- Only the travelling note is drawn: no arc, no slide head, nothing at all at the position it was written at. It is never judged and never counted.
+- The note before ~[] is the carrier: 1~[...] moves a Tap; only 1$~[...] moves a star.
+- The brackets need a complete slide, duration included. Key slides and Touch slides can both be borrowed; a wifi slide is three stars and cannot.
+- A borrowed trajectory cannot be followed by a slide. Modifiers (b, h, $, f) may be written on either side of the ~[].
+### X Noise zones
+S XD1[8:1] / XC[4:1] / XA1 / XE1[4:1]/XC[4:1]/XE2[4:1]/XE3[4:1]/XE4[4:1]
+E (120){4}XD1[8:1],D1,XE1[1:1]/XC[1:1]/XE2[1:1],,
+- X prefixes a touch area: A1–A8, B1–B8, C, D1–D8 or E1–E8. Prefix every area with X and join simultaneous zones with /.
+- Durations use Hold syntax: at 120 BPM, [8:1] is 0.25 seconds. [#seconds] is supported. Omission is one short judgement frame, like 1h.
+- Touch speed determines outline warning lead time; HS/SV adjust appearance time and white Ready flashes start when the outline appears without disabling input. Short zones show the full glitch field for at least 0.1 seconds visually, without extending input blocking.
+E <COLOR*noise=00BBFF> / <SIZE*noise=0.8> / <ALPHA*noise=0.5>
+- Global SV/HS include noise warnings by default; noise= overrides them. SV=2 halves the warning lead. Global COLOR/SIZE/ALPHA and their live variants exclude noise; use noise= explicitly. Screen filters include noise; styling does not change disabled sensors or duration.
+- At the authored beat, a red glitch-filled zone disables that sensor; A zones also block their outer button. Zones add no note count, score or hand requirement.
+- Later adjacent active zones grow from shared edges; ending zones retreat toward surviving neighbors before their authored end, and split when a bridge ends. Missing sensor regions are never filled. Active rendering follows Phira-Pro displacement, edge/glow and scene sampling; warnings remain red outlines. Overlaps last until the final event ends; seeking reconstructs state.
+
+## 4  Note Alpha commands
+### SV — true scroll velocity
+S <SV*multiplier>
+S <SV*type=multiplier,type=multiplier>
+S <SV*type=NULL>
+E <SV*1.5> / <SV*tap=2,hold=0.75> / <SV*tap=NULL>
+- Global SV accepts positive, zero, and negative values. Typed NULL makes that type inherit global SV again.
+- Global SV affects Tap, Hold, Star heads, Touch, and TouchHold. `slide=` controls Slide, Wifi, and TouchSlide motion within the authored duration: positive net motion is normalized to finish on time, while zero/negative motion can pause or rewind and is cut off at the authored end. Without `slide=`, Slide paths keep their original time progress.
+### HS — traditional fall speed
+S <HS*multiplier>
+S <HS*type=multiplier,type=multiplier>
+S <HS*type=NULL>
+E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*slide=999> / <HS*hold=NULL>
+- HS changes the traditional appearance/fall multiplier. Typed NULL clears that type's extra multiplier.
+- Touch and TouchHold use touchSpeed × HS: negative values reverse the visual animation and zero pins it at the judgement state; judgement and sound remain on audio time.
+- `HS*slide=multiplier` follows the original HS appearance-speed behavior: for example, `HS*slide=999` is nearly instant without changing path duration. Global HS does not affect Slides; path motion still uses `SV*slide`, and `HS*slide=NULL` restores 1x.
+### SPAWN — ring-note visual spawn radius
+S <SPAWN*radius>
+S <SPAWN*type=radius,type=radius>
+S <SPAWN*NULL> / <SPAWN*type=NULL>
+E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
+E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
+- Radius accepts any finite number: 1.225 is the original position, 0 is center, 4.8 is the near judge line, and -4.8 is the opposite judge line. Values outside the judgement ring are supported.
+- Changing radius automatically changes first-visible and movement-start times. SV × HS still determines actual speed, the final judgment key remains unchanged, and the guide line preserves that target as a reference.
+- Applies to Tap, Hold, Star heads, Each, and Break ring notes. Touch, TouchHold, and Slide paths are unchanged.
+### SPAWNMODE — spawn state after SV reversal
+S <SPAWNMODE*Rewind> / <SPAWNMODE*Once>
+S <SPAWNMODE*type=Rewind,type=Once>
+S <SPAWNMODE*NULL> / <SPAWNMODE*type=NULL>
+E <SPAWNMODE*Once> / <SPAWNMODE*tap=Once,hold=Rewind>
+- Rewind is the default: when cumulative SV returns before SPAWN, the note shrinks and hides, then appears again on the next crossing.
+- Once keeps the note active after its first SPAWN crossing. NULL restores Rewind.
+- Supported types match SPAWN. Touch, TouchHold, and Slide paths do not support SPAWNMODE.
+### DESTROY — ring-note visual endpoint
+S <DESTROY*radius>
+S <DESTROY*type=radius,type=radius>
+S <DESTROY*NULL> / <DESTROY*type=NULL>
+E <DESTROY*4.8> / <DESTROY*tap=1.225,hold=-4.8>
+- Changes only the visual endpoint of Tap, Star, Each, Hold, and Break ring notes; judgment time and key remain unchanged.
+- The authored radius is always preserved, including values below SPAWN, negative values, and outer radii. NULL restores 4.8.
+### BOUNCE — judge-line round trip
+S <BOUNCE*duration>
+S <BOUNCE*type=duration,type=duration>
+S <BOUNCE*NULL> / <BOUNCE*type=NULL>
+E <BOUNCE*8:1> / <BOUNCE*tap=8:1,hold=4:1> / <BOUNCE*NULL>
+- By default, Tap, Star, Each, and Hold travel from the judge line to the SPAWN radius, stop there, then return for judgment.
+- Duration accepts seconds or beat ratios. Per-type values override the global value. SV / HS recalculate takeoff timing and visual speed; negative speed reverses the route and SV=0 pauses it, without activating judgment early.
+- BOUNCE follows SPAWNMODE: Rewind hides again when SV retreats before the first takeoff crossing and reappears on a later crossing; Once remains active after the first crossing. The waveform always marks the first appearance.
+### FAKE — visual-only notes
+S <FAKE*True> / <FAKE*False>
+S <FAKE*type=True,type=False>
+E <FAKE*True> / <FAKE*tap=True,slide=True> / <FAKE*False>
+- Makes following notes in the current note stream visual-only: they do not count, judge, play hit sounds, or create hit/judgment effects. False disables the state.
+### COLOR — note color
+S <COLOR*RRGGBB>
+S <COLOR*type=color,type=color>
+S <COLOR*NULL> / <COLOR*type=NULL>
+E <COLOR*FF6699> / <COLOR*star=FF77AA,slidestar=FFFFFF,slide=66DDFF> / <COLOR*slidestar=NULL> / <COLOR*NULL>
+- The global value affects following notes; typed values win. star controls star-shaped notes and Slide heads, slidestar controls moving guide stars, and slide controls paths. Colors must use six-digit RGB.
+E <COLOR*mine=00BBFF>
+E <COLOR*mine=NULL>
+- Global and ordinary type colors (tap/hold, etc.) exclude mines. Use mine= explicitly; mine=NULL restores gray. Global color also excludes blockarea.
+
+### COLORV — live note color
+S <COLORV*RRGGBB> / <COLORV*type=RRGGBB>
+E <COLORV*FFFFFF> / <COLORV*star=FF77AA,slidestar=FFFFFF,slide=66DDFF>
+- Applies immediately to already loaded notes. Typed targets include regular note types plus star, slidestar, and slide.
+E <COLORV*mine=00BBFF>
+E <COLORV*mine=NULL>
+- Global and ordinary type colors (tap/hold, etc.) exclude mines. Use mine= explicitly; mine=NULL restores gray. Global color also excludes blockarea.
+
+### SIZE — note scale
+S <SIZE*scale> / <SIZE*(scaleX,scaleY)>
+S <SIZE*type=scale> / <SIZE*type=(scaleX,scaleY)>
+S <SIZE*NULL> / <SIZE*type=NULL>
+E <SIZE*1.2> / <SIZE*(1.2,0.8)> / <SIZE*star=0.9,slidestar=1.1>
+E <SIZE*slide=1.25> / <SIZE*slide=NULL> / <SIZE*NULL>
+- Global SIZE scales regular notes, Slide heads, and moving guide stars, not Slide paths. Use star=, slidestar=, and slide= to control them separately.
+### SIZEV — live note scale
+S <SIZEV*scale> / <SIZEV*(scaleX,scaleY)> / <SIZEV*type=scale>
+E <SIZEV*1.2> / <SIZEV*slidestar=0.8,slide=1.25>
+- Applies scale immediately to already loaded notes, with separate star, slidestar, and slide targets.
+### ALPHA — note opacity
+S <ALPHA*0..1>
+S <ALPHA*type=0..1,type=0..1>
+S <ALPHA*NULL> / <ALPHA*type=NULL>
+E <ALPHA*0.5> / <ALPHA*star=0.4,slidestar=0.6,slide=0.8> / <ALPHA*slidestar=NULL>
+### ALPHAV — live note opacity
+S <ALPHAV*0..1> / <ALPHAV*type=0..1>
+E <ALPHAV*0.5> / <ALPHAV*star=0.4,slidestar=0.6,slide=0.8>
+- Applies opacity immediately to already loaded notes, with separate star, slidestar, and slide targets.
+## 5  Display Alpha commands
+### JLINE — judge-line color
+S <JLINE*RRGGBB> / <JLINE*(RRGGBB[,transition])> / <JLINE*NULL>
+E <JLINE*00FF00> / <JLINE*(FF6699,0.3)> / <JLINE*(FFFFFF,8:1)> / <JLINE*NULL>
+- NULL restores the skin color. This changes the judge line during playback.
+### TEXT — caption
+S <TEXT*("content"[,duration][,x=0][,y=0][,size=32][,font=Default][,index=0][,style=Fade][,transition=0.3])>
+E <TEXT*("Chorus")> / <TEXT*("Watch the double",2,index=1)> / <TEXT*("Typing",3,font=Allerta,index=2,style=Typewriter,transition=1)>
+- Text must be inside double quotes. Without duration it remains until the next TEXT with the same index. Indices 0-4 are independent and can coexist.
+- font accepts Default, CascadiaMono, CascadiaCode, MicrosoftYaHei, NotoSansSC, SimSun, DengXian, NotoSerifSC, GlobalMonospace, Aileron, and Allerta. Default preserves the original caption font instead of following the player font.
+- With style=Fade, transition is the fade-in time. With style=Typewriter, transition is the total typing time. Durations accept seconds or beat notation such as 8:1.
+### JUDGELINEEXPAND — additional judge line
+S <JUDGELINEEXPAND*(True[,duration,1|-1])>
+S <JUDGELINEEXPAND*(False)>
+E <JUDGELINEEXPAND*(True,0.5,1)> / <JUDGELINEEXPAND*(True,8:1,-1)> / <JUDGELINEEXPAND*(False)>
+- True adds a white judge line rotated 22.5 degrees. False immediately removes only the added line.
+- Duration defaults to 0 seconds and accepts seconds or beats. Direction defaults to 1/CW; -1/CCW is counterclockwise. The old (duration,direction) syntax remains valid.
+- Seeking restores the on/off state and angle; enabling again starts from the original position.
+### Restore configured display — Default
+S <INNERBRIGHTNESS*(Default[,transition])> / <OUTERBRIGHTNESS*(Default[,transition])>
+S <COMBODISPLAY*(Default[,transition])>
+S <SHOWJUDGETEXT*(Default[,transition])> / <SHOWJUDGEINFO*(Default[,transition])> / <SHOWCOMBOINFO*(Default[,transition])>
+S <JUDGELINE*(Default[,transition])>
+E <INNERBRIGHTNESS*(0.8)> / <INNERBRIGHTNESS*(Default,0.5)>
+E <COMBODISPLAY*(None)> / <COMBODISPLAY*(Default)>
+- Default restores the current View settings without changing those settings. It does not force full brightness, visibility or Combo mode.
+- Parameter 1 is case-insensitive Default. Parameter 2 optionally sets a transition in seconds or beats; omit it for an immediate reset. Combo mode and line style switch immediately; line opacity follows the transition.
+- Seeking before or after these commands restores the corresponding state.
+### Visibility switches
+S <JUDGELINE*(0|1|2|3|4[,transition])>
+S <ShowJudgeText*(True|False[,transition])>
+S <ShowJudgeInfo*(True|False[,transition])>
+S <ShowComboInfo*(True|False[,transition])>
+E <JUDGELINE*(False,8:1)>
+E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
+- Omitting transition switches immediately. The commands control the line style, judgment text, left statistics, and right combo panel respectively.
+- JUDGELINE: 1 = Classic; 2 = Classic full; 3 = MAGiCAL; 0 / False = Off. 4+ reserved for additional styles.
+### ComboDisplay — center indicator
+S <ComboDisplay*(mode[,transition])>
+E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
+- Common modes: None/Off, Combo, Score, Achievement/Acc, AccDown, DxAcc, DxAccDown, DxScore, CScore, CScoreDedxDown.
+### Brightness
+S <OuterBrightness*(0..1[,transition])>
+S <InnerBrightness*(0..1[,transition])>
+E <OuterBrightness*(0.8,8:1)> / <InnerBrightness*(0.45,1)>
+- Values are clamped to 0–1: 0 is fully bright and 1 is darkest.
+## 6  Filter Alpha commands
+> Common rule: True enables and holds; False disables. The final transition is optional. Instant reaches the target immediately, holds it for the requested duration, then restores immediately. Different filters can layer, and another True transitions from the current value.
+S <Effect*(False[,transition])>
+S <Effect*(Instant,strength,duration)>
+S <Tint*(Instant,RRGGBB,strength,duration)> / <Move*(Instant,dx,dy,duration)>
+S <Shake*(Instant,strength,frequency[,degrees],duration)>
+E <Gaussian*(False,8:1)> / <Move*(False,0.5)> / <Tint*(False)>
+E <Zoom*(Instant,1.5,8:1)> / <Hue*(Instant,180,1)> / <Move*(Instant,0.08,-0.04,2)>
+### Gaussian / Neon / Trail
+S <Gaussian*(True,strength[,transition])>
+S <Neon*(True,strength[,transition])>
+S <Trail*(True,strength[,transition])>
+E <Gaussian*(True,1.2,8:1)> / <Neon*(True,0.7)> / <Trail*(True,0.55,0.4)>
+- Gaussian blurs, Neon adds RGB split and edge glow, and Trail blends previous frames.
+### Fade / Flash / Brightness
+S <Fade*(True,strength[,transition])>
+S <Flash*(True,strength[,transition])>
+S <Brightness*(True,strength[,transition])>
+E <Fade*(True,1,1)> / <Flash*(True,0.8,0.1)> / <Brightness*(True,0.4,8:1)>
+- Fade darkens, Flash whitens, and Brightness adds light. Fade/Flash commonly use 0–1.
+- Fade and Flash share one light/dark channel. The later command replaces the earlier one; they do not layer as two independent filters.
+### Saturation / Contrast / Rainbow
+S <Saturation*(True,strength[,transition])>
+S <Contrast*(True,strength[,transition])>
+S <Rainbow*(True,strength[,transition])>
+E <Saturation*(True,1,1)> / <Contrast*(True,0.6)> / <Rainbow*(True,0.5,8:1)>
+- Saturation 0 keeps color and 1 approaches monochrome. Contrast strengthens contrast; Rainbow adds animated color.
+### Vignette / Zoom / Glitch / TVNoise
+S <Vignette*(True,strength[,transition][,gradient])>
+E <Vignette*(True,0.5,0.3,True)>
+- Gradient True fades outward from the circular opening; Omitted or empty defaults to True; False retains the hard edge.
+S <Zoom*(True,scale[,transition])>
+S <Glitch*(True,strength[,transition])>
+S <TVNoise*(True,strength[,transition])>
+E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
+E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
+- Vignette shrinks the circular view; Zoom uses a direct scale (0.6=60%, 1=unchanged, 1.5=150%, range 0.1-8); Glitch displaces horizontal bands; TVNoise adds scan lines and noise.
+### Additional screen filters
+- True stays on, False turns off. Instant holds for a duration; envelopes use attack, hold and release durations. Times accept seconds or beats; transitions are optional. These filters only change the image, not note judgment.
+- Argument positions: strength is argument 2 after True/Instant. True uses optional transition as argument 3; False uses optional fade-out as argument 2; Instant requires duration as argument 3. Times accept seconds or beats such as 8:1.
+
+### SHATTER
+S <SHATTER*(True,strength[,transition])> / <SHATTER*(False[,transition])> / <SHATTER*(Instant,strength,duration)>
+E <SHATTER*(True,0.5,8:1)> / <SHATTER*(False,8:1)>
+E <SHATTER*(Instant,0.6,8:1)>
+- Glass shatter: a central impact sends thick shards outward along gently varied radial fractures, with extruded edges, layered refraction, reflection and facet highlights; strength 0–1, 0 restores the image.
+### RADIALBLUR
+S <RADIALBLUR*(True,strength[,transition])> / <RADIALBLUR*(False[,transition])> / <RADIALBLUR*(Instant,strength,duration)>
+E <RADIALBLUR*(True,0.5,8:1)> / <RADIALBLUR*(False,8:1)>
+- Radial blur: streaks radiate from the center; strength 0–1.
+### RIPPLE
+S <RIPPLE*(True,strength[,transition])> / <RIPPLE*(False[,transition])> / <RIPPLE*(Instant,strength,duration)>
+E <RIPPLE*(True,0.5,8:1)> / <RIPPLE*(False,8:1)>
+- Ripple: repeated expanding rings refract the image from the center; strength 0–1.
+### PIXELATE
+S <PIXELATE*(True,strength[,transition])> / <PIXELATE*(False[,transition])> / <PIXELATE*(Instant,strength,duration)>
+E <PIXELATE*(True,0.5,8:1)> / <PIXELATE*(False,8:1)>
+- Pixelation: strength 0–1 controls block size; 0 is unchanged.
+### LENSDISTORT
+S <LENSDISTORT*(True,strength[,transition])> / <LENSDISTORT*(False[,transition])> / <LENSDISTORT*(Instant,strength,duration)>
+E <LENSDISTORT*(True,0.5,8:1)> / <LENSDISTORT*(False,8:1)>
+- Lens distortion: strength -1–1; positive bulges outward, negative contracts inward; 0 is unchanged.
+### SPLIT
+S <SPLIT*(True,strength[,transition])> / <SPLIT*(False[,transition])> / <SPLIT*(Instant,strength,duration)>
+E <SPLIT*(True,0.5,8:1)> / <SPLIT*(False,8:1)>
+- Split displacement: horizontal strips alternate left and right; strength 0–1.
+### KALEIDOSCOPE
+S <KALEIDOSCOPE*(True,degrees[,transition])> / <KALEIDOSCOPE*(False[,transition])> / <KALEIDOSCOPE*(Instant,degrees,duration)>
+E <KALEIDOSCOPE*(True,45,8:1)> / <KALEIDOSCOPE*(False,8:1)>
+- Parameter 2 is rotation in degrees, including negative angles. Transitions rotate to the target; 0 degrees remains enabled, False disables.
+### BLOOM
+S <BLOOM*(True,strength[,transition])> / <BLOOM*(False[,transition])> / <BLOOM*(Instant,strength,duration)>
+E <BLOOM*(True,0.5,8:1)> / <BLOOM*(False,8:1)>
+- Bloom: bright areas glow into their surroundings; strength 0–4, without RGB splitting.
+### INVERT
+S <INVERT*(True,strength[,transition])> / <INVERT*(False[,transition])> / <INVERT*(Instant,strength,duration)>
+E <INVERT*(True,0.5,8:1)> / <INVERT*(False,8:1)>
+- Invert: strength 0–1; 1 fully inverts RGB colors.
+### POSTERIZE
+S <POSTERIZE*(True,strength[,transition])> / <POSTERIZE*(False[,transition])> / <POSTERIZE*(Instant,strength,duration)>
+E <POSTERIZE*(True,0.5,8:1)> / <POSTERIZE*(False,8:1)>
+- Posterization: strength 0–1; higher strength reduces color levels.
+
+
+### Hue / Tint
+S <Hue*(True,degrees[,transition])>
+S <Tint*(True,RRGGBB,strength[,transition])>
+E <Hue*(True,180,1)> / <Tint*(True,000000,1,0.5)> / <Tint*(False,8:1)>
+- Hue rotates color in degrees. Tint strength 0 preserves the frame and 1 fully blends to the target.
+### Move / Rotate / Shake
+S <Move*(True,dx,dy[,transition])>
+S <Rotate*(True,degrees[,transition])>
+S <Shake*(True,strength,frequency[,degrees,transition])>
+E <Move*(True,0.08,-0.04,8:1)> / <Rotate*(True,-15,0.5)>
+E <Shake*(True,0.5,12)> / <Shake*(True,0.5,12,30)> / <Shake*(True,0.5,12,,0.2)> / <Shake*(True,0.5,12,30,0.2)>
+E <Shake*(False)> / <Shake*(False,8:1)>
+- Move uses positive X for right and positive Y for up. Rotate uses the frame center. Shake frequency is in Hz and strength 1 moves roughly 5% of the frame. Angle and transition are independently optional; leave the angle position empty to set only transition. Omitting angle uses default two-dimensional shake. 0 degrees is horizontal and 90 degrees is vertical.
+## 7  Media Alpha commands
+### AUDIO
+S <AUDIO*(True,relative/path.ogg|wav|mp3)> / <AUDIO*(False)>
+E <AUDIO*(True,media/voice.ogg)> / <AUDIO*(True,se/alert.wav)> / <AUDIO*(False)>
+- True plays once from the beginning; natural completion stops it, and False stops early. A new True switches to the new extra clip.
+### PVOVERLAY
+S <PVOVERLAY*(True,relative/path.png|jpg|jpeg|mp4[,transition])> / <PVOVERLAY*(False[,transition])>
+E <PVOVERLAY*(True,media/cutin.png,8:1)> / <PVOVERLAY*(True,media/movie.mp4,0.5)> / <PVOVERLAY*(False,8:1)>
+- PNG/JPG remains until False or chart stop. MP4 restores the PV when it ends. Consecutive True commands crossfade from the old media to the new media using the requested transition.
+! Paths are relative to the chart folder. Absolute paths and “..” are rejected; avoid commas in file names. Media events are drawn on the waveform.
+## 8  Editor processing notes
+- Duration completion offers [8:1], [4:1], [2:1], and [16:3] for Hold, TouchHold, and Slide. [1:0] is only for durationless Hold and is not offered for Slide.
+- Touch Slide supports A/B/C/D/E zones, connected paths `A1<A3<A5[8:1]`, equally spaced multi-loop spirals such as `A1<<<E5[8:1]`, Break `A1b-A2b[8:1]`, and headless `A1!-A2[8:1]` / `A1?-A2[8:1]`.
+- “Export chart without effects” removes <> commands, || suffixes, and complete @ lines; the exported copy therefore loses editor meter and background markers too.
+## 9  Combined example
+E (160){16}<COLOR*star=FF66CC><SIZE*star=1.15>1-5[8:1],2,3,4,
+E <TEXT*("Interlude",2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
+E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
+- Multiple Alpha commands may share one timestamp and consume no extra commas. Keeping Note → Display → Filter → Media order makes charts easier to read and matches completion.
+]]></value></data>
+  <data name="DisableAutomaticSongDetailRefresh" xml:space="preserve"><value>Disable automatic cover refresh</value></data>
 </root>

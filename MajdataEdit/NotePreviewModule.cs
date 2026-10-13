@@ -15,6 +15,15 @@ internal static class NotePreviewModule
             return null;
         caret = Math.Clamp(caret, 0, text.Length);
 
+        // Grid directives are whole lines, not note groups after an '@'.
+        var lineStart = caret == 0 ? 0 : text.LastIndexOf('\n', caret - 1) + 1;
+        var head = lineStart;
+        while (head < text.Length && text[head] is ' ' or '\t') head++;
+        if (EditorDirectiveScanner.TryRead(text, head, out var directive) &&
+            directive.kind != EditorDirectiveKind.Overlay &&
+            caret <= head + directive.length)
+            return null;
+
         if (IsInsideAlphaCommand(text, caret))
             return null;
 
@@ -25,6 +34,12 @@ internal static class NotePreviewModule
         var right = caret;
         while (right < text.Length && !IsGroupDelimiter(text, right))
             right++;
+
+        var closing = right;
+        while (closing < text.Length && char.IsWhiteSpace(text[closing]))
+            closing++;
+        if (closing >= text.Length || text[closing] != ',')
+            return null;
 
         var raw = right <= left ? null : text.Substring(left, right - left);
         if (ContainsAlphaCommandFragment(raw))

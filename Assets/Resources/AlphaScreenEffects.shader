@@ -46,6 +46,7 @@ Shader "Hidden/AlphaScreenEffects"
             float _EffectTime;
             float _Flash;
             float _Vignette;
+            float _VignetteGradient;
             float _Zoom;
             float _Glitch;
             float _TVNoise;
@@ -54,6 +55,7 @@ Shader "Hidden/AlphaScreenEffects"
             float _OffsetX;    // Camera shift as screen-width ratio, including shake
             float _OffsetY;
             float _Rotate;     // Screen rotation in radians
+            #include "AlphaExtraFilters.cginc"
 
             v2f vert(appdata input)
             {
@@ -113,6 +115,8 @@ Shader "Hidden/AlphaScreenEffects"
                         sin(_EffectTime * 71.0) * 0.006) * glitchBand * _Glitch;
                 }
 
+                float shardVisible, shardLight; float3 shardGlass;
+                uv = ExtraFilterUV(uv, shardVisible, shardLight, shardGlass);
                 float insideFrame =
                     step(0.0, uv.x) * step(uv.x, 1.0) *
                     step(0.0, uv.y) * step(uv.y, 1.0);
@@ -162,6 +166,9 @@ Shader "Hidden/AlphaScreenEffects"
                 }
 
                 // RGB split: separate bright moving edges into colored ghosts.
+                // Sampling filters run before color grading so they cannot restore
+                // raw RGB over Saturation, Brightness or Contrast.
+                color.rgb = ExtraFilterSample(uv, color.rgb);
                 [branch]
                 if (_Neon > 0.0001)
                 {
@@ -231,6 +238,7 @@ Shader "Hidden/AlphaScreenEffects"
                     color.rgb *= 1.0 - horizontalLine * _TVNoise * 0.38;
                 }
 
+                color.rgb = ExtraFilterColor(color.rgb, shardVisible, shardLight, shardGlass);
                 // Circular iris. Vignette only changes the visible radius;
                 // Zoom remains the separate rectangular scaling effect.
                 [branch]
@@ -242,6 +250,12 @@ Shader "Hidden/AlphaScreenEffects"
                     float irisRadius = lerp(0.72, 0.0, saturate(_Vignette));
                     float irisMask = 1.0 - smoothstep(irisRadius - 0.025, irisRadius,
                         length(circleUv));
+                    if (_VignetteGradient > 0.5)
+                    {
+                        // Preserve the circular opening; fade outward instead of cutting it off.
+                        irisMask = 1.0 - smoothstep(irisRadius, irisRadius + 0.18, length(circleUv));
+                        irisMask *= 1.0 - smoothstep(0.95, 1.0, saturate(_Vignette));
+                    }
                     color.rgb *= irisMask;
                 }
                 // Rotate the overall hue

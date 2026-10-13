@@ -38,7 +38,7 @@ namespace Assets.Scripts.Notes
         /// </remarks>
         protected void ApplyCustomSkinToSprites()
         {
-            var skin = ResolveCustomSkin(tapSpr);
+            var skin = ResolveCustomSkin(isBreak ? breakSpr : isEach ? eachSpr : tapSpr);
             if (skin == null)
                 return;
             tapSpr = skin;
@@ -133,6 +133,12 @@ namespace Assets.Scripts.Notes
             BeforeFixedJudgment();
 
             var timing = GetJudgeTiming();
+            if (isMine && !isJudged)
+            {
+                if (!MajdataCore.MineJudgment.HeadCleared(timing, false)) return;
+                judgeResult = JudgeType.Perfect;
+                isJudged = true;
+            }
             if (!isJudged && timing > MissWindow)
             {
                 judgeResult = JudgeType.Miss;
@@ -145,7 +151,7 @@ namespace Assets.Scripts.Notes
                 Destroy(tapLine);
                 Destroy(gameObject);
             }
-            else if (timing >= -0.01f)
+            else if (timing >= -0.01f && !NoiseZoneInputGate.IsBlocked(sensorPos))
             {
                 switch(InputManager.Mode)
                 {
@@ -240,12 +246,14 @@ namespace Assets.Scripts.Notes
                 State = presentation.Running
                     ? NoteStatus.Running
                     : NoteStatus.Pending;
-                transform.position = getPositionFromDistance(presentation.Distance);
+                var visualDistance = isMine && timeProvider.AudioTime >= time
+                    ? Mathf.Min(presentation.Distance, DefaultDestroyRadius) : presentation.Distance;
+                transform.position = getPositionFromDistance(visualDistance);
                 transform.localScale = new Vector3(
                     presentation.Scale * noteScale * noteScaleX,
                     presentation.Scale * noteScale * noteScaleY,
                     1f);
-                var absoluteDistance = Mathf.Abs(presentation.Distance);
+                var absoluteDistance = Mathf.Abs(visualDistance);
                 tapLine.SetActive(
                     presentation.Running
                         ? absoluteDistance > 0.001f
@@ -258,6 +266,15 @@ namespace Assets.Scripts.Notes
                 isBouncing ? distance :
                 State == NoteStatus.Pending ? spawnRadius : distance);
 
+            // Keep the short mine collision window for forced hits, but retire
+            // its picture at the same beat on which DJAuto retires a normal Tap.
+            if (isMine && timeProvider.AudioTime >= time)
+            {
+                tapLine.SetActive(false);
+                spriteRenderer.forceRenderingOff = true;
+                if (isEX) exSpriteRender.forceRenderingOff = true;
+                return;
+            }
             spriteRenderer.forceRenderingOff = false;
             if (isEX) exSpriteRender.forceRenderingOff = false;
             if (isBreak)
@@ -296,7 +313,7 @@ namespace Assets.Scripts.Notes
 
             if (arg.IsClick)
             {
-                if (InputManager.Mode != AutoPlayMode.DJAuto)
+                if (!isMine)
                 {
                     if (!inputManager.IsIdle(arg))
                         return;
@@ -327,6 +344,7 @@ namespace Assets.Scripts.Notes
                 return;
 
             var timing = timeProvider.AudioTime - time;
+            if (isMine && !MajdataCore.MineJudgment.HeadCanHit(timing, false)) return;
             var isFast = timing < 0;
             var diff = MathF.Abs(timing * 1000);
             JudgeType result;
@@ -354,7 +372,7 @@ namespace Assets.Scripts.Notes
             if (result != JudgeType.Miss && isEX)
                 result = JudgeType.Perfect;
 
-            judgeResult = result;
+            judgeResult = isMine ? JudgeType.Miss : result;
             isJudged = true;
         }
         protected virtual void OnDestroy()

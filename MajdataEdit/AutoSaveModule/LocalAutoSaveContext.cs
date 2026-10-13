@@ -1,4 +1,4 @@
-﻿/*
+/*
   Copyright (c) Moying-moe All rights reserved. Licensed under the MIT license.
   See LICENSE in the project root for license information.
 */
@@ -15,6 +15,6 @@ public class LocalAutoSaveContext : IAutoSaveContext
         var maidataDir = MainWindow.maidataDir;
         if (maidataDir.Length == 0) throw new LocalDirNotOpenYetException();
 
-        return MainWindow.maidataDir + "/.autosave";
+        return MainWindow.maidataDir + "/.autosave" + (MajdataCore.AlphaSession.Current == null ? "" : "/" + MajdataCore.AlphaSession.Current.Id);
     }
 }

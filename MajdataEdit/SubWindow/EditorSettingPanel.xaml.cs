@@ -1,6 +1,8 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -16,6 +18,12 @@ namespace MajdataEdit;
 /// </summary>
 public partial class EditorSettingPanel : Window
 {
+    public enum SettingsPage { Edit, View }
+    private readonly SettingsPage settingsPage;
+    private readonly HashSet<FrameworkElement> hiddenLegacySettings = new();
+    private bool appearanceReady;
+    private bool savingSettings;
+    private readonly System.Windows.Threading.DispatcherTimer saveTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private sealed record SkinGroupOption(string Key, string DisplayName, string PreviewFile);
 
     private sealed class SkinGroupRow
@@ -40,12 +48,50 @@ public partial class EditorSettingPanel : Window
     private Image? starColorPreview;
     private bool pinkStar;
     private bool settingsApplied;
+    private sealed record PetChoice(string Id, string DisplayName)
+    {
+        public override string ToString() => DisplayName;
+    }
+    private string? launcherSettingsPath;
+    private string savedPetId = "dilaxiong";
 
-    public EditorSettingPanel(bool _dialogMode = false)
+    public EditorSettingPanel(bool _dialogMode = false, SettingsPage page = SettingsPage.Edit)
     {
         dialogMode = _dialogMode;
+        settingsPage = page;
         InitializeComponent();
+        Title = page == SettingsPage.Edit ? "Edit 设置" : "View 设置";
+        while(SettingsFields.RowDefinitions.Count <= 25) SettingsFields.RowDefinitions.Add(new RowDefinition { Height=GridLength.Auto });
+        foreach(var item in SettingsFields.Children.OfType<FrameworkElement>().Where(x=>x.Visibility==Visibility.Collapsed)) hiddenLegacySettings.Add(item);
+        ApplySettingsCategory();
         BuildSkinGroupRows();
+        saveTimer.Tick += (_, _) => { saveTimer.Stop(); if (appearanceReady && !savingSettings) { savingSettings = true; try { ApplyAndSave(false); } finally { savingSettings = false; } } };
+        ((UIElement)Content).AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => QueueSettingsSave()));
+        ((UIElement)Content).AddHandler(System.Windows.Controls.Primitives.Selector.SelectionChangedEvent, new SelectionChangedEventHandler((_, _) => QueueSettingsSave()));
+        ((UIElement)Content).AddHandler(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, new RoutedEventHandler((_, _) => QueueSettingsSave()));
+        JudgeLineStylePicker.SelectionChanged += (_, _) => QueueSettingsSave();
+        EditorBackgroundStyle.SelectionChanged += (_, _) => QueueSettingsSave();
+        ViewIntroStyle.SelectionChanged += (_, _) => QueueSettingsSave();
+        Closed += (_, _) => saveTimer.Stop();
+    }
+
+    private void ApplySettingsCategory()
+    {
+        if(SettingsFields == null) return;
+        var editRows = new HashSet<int> { 0, 1, 3, 6, 14, 15, 16, 25 };
+        foreach(var item in SettingsFields.Children.OfType<FrameworkElement>())
+        {
+            // The hidden legacy checkboxes still participate in serialization.
+            if(hiddenLegacySettings.Contains(item)) continue;
+            bool edit = editRows.Contains(Grid.GetRow(item));
+            item.Visibility = edit == (settingsPage == SettingsPage.Edit) ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    private void QueueSettingsSave()
+    {
+        if (!appearanceReady || savingSettings) return;
+        settingsApplied = false; saveTimer.Stop(); saveTimer.Start();
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -75,6 +121,7 @@ public partial class EditorSettingPanel : Window
         SetSkinGroup("hold", window.editorSetting.HoldSkin, window.editorSetting.Skin);
         SetSkinGroup("star", window.editorSetting.StarSkin, window.editorSetting.Skin);
         LoadThemeChoices(window.editorSetting.EditorTheme);
+        LoadPetChoices();
 
         InnerViewerCover.Text = window.editorSetting.InnerBackgroundCover.ToString();
         OuterViewerCover.Text = window.editorSetting.OuterBackgroundCover.ToString();
@@ -84,6 +131,7 @@ public partial class EditorSettingPanel : Window
         ViewDisplayFont.SelectedIndex = Math.Clamp(window.editorSetting.ViewDisplayFontPreset, 0,
             ViewDisplayFont.Items.Count - 1);
         SongDetailStyle.SelectedIndex = Math.Clamp(window.editorSetting.SongDetailStyle, 0, 1);
+        DisableAutomaticSongDetailRefresh.IsChecked = window.editorSetting.DisableAutomaticSongDetailRefresh;
         EditorBackgroundStyle.SelectedIndex = StyleToIndex(window.editorSetting.EditorBackgroundStyle);
         ViewIntroStyle.SelectedIndex = StyleToIndex(window.editorSetting.ViewIntroStyle);
         EditorLightTheme.IsChecked = false;
@@ -103,34 +151,21 @@ public partial class EditorSettingPanel : Window
 
         ChartRefreshDelay.Text = window.editorSetting.ChartRefreshDelay.ToString();
         SmoothSlideAnime.IsChecked = window.editorSetting.SmoothSlideAnime;
+        StarDisplayMode.SelectedIndex = window.editorSetting.StarDisplayMode == 0 ? 0 : 1;
         ShowJudgeInfo.IsChecked = window.editorSetting.ShowJudgeInfo;
         ShowComboInfo.IsChecked = window.editorSetting.ShowComboInfo;
-        ShowJudgeLine.IsChecked = window.editorSetting.ShowJudgeLine;
+        JudgeLineStylePicker.SelectedIndex = MajdataCore.JudgeLineStyles.Supported(window.editorSetting.JudgeLineStyle);
         ShowJudgeText.IsChecked = window.editorSetting.ShowJudgeText;
         ShowMineHitFeedback.IsChecked = window.editorSetting.ShowMineHitFeedback;
         ClipBackgroundToRing.IsChecked = window.editorSetting.ClipBackgroundToRing;
-        ShowJudgeArea.IsChecked = window.editorSetting.ShowJudgeArea;
-        UpdateJudgeAreaEnabled();
         ShowSongDetail.IsChecked = window.editorSetting.ShowSongDetail;
         ShowAllPerfect.IsChecked = window.editorSetting.ShowAllPerfect;
         ShowGeneratedMark.IsChecked = window.editorSetting.ShowGeneratedMark;
+        appearanceReady = true;
         SyntaxCheckLevel.SelectedIndex = window.editorSetting.SyntaxCheckLevel;
         ViewerSpeed.Text = window.editorSetting.playSpeed.ToString("F1");
         ViewerTouchSpeed.Text = window.editorSetting.touchSpeed.ToString("F1");
         StarSpeed.Text = window.editorSetting.starSpeed.ToString("F1");
-    }
-
-    // The judgment area depends on the judgment line; hiding the line disables the checkbox and forces the area off (see MainWindowCore).
-    private void ShowJudgeLine_Toggled(object sender, RoutedEventArgs e)
-    {
-        UpdateJudgeAreaEnabled();
-    }
-
-    private void UpdateJudgeAreaEnabled()
-    {
-        if (ShowJudgeArea == null)
-            return;
-        ShowJudgeArea.IsEnabled = ShowJudgeLine.IsChecked == true;
     }
 
     private void LanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -139,6 +174,80 @@ public partial class EditorSettingPanel : Window
         var language = langList[LanguageComboBox.SelectedIndex];
         LocalizeDictionary.Instance.Culture = new CultureInfo(language);
         MajdataCore.ParserMessageLocale.SetCulture(language);
+    }
+
+    private void LoadPetChoices()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        string? petsRoot = null;
+        for (var depth = 0; depth < 10 && directory != null; depth++, directory = directory.Parent)
+        {
+            var candidate = Path.Combine(directory.FullName, "Pets");
+            if (Directory.Exists(candidate) && File.Exists(Path.Combine(directory.FullName, "launcher.json")))
+            {
+                petsRoot = candidate;
+                launcherSettingsPath = Path.Combine(directory.FullName, "launcher.json");
+                break;
+            }
+            candidate = Path.Combine(directory.FullName, "MajdataLauncher", "Pets");
+            if (petsRoot == null && Directory.Exists(candidate)) petsRoot = candidate;
+        }
+        PetComboBox.Items.Clear();
+        if (petsRoot != null)
+        {
+            foreach (var folder in Directory.EnumerateDirectories(petsRoot).OrderBy(path => path))
+            {
+                var manifest = Path.Combine(folder, "pet.json");
+                if (!File.Exists(manifest) || !File.Exists(Path.Combine(folder, "spritesheet.png"))) continue;
+                var name = Path.GetFileName(folder);
+                var displayName = name;
+                try
+                {
+                    using var document = JsonDocument.Parse(File.ReadAllText(manifest));
+                    if (document.RootElement.TryGetProperty("displayName", out var label))
+                        displayName = label.GetString() ?? name;
+                }
+                catch (JsonException) { }
+                PetComboBox.Items.Add(new PetChoice(name, displayName));
+            }
+        }
+        if (PetComboBox.Items.Count == 0)
+            PetComboBox.Items.Add(new PetChoice("dilaxiong", "迪拉熊"));
+        if (launcherSettingsPath != null)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(launcherSettingsPath));
+                if (document.RootElement.TryGetProperty("pet", out var selected))
+                    savedPetId = selected.GetString() ?? "dilaxiong";
+            }
+            catch (JsonException) { }
+        }
+        PetComboBox.SelectedItem = PetComboBox.Items.Cast<PetChoice>()
+            .FirstOrDefault(choice => string.Equals(choice.Id, savedPetId, StringComparison.OrdinalIgnoreCase))
+            ?? PetComboBox.Items[0];
+    }
+
+    private void PetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!appearanceReady || launcherSettingsPath == null ||
+            PetComboBox.SelectedItem is not PetChoice choice ||
+            string.Equals(choice.Id, savedPetId, StringComparison.OrdinalIgnoreCase)) return;
+        try
+        {
+            var json = JsonNode.Parse(File.ReadAllText(launcherSettingsPath)) as JsonObject ?? new JsonObject();
+            json["pet"] = choice.Id;
+            json["petSelectionVersion"] = 1;
+            var temporaryPath = launcherSettingsPath + ".tmp-" + Guid.NewGuid().ToString("N");
+            File.WriteAllText(temporaryPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temporaryPath, launcherSettingsPath, true);
+            savedPetId = choice.Id;
+            PetStatusClient.Notify("skin", choice.Id);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(error.Message, "桌宠设置", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void RenderModeComboBox_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -175,7 +284,7 @@ public partial class EditorSettingPanel : Window
             .ToString("0.#", CultureInfo.InvariantCulture);
     }
 
-    private bool ApplyAndSave()
+    private bool ApplyAndSave(bool showErrors = true)
     {
         var window = (MainWindow)Owner;
         if (!float.TryParse(InnerViewerCover.Text, out var innerBrightness) ||
@@ -187,7 +296,7 @@ public partial class EditorSettingPanel : Window
                  out var editorFontSize) && !float.TryParse(EditorFontSize.Text, out editorFontSize)) ||
             !int.TryParse(ChartRefreshDelay.Text, out var refreshDelay))
         {
-            MessageBox.Show(
+            if (showErrors) MessageBox.Show(
                 MainWindow.GetLocalizedString("InvalidEditorSettings"),
                 MainWindow.GetLocalizedString("Error"));
             return false;
@@ -202,65 +311,72 @@ public partial class EditorSettingPanel : Window
         var oldHoldSkin = window.editorSetting.HoldSkin;
         var oldStarSkin = window.editorSetting.StarSkin;
         var oldPinkStar = window.editorSetting.PinkStar;
+        var oldStarDisplayMode = window.editorSetting.StarDisplayMode;
         var oldSongDetailStyle = window.editorSetting.SongDetailStyle;
         var oldInnerCover = window.editorSetting.InnerBackgroundCover;
         var oldOuterCover = window.editorSetting.OuterBackgroundCover;
         var oldBackgroundFitMode = window.editorSetting.BackgroundFitMode;
         var oldShowJudgeInfo = window.editorSetting.ShowJudgeInfo;
         var oldShowComboInfo = window.editorSetting.ShowComboInfo;
-        var oldShowJudgeLine = window.editorSetting.ShowJudgeLine;
+        var oldJudgeLineStyle = window.editorSetting.JudgeLineStyle;
         var oldShowJudgeText = window.editorSetting.ShowJudgeText;
         var oldShowMineHitFeedback = window.editorSetting.ShowMineHitFeedback;
         var oldClipBackgroundToRing = window.editorSetting.ClipBackgroundToRing;
-        var oldShowJudgeArea = window.editorSetting.ShowJudgeArea;
         var oldShowSongDetail = window.editorSetting.ShowSongDetail;
         var oldShowAllPerfect = window.editorSetting.ShowAllPerfect;
         var oldShowGeneratedMark = window.editorSetting.ShowGeneratedMark;
         var oldComboDisplay = window.editorSetting.comboStatusType;
         var oldIntroStyle = window.editorSetting.ViewIntroStyle;
 
-        window.editorSetting.Language = langList[LanguageComboBox.SelectedIndex];
-        window.editorSetting!.RenderMode = RenderModeComboBox.SelectedIndex;
+        // Each page owns only its fields. Hidden controls may contain older values
+        // when both pages are open and must never overwrite the other page.
+        if (settingsPage == SettingsPage.Edit)
+        {
+            window.editorSetting.Language = langList[LanguageComboBox.SelectedIndex];
+            window.editorSetting.RenderMode = RenderModeComboBox.SelectedIndex;
+            window.editorSetting.EditorTheme = (ThemeComboBox.SelectedItem as EditorTheme)?.name ?? ThemeManager.DefaultTheme;
+            window.editorSetting.EditorFontPreset = Math.Clamp(EditorFontPreset.SelectedIndex, 0, EditorFontPreset.Items.Count - 1);
+            window.editorSetting.FontSize = Math.Clamp(editorFontSize, 8f, 32f);
+            window.editorSetting.EditorBackgroundStyle = IndexToStyle(EditorBackgroundStyle.SelectedIndex);
+            window.editorSetting.EditorLightTheme = false;
+            window.editorSetting.ChartRefreshDelay = Math.Max(1, refreshDelay);
+        }
+        else
+        {
         window.editorSetting!.Skin = SkinComboBox.SelectedItem?.ToString() ?? "dx";
         window.editorSetting!.TapSkin = GetSkinGroup("tap", window.editorSetting.Skin);
         window.editorSetting!.HoldSkin = GetSkinGroup("hold", window.editorSetting.Skin);
         window.editorSetting!.StarSkin = GetSkinGroup("star", window.editorSetting.Skin);
         window.editorSetting!.PinkStar = pinkStar;
-        window.editorSetting!.EditorTheme = (ThemeComboBox.SelectedItem as EditorTheme)?.name ?? ThemeManager.DefaultTheme;
         window.editorSetting!.InnerBackgroundCover = Math.Clamp(innerBrightness, 0f, 1f);
         window.editorSetting!.OuterBackgroundCover = Math.Clamp(outerBrightness, 0f, 1f);
         window.editorSetting!.BackgroundFitMode = Math.Clamp(BackgroundFitMode.SelectedIndex, 0, 1);
         window.editorSetting!.backgroundCover = window.editorSetting.InnerBackgroundCover;
-        window.editorSetting!.EditorFontPreset = Math.Clamp(EditorFontPreset.SelectedIndex, 0, EditorFontPreset.Items.Count - 1);
-        window.editorSetting!.FontSize = Math.Clamp(editorFontSize, 8f, 32f);
         window.editorSetting!.ViewDisplayFontPreset = Math.Clamp(ViewDisplayFont.SelectedIndex, 0,
             ViewDisplayFont.Items.Count - 1);
         window.editorSetting!.SongDetailStyle = Math.Clamp(SongDetailStyle.SelectedIndex, 0, 1);
-        window.editorSetting!.EditorBackgroundStyle = IndexToStyle(EditorBackgroundStyle.SelectedIndex);
+        window.editorSetting.DisableAutomaticSongDetailRefresh = DisableAutomaticSongDetailRefresh.IsChecked == true;
         window.editorSetting!.ViewIntroStyle = IndexToStyle(ViewIntroStyle.SelectedIndex);
-        window.editorSetting!.EditorLightTheme = false;
-        window.editorSetting!.ChartRefreshDelay = Math.Max(1, refreshDelay);
         window.editorSetting!.playSpeed = Math.Clamp(noteSpeed, 1f, 10f);
         window.editorSetting!.touchSpeed = Math.Clamp(touchSpeed, 1f, 10f);
         window.editorSetting!.starSpeed = Math.Clamp(starSpeed, -1f, 1f);
         window.editorSetting!.SmoothSlideAnime = (bool) SmoothSlideAnime.IsChecked!;
+        window.editorSetting!.StarDisplayMode = StarDisplayMode.SelectedIndex == 0 ? 0 : 1;
         window.editorSetting!.ShowJudgeInfo = ShowJudgeInfo.IsChecked == true;
         window.editorSetting!.ShowComboInfo = ShowComboInfo.IsChecked == true;
-        window.editorSetting!.ShowJudgeLine = ShowJudgeLine.IsChecked == true;
+        window.editorSetting!.JudgeLineStyle = MajdataCore.JudgeLineStyles.Available[JudgeLineStylePicker.SelectedIndex];
         window.editorSetting!.ShowJudgeText = ShowJudgeText.IsChecked == true;
         window.editorSetting!.ShowMineHitFeedback = ShowMineHitFeedback.IsChecked == true;
         window.editorSetting!.ClipBackgroundToRing = ClipBackgroundToRing.IsChecked == true;
-        // Hiding the judgment line always hides the judgment area.
-        window.editorSetting!.ShowJudgeArea = ShowJudgeArea.IsChecked == true && ShowJudgeLine.IsChecked == true;
         window.editorSetting!.ShowSongDetail = ShowSongDetail.IsChecked == true;
         window.editorSetting!.ShowAllPerfect = ShowAllPerfect.IsChecked == true;
         window.editorSetting!.ShowGeneratedMark = ShowGeneratedMark.IsChecked == true;
         window.editorSetting!.editorPlayMethod = (EditorPlayMethod)PlayMethod.SelectedIndex;
-        window.editorSetting!.SyntaxCheckLevel = SyntaxCheckLevel.SelectedIndex;
         // window.editorSetting.isComboEnabled = (bool) ComboDisplay.IsChecked!;
         window.editorSetting!.comboStatusType = (EditorComboIndicator)Enum.GetValues(
             window.editorSetting!.comboStatusType.GetType()
         ).GetValue(ComboDisplay.SelectedIndex)!;
+        }
         window.SaveEditorSetting();
 
         window.ViewerSpeed.Content = window.editorSetting.playSpeed.ToString("F1"); // Format the speed as "7.0", "9.5", etc.
@@ -287,6 +403,7 @@ public partial class EditorSettingPanel : Window
         if (appearanceChanged || waveSkinChanged)
             window.RefreshWaveNoteSkin();
         var displayChanged = waveSkinChanged ||
+                             oldStarDisplayMode != window.editorSetting.StarDisplayMode ||
                              !string.Equals(oldTheme, window.editorSetting.EditorTheme,
                                  StringComparison.OrdinalIgnoreCase) ||
                              oldInnerCover != window.editorSetting.InnerBackgroundCover ||
@@ -294,11 +411,10 @@ public partial class EditorSettingPanel : Window
                               oldBackgroundFitMode != window.editorSetting.BackgroundFitMode ||
                              oldShowJudgeInfo != window.editorSetting.ShowJudgeInfo ||
                              oldShowComboInfo != window.editorSetting.ShowComboInfo ||
-                             oldShowJudgeLine != window.editorSetting.ShowJudgeLine ||
+                             oldJudgeLineStyle != window.editorSetting.JudgeLineStyle ||
                              oldShowJudgeText != window.editorSetting.ShowJudgeText ||
                              oldShowMineHitFeedback != window.editorSetting.ShowMineHitFeedback ||
                              oldClipBackgroundToRing != window.editorSetting.ClipBackgroundToRing ||
-                             oldShowJudgeArea != window.editorSetting.ShowJudgeArea ||
                              oldShowSongDetail != window.editorSetting.ShowSongDetail ||
                              oldShowAllPerfect != window.editorSetting.ShowAllPerfect ||
                              oldShowGeneratedMark != window.editorSetting.ShowGeneratedMark ||
@@ -324,16 +440,10 @@ public partial class EditorSettingPanel : Window
     {
         SkinComboBox.Items.Clear();
         skinChoices.Clear();
-        var skinRoot = FindSkinRoot();
-        if (Directory.Exists(skinRoot))
+        foreach (var name in MajdataCore.SkinPaths.Names(FindSkinRoots()))
         {
-            foreach (var directory in Directory.GetDirectories(skinRoot)
-                         .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase))
-            {
-                var name = Path.GetFileName(directory);
-                SkinComboBox.Items.Add(name);
-                skinChoices.Add(name);
-            }
+            SkinComboBox.Items.Add(name);
+            skinChoices.Add(name);
         }
 
         if (SkinComboBox.Items.Count == 0)
@@ -354,10 +464,8 @@ public partial class EditorSettingPanel : Window
         if (group == null)
             return new List<string>(skinChoices);
 
-        var skinRoot = FindSkinRoot();
         var choices = skinChoices
-            .Where(name => File.Exists(Path.Combine(
-                skinRoot, name, group.PreviewFile)))
+            .Where(name => File.Exists(PreviewPath(name, group.PreviewFile)))
             .ToList();
         return choices.Count > 0 ? choices : new List<string>(skinChoices);
     }
@@ -394,7 +502,9 @@ public partial class EditorSettingPanel : Window
         index = (Math.Max(0, index) + delta + choices.Count) % choices.Count;
         row.SelectedSkin = choices[index];
         row.Selection.Text = FormatSkinChoice(row.SelectedSkin);
+        var previousImage = row.Preview.Source;
         UpdateSkinGroupPreview(key);
+        CarouselTransition.Image(row.Preview, previousImage, delta);
         // Refresh the pink-star preview when the star skin changes between DX and SD.
         if (string.Equals(key, "star", StringComparison.OrdinalIgnoreCase))
             UpdateStarColorPreview();
@@ -563,9 +673,12 @@ public partial class EditorSettingPanel : Window
 
     private void StarColorArrow_Click(object sender, RoutedEventArgs e)
     {
+        var previousImage = starColorPreview?.Source;
         pinkStar = !pinkStar;
         UpdateStarColorSelection();
         UpdateStarColorPreview();
+        if (starColorPreview != null) CarouselTransition.Image(starColorPreview, previousImage,
+            (sender as Button)?.Content?.ToString() == "‹" ? -1 : 1);
     }
 
     private void UpdateStarColorSelection()
@@ -597,7 +710,7 @@ public partial class EditorSettingPanel : Window
             return;
         var previewFile = SkinGroups.First(group => group.Key == key).PreviewFile;
         var selectedSkin = row.SelectedSkin;
-        var previewPath = Path.Combine(FindSkinRoot(), selectedSkin, previewFile);
+        var previewPath = PreviewPath(selectedSkin, previewFile);
         row.Preview.Source = File.Exists(previewPath)
             ? LoadPreviewImage(previewPath, string.Equals(key, "star", StringComparison.OrdinalIgnoreCase))
             : null;
@@ -609,7 +722,7 @@ public partial class EditorSettingPanel : Window
             string.IsNullOrWhiteSpace(starRow.SelectedSkin))
             return;
         var fileName = pinkStar ? "star_pink.png" : "star.png";
-        var path = Path.Combine(FindSkinRoot(), starRow.SelectedSkin, fileName);
+        var path = PreviewPath(starRow.SelectedSkin, fileName);
         // SD uses a 126px normal canvas and a 180px pink canvas. Cropping both to
         // their visible bounds gives the variants the same apparent size and center.
         starColorPreview.Source = File.Exists(path) ? LoadPreviewImage(path, true) : null;
@@ -704,7 +817,7 @@ public partial class EditorSettingPanel : Window
 
     private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded || Owner is not MainWindow window ||
+        if (!EditorBackgroundStyle.IsLoaded || Owner is not MainWindow window ||
             ThemeComboBox.SelectedItem is not EditorTheme theme)
             return;
         window.PreviewEditorTheme(theme);
@@ -714,39 +827,41 @@ public partial class EditorSettingPanel : Window
     {
         "circleplus" => 1,
         "circle" => 2,
+        "chunithm-xversex" => 3,
+        "chunithm-mate" => 4,
+        "magical" => 5,
         _ => 0
     };
+
+    private void ViewIntroStyle_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!appearanceReady || Owner is not MainWindow window || ViewIntroStyle.SelectedIndex < 0) return;
+        window.editorSetting!.ViewIntroStyle = IndexToStyle(ViewIntroStyle.SelectedIndex);
+        window.SaveEditorSetting();
+        window.SendDisplaySettings();
+    }
 
     private static string IndexToStyle(int index) => index switch
     {
         1 => "circleplus",
         2 => "circle",
+        3 => "chunithm-xversex",
+        4 => "chunithm-mate",
+        5 => "magical",
         _ => "default"
     };
 
     // Preview window backgrounds immediately without saving; persist only when confirmed.
     private void EditorBackgroundStyle_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded || Owner is not MainWindow window)
+        if (!EditorBackgroundStyle.IsLoaded || Owner is not MainWindow window)
             return;
         EditorDecorationBg.Apply(window.DecorationBgHost, IndexToStyle(EditorBackgroundStyle.SelectedIndex));
     }
 
-    private static string FindSkinRoot()
-    {
-        foreach (var start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
-        {
-            var directory = new DirectoryInfo(start);
-            for (var depth = 0; directory != null && depth < 6; depth++, directory = directory.Parent)
-            {
-                var candidate = Path.Combine(directory.FullName, "Skin");
-                if (Directory.Exists(candidate))
-                    return candidate;
-            }
-        }
-
-        return Path.Combine(Environment.CurrentDirectory, "Skin");
-    }
+    private static string[] FindSkinRoots() => MajdataCore.SkinPaths.Roots(AppContext.BaseDirectory);
+    private static string PreviewPath(string skin, string file) => Path.Combine(
+        MajdataCore.SkinPaths.Folder(FindSkinRoots(), skin, Path.Combine(AppContext.BaseDirectory, "Skin", skin)), file);
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {

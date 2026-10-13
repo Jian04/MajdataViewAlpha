@@ -27,6 +27,7 @@ public static class SvController
     private static ScrollPoint[] _points = System.Array.Empty<ScrollPoint>();
     private static readonly Dictionary<string, Curve> TypedCurves = new();
     private static readonly Dictionary<string, Curve> TypedOnlyCurves = new();
+    private static readonly Dictionary<string, Curve> ResolvedCurves = new();
     private static readonly HashSet<string> TypedKeys = new();
     private static Curve DefaultStreamCurve = BuildCurve(new[] { (0d, 1f) });
 
@@ -56,6 +57,7 @@ public static class SvController
     {
         points ??= new List<SvPoint>();
         TypedCurves.Clear();
+        ResolvedCurves.Clear();
         TypedOnlyCurves.Clear();
         TypedKeys.Clear();
 
@@ -171,6 +173,7 @@ public static class SvController
         _multipliers = System.Array.Empty<float>();
         _points = System.Array.Empty<ScrollPoint>();
         TypedCurves.Clear();
+        ResolvedCurves.Clear();
         TypedOnlyCurves.Clear();
         TypedKeys.Clear();
     }
@@ -425,17 +428,34 @@ public static class SvController
             destroyRadius);
     }
 
+    public static double GetTouchWarningLead(double judgeTime, float speed, string noteType)
+    {
+        if (System.Math.Abs(speed) <= 0.000001f) return 0d;
+        var curve = GetCurve(noteType);
+        var points = curve?.Points ?? _points;
+        var scroll = GetCumulativeScroll(judgeTime, noteType);
+        var duration = AlphaVisualTiming.GetTouchMotionDuration(speed);
+        // Touch uses the absolute scroll distance before judgement, including
+        // negative SV and repeated changes of direction.
+        var lower = AlphaVisualTiming.FindLastTimeAtCumulativeScroll(points, judgeTime, scroll - duration);
+        var upper = AlphaVisualTiming.FindLastTimeAtCumulativeScroll(points, judgeTime, scroll + duration);
+        var appeared = double.IsNaN(lower) ? upper : double.IsNaN(upper) ? lower : System.Math.Max(lower, upper);
+        return double.IsNaN(appeared) ? 0d : System.Math.Max(0d, judgeTime - appeared);
+    }
+
     private static Curve GetCurve(string noteType)
     {
         if (string.IsNullOrWhiteSpace(noteType))
             return null;
+        if (ResolvedCurves.TryGetValue(noteType, out var resolved))
+            return resolved;
         var key = NormalizeCurveKey(noteType);
         if (TypedCurves.TryGetValue(key, out var curve))
-            return curve;
+            return ResolvedCurves[noteType] = curve;
         var separator = key.IndexOf('|');
         if (separator > 0 && TypedCurves.TryGetValue(key.Substring(0, separator + 1), out curve))
-            return curve;
-        return separator > 0 ? DefaultStreamCurve : null;
+            return ResolvedCurves[noteType] = curve;
+        return ResolvedCurves[noteType] = separator > 0 ? DefaultStreamCurve : null;
     }
 
     private static string NormalizeCurveKey(string key) =>

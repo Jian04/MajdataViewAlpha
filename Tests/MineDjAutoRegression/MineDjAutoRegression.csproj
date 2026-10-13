@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CS8618;CS8625</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Assets/Scripts/Sensor.cs" Link="Sensor.cs" />
+    <Compile Include="../../Assets/Scripts/Types/Input.cs" Link="Input.cs" />
+    <Compile Include="../../Assets/Scripts/Types/Enums.cs" Link="Enums.cs" />
+  </ItemGroup>
+</Project>

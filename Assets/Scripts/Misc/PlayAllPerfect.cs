@@ -9,6 +9,7 @@ public class PlayAllPerfect : MonoBehaviour
     private JsonDataLoader loader;
     private bool showAllPerfect = true;
     private bool recordingStopScheduled;
+    private float chartEnd = float.PositiveInfinity;
     private const float FallbackAnimationDuration = 3.1166666f;
 
     private void Start()
@@ -26,7 +27,10 @@ public class PlayAllPerfect : MonoBehaviour
         if (loader != null && loader.State is not (NoteLoaderStatus.Idle or NoteLoaderStatus.Finished))
             return;
 
-        if (timeProvider.isStart && transform.childCount == 0)
+        // The Edit sound cue is scheduled at the final note time. Object destruction
+        // may happen earlier or later (slides, effects, frame rate), so it must not
+        // be the clock for the animation.
+        if (timeProvider.isStart && timeProvider.AudioTime + 0.002f >= chartEnd)
         {
             var firstReveal = !Allperfect.activeSelf;
             Allperfect.SetActive(true);
@@ -45,9 +49,10 @@ public class PlayAllPerfect : MonoBehaviour
         }
     }
 
-    public void Configure(bool visible)
+    public void Configure(bool visible, float endTime = float.NaN)
     {
         showAllPerfect = visible;
+        if (!float.IsNaN(endTime)) chartEnd = endTime >= 0f ? endTime : float.PositiveInfinity;
         recordingStopScheduled = false;
         if (Allperfect != null)
             Allperfect.SetActive(false);

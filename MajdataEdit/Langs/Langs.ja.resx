@@ -150,9 +150,6 @@
   <data name="ShowJudgeLine" xml:space="preserve">
     <value>再生中に判定ラインを表示</value>
   </data>
-  <data name="ShowJudgeArea" xml:space="preserve">
-    <value>判定エリアを表示</value>
-  </data>
   <data name="ShowAllPerfect" xml:space="preserve">
     <value>All Perfect を表示・再生</value>
   </data>
@@ -732,7 +729,7 @@ Alpha 構文ヘルプ
 使用できるノーツ種別：tap、each、hold、slide、star、break、touch、touchhold。
 種別ごとの値は全体値より優先されます。NULL で継承値に戻します。
 時間は秒数または 8:1、16:1 などの拍長で指定できます。拍長はコマンド直前の BPM を使用し、Slide の時間と同じ方法で換算されます。
-引数が空のときに Tab を押すと推奨値が入力されます。値がある場合は次の引数へ移動します。
+同じ引数でTabを押すと候補を切り替えます。カンマで次の引数へ移動します。
 
 拍子、背景、コメント
 --------------------
@@ -784,10 +781,9 @@ Alpha 構文ヘルプ
 <JLINE*(00FF00,8:1)> 現在の BPM の8分音符で切り替え
 <JLINE*NULL>         スキンの既定色に戻す
 表示コマンドで最後の切り替え時間を省略すると即時変更されます。8:1、16:1 などの拍長も使用できます。
-<ShowJudgeLine*(False)>
-<ShowJudgeLine*(False,1)>
-<ShowJudgeLine*(False,8:1)>
-<ShowJudgeArea*(True,1)>
+<JUDGELINE*(False)>
+<JUDGELINE*(False,1)>
+<JUDGELINE*(False,8:1)>
 <ShowJudgeText*(False,1)>
 <ShowJudgeInfo*(False,1)>
 <ShowComboInfo*(False,1)>
@@ -967,7 +963,7 @@ Shake     <Shake*(True,強度,周波数[,角度,時間])> 画面を振動（Hz�
 - True / False で状態を切り替え、NULL で対応するノーツ属性を解除します。
 - 時間は秒（0.5、2）または拍長（8:1、16:3）で指定し、直前の BPM を使用します。
 - 種別キー：tap、each、hold、slide、star、break、touch、touchhold。表示用 COLOR / SIZE / ALPHA は移動星用の slidestar にも対応します。種別値は全体値より優先されます。
-- 「<」で分類補完を開きます。空の引数で Tab を押すと既定値を入力し、値がある場合は次へ移動します。
+- 「<」で分類補完を開きます。同じ引数でTabを押すと候補を切り替えます。カンマで次の引数へ移動します。
 ! 灰色の斜体で示された引数は省略できます。斜体の ,時間 は最後のカンマと時間をどちらも省略できるという意味です。通常の表示の角括弧は構文の一部で、h[時間] のようにそのまま入力します。
 E (120){4}<SV*1.5>1,2,<TEXT*("サビ開始",2)>3,4,
 ## 2  エディターマーカーとコメント
@@ -1070,6 +1066,17 @@ E 1~[5-7[8:1]] / 1b~[5-7[8:1]] / 1$~[5-7[8:1]] / 1~[C1-A5[8:1]] / 1~[2P35[8:1]]
 - ~[] の前のノーツ自体が移動します。1~[...] は Tap、1$~[...] のときだけ星が軌道を進みます。
 - 角括弧には長さを含む完全なスライドを書きます。キースライドと Touch スライドはどちらも借りられますが、Wifi スライドは星が三つなので借りられません。
 - 借りた軌道の後ろにスライドは繋げられません。修飾（b、h、$、f）は ~[] の前後どちらでも書けます。
+### X ノイズ領域
+S XD1[8:1] / XC[4:1] / XA1 / XE1[4:1]/XC[4:1]/XE2[4:1]/XE3[4:1]/XE4[4:1]
+E (120){4}XD1[8:1],D1,XE1[1:1]/XC[1:1]/XE2[1:1],,
+- X の後に A1–A8、B1–B8、C、D1–D8、E1–E8。各領域に X を付け、同時領域は / で接続。
+- Hold と同じ持続時間。120 BPM の [8:1] は0.25秒、[#秒数] も対応。省略は 1h と同じ短い1判定フレーム。
+- Touch 速度に合わせて枠が先に出現し、HS/SV に応じて出現し、枠が出た時点から白い光で点滅。予告中は入力可能。
+E <COLOR*noise=00BBFF> / <SIZE*noise=0.8> / <ALPHA*noise=0.5>
+- 全体の SV/HS は noise の予告に適用し、noise=で個別設定。SV=2では予告時間が半分になります。全体のCOLOR/SIZE/ALPHAとライブ版はnoiseに適用せず、noise=を明示します。すべての画面フィルターを適用し、判定領域は変えません。
+- 指定時刻に赤い Glitch 領域が出現し、対応センサーの判定を無効化。A 領域は外部ボタンも無効。物量・スコア・手数に加算しません。
+- 後から出た隣接領域は共有辺から成長し、終了前に残る隣接領域へ縮み、指定終了時に消えます。空いた領域は埋めません。Phira-Proの変位マスク・外縁発光・画面サンプリングを使用。同じ領域の重複は最後の終了まで続き、シークで復元。
+
 ## 4  ノーツ系 Alpha コマンド
 ### SV — 実スクロール速度
 S <SV*倍率>
@@ -1092,7 +1099,7 @@ S <SPAWN*種別=半径,種別=半径>
 S <SPAWN*NULL> / <SPAWN*種別=NULL>
 E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
 E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
-- 半径は -4.8～4.8 です。1.225 は従来位置、0 は中央、4.8 は手前の判定ライン、-4.8 は反対側の判定ラインです。
+- 半径には任意の有限数値を指定できます。1.225 は従来位置、0 は中央、4.8 は手前の判定ライン、-4.8 は反対側の判定ラインです。判定ラインの外側も指定できます。
 - 半径に応じて初回表示と移動開始時刻が自動的に変わります。実速度は引き続き SV × HS で決まり、最終判定キーは変わらず、ガイドラインもその目標を示します。
 - Tap、Hold、Star 頭、Each、Break のリングノーツに作用します。Touch、TouchHold、Slide 軌道本体は変わりません。
 ### SPAWNMODE — SV 逆走後の出現状態
@@ -1129,10 +1136,18 @@ S <COLOR*種別=色,種別=色>
 S <COLOR*NULL> / <COLOR*種別=NULL>
 E <COLOR*FF6699> / <COLOR*star=FF77AA,slidestar=FFFFFF,slide=66DDFF> / <COLOR*slidestar=NULL> / <COLOR*NULL>
 - 全体値は以降のノーツに作用し、種別値が優先されます。star は星型ノーツと Slide ヘッド、slidestar は移動星、slide は軌道を制御します。色は6桁 RGB で指定します。
+E <COLOR*mine=00BBFF>
+E <COLOR*mine=NULL>
+- 全体や tap/hold などの色は地雷に適用しません。mine= で個別着色し、mine=NULL で灰色に戻します。blockarea も個別指定します。
+
 ### COLORV — 読み込み済みノーツ色
 S <COLORV*RRGGBB> / <COLORV*種別=RRGGBB>
 E <COLORV*FFFFFF> / <COLORV*star=FF77AA,slidestar=FFFFFF,slide=66DDFF>
 - 読み込み済みノーツへ即時適用します。通常の種別に加え、star、slidestar、slide を個別指定できます。
+E <COLORV*mine=00BBFF>
+E <COLORV*mine=NULL>
+- 全体や tap/hold などの色は地雷に適用しません。mine= で個別着色し、mine=NULL で灰色に戻します。blockarea も個別指定します。
+
 ### SIZE — ノーツサイズ
 S <SIZE*倍率> / <SIZE*(X倍率,Y倍率)>
 S <SIZE*種別=倍率> / <SIZE*種別=(X倍率,Y倍率)>
@@ -1164,16 +1179,32 @@ E <TEXT*("サビ")> / <TEXT*("同時押し注意",2,index=1)> / <TEXT*("文字�
 - 内容は二重引用符で囲みます。表示時間を省略すると同じ index の次の TEXT まで表示します。index 0～4 は独立して同時表示できます。
 - font は Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta を使用できます。Default はプレイヤーフォントに追従せず元の字幕フォントを使います。
 - style=Fade の transition はフェード時間、style=Typewriter では文字送り完了時間です。秒数または 8:1 の拍形式を使用できます。
+### JUDGELINEEXPAND — 追加判定線
+S <JUDGELINEEXPAND*(True[,時間,1|-1])>
+S <JUDGELINEEXPAND*(False)>
+E <JUDGELINEEXPAND*(True,0.5,1)> / <JUDGELINEEXPAND*(True,8:1,-1)> / <JUDGELINEEXPAND*(False)>
+- Trueで白い判定線を22.5度回転して追加。Falseは追加線のみを即座に非表示にします。
+- 時間の既定値は0秒。秒数または拍形式を使用できます。方向は1/CWが既定値、-1/CCWは反時計回り。旧形式（時間,方向）も有効です。
+- シーク時には表示状態と角度を復元し、再度Trueにすると元の位置から展開します。
+### 設定値に戻す — Default
+S <INNERBRIGHTNESS*(Default[,切替時間])> / <OUTERBRIGHTNESS*(Default[,切替時間])>
+S <COMBODISPLAY*(Default[,切替時間])>
+S <SHOWJUDGETEXT*(Default[,切替時間])> / <SHOWJUDGEINFO*(Default[,切替時間])> / <SHOWCOMBOINFO*(Default[,切替時間])>
+S <JUDGELINE*(Default[,切替時間])>
+E <INNERBRIGHTNESS*(0.8)> / <INNERBRIGHTNESS*(Default,0.5)>
+E <COMBODISPLAY*(None)> / <COMBODISPLAY*(Default)>
+- Defaultは現在のView設定値に戻します。設定ファイルは変更しません。常に全亮・表示・Comboにする指定ではありません。
+- 第1引数は大文字小文字を区別しないDefault。第2引数は省略可能な秒数・拍形式の切替時間。省略時は即時復元。中央表示と線の種類は即時、線の透明度は指定時間で切り替えます。
+- シーク時も対応する状態を復元します。
 ### 表示スイッチ
-S <ShowJudgeLine*(True|False[,切替時間])>
-S <ShowJudgeArea*(True|False[,切替時間])>
+S <JUDGELINE*(0|1|2|3|4[,切替時間])>
 S <ShowJudgeText*(True|False[,切替時間])>
 S <ShowJudgeInfo*(True|False[,切替時間])>
 S <ShowComboInfo*(True|False[,切替時間])>
-E <ShowJudgeLine*(False,8:1)> / <ShowJudgeArea*(True,0.5)>
+E <JUDGELINE*(False,8:1)>
 E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
 - 時間を省略すると即時切替です。順に判定ライン、判定エリア、判定文字、左統計、右情報を制御します。
-- ShowJudgeArea の透明度は ShowJudgeLine 以下に制限されます。判定ラインを隠すと判定エリアも見えません。
+- JUDGELINE: 1 = Classic; 2 = Classic full; 3 = MAGiCAL; 0 / False = Off. 4+ reserved for additional styles.
 ### ComboDisplay — 中央表示
 S <ComboDisplay*(モード[,切替時間])>
 E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
@@ -1211,13 +1242,62 @@ S <Rainbow*(True,強度[,切替時間])>
 E <Saturation*(True,1,1)> / <Contrast*(True,0.6)> / <Rainbow*(True,0.5,8:1)>
 - Saturation は 0 で原色、1 でほぼ白黒。Contrast は対比、Rainbow は動く虹色を加えます。
 ### Vignette / Zoom / Glitch / TVNoise
-S <Vignette*(True,強度[,切替時間])>
+S <Vignette*(True,強度[,切替時間][,グラデーション])>
+E <Vignette*(True,0.5,0.3,True)>
+- グラデーション True は円周の外側へ徐々に暗くします。省略または空欄は True、False は従来の輪郭です。
 S <Zoom*(True,倍率[,切替時間])>
 S <Glitch*(True,強度[,切替時間])>
 S <TVNoise*(True,強度[,切替時間])>
 E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
 E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
 - Vignette は円形範囲を縮小、Zoom は倍率を直接指定（0.6=60%、1=等倍、1.5=150%、範囲 0.1～8）、Glitch は横ずれ、TVNoise は走査線とノイズです。
+### 追加画面フィルター
+- Trueで維持、Falseで解除。Instantは指定時間維持し、包絡は開始・維持・終了時間を指定。時間は秒数または拍数、切替時間は省略できます。画面のみを変更し、判定は変えません。
+- 引数の位置：True/Instant の後の第2引数が強度。True の第3引数は任意の切替時間、False の第2引数は任意の終了時間、Instant の第3引数は必須の持続時間。時間は秒または 8:1 の拍形式。
+
+### SHATTER
+S <SHATTER*(True,強度[,切替時間])> / <SHATTER*(False[,切替時間])> / <SHATTER*(Instant,強度,持続時間)>
+E <SHATTER*(True,0.5,8:1)> / <SHATTER*(False,8:1)>
+E <SHATTER*(Instant,0.6,8:1)>
+- ガラス破砕：中央の衝撃から不規則な亀裂が広がり、大小の厚い破片が素早く外へ飛び、厚みのある側面・多層屈折・反射とハイライトを表示。強度0～1、0で復元。
+### RADIALBLUR
+S <RADIALBLUR*(True,強度[,切替時間])> / <RADIALBLUR*(False[,切替時間])> / <RADIALBLUR*(Instant,強度,持続時間)>
+E <RADIALBLUR*(True,0.5,8:1)> / <RADIALBLUR*(False,8:1)>
+- 放射状ぼかし：中心から外側へ速度感。強度0～1。
+### RIPPLE
+S <RIPPLE*(True,強度[,切替時間])> / <RIPPLE*(False[,切替時間])> / <RIPPLE*(Instant,強度,持続時間)>
+E <RIPPLE*(True,0.5,8:1)> / <RIPPLE*(False,8:1)>
+- 衝撃波：中心から円環が繰り返し広がって画面を屈折。強度0～1。
+### PIXELATE
+S <PIXELATE*(True,強度[,切替時間])> / <PIXELATE*(False[,切替時間])> / <PIXELATE*(Instant,強度,持続時間)>
+E <PIXELATE*(True,0.5,8:1)> / <PIXELATE*(False,8:1)>
+- ピクセル化：強度0～1でブロックの大きさを変更。0は元画像。
+### LENSDISTORT
+S <LENSDISTORT*(True,強度[,切替時間])> / <LENSDISTORT*(False[,切替時間])> / <LENSDISTORT*(Instant,強度,持続時間)>
+E <LENSDISTORT*(True,0.5,8:1)> / <LENSDISTORT*(False,8:1)>
+- レンズ歪み：強度-1～1。正で外側へ膨張、負で内側へ収縮、0は元画像。
+### SPLIT
+S <SPLIT*(True,強度[,切替時間])> / <SPLIT*(False[,切替時間])> / <SPLIT*(Instant,強度,持続時間)>
+E <SPLIT*(True,0.5,8:1)> / <SPLIT*(False,8:1)>
+- 分割ずれ：横帯を交互に左右へ移動。強度0～1。
+### KALEIDOSCOPE
+S <KALEIDOSCOPE*(True,角度[,切替時間])> / <KALEIDOSCOPE*(False[,切替時間])> / <KALEIDOSCOPE*(Instant,角度,持続時間)>
+E <KALEIDOSCOPE*(True,45,8:1)> / <KALEIDOSCOPE*(False,8:1)>
+- 第2引数は回転角度（度）。遷移時間で目標へ回転、0度は有効、Falseで無効。
+### BLOOM
+S <BLOOM*(True,強度[,切替時間])> / <BLOOM*(False[,切替時間])> / <BLOOM*(Instant,強度,持続時間)>
+E <BLOOM*(True,0.5,8:1)> / <BLOOM*(False,8:1)>
+- ブルーム：明るい部分を周囲へ拡散。強度0～4、RGB分離なし。
+### INVERT
+S <INVERT*(True,強度[,切替時間])> / <INVERT*(False[,切替時間])> / <INVERT*(Instant,強度,持続時間)>
+E <INVERT*(True,0.5,8:1)> / <INVERT*(False,8:1)>
+- 反転：強度0～1、1でRGB色を完全に反転。
+### POSTERIZE
+S <POSTERIZE*(True,強度[,切替時間])> / <POSTERIZE*(False[,切替時間])> / <POSTERIZE*(Instant,強度,持続時間)>
+E <POSTERIZE*(True,0.5,8:1)> / <POSTERIZE*(False,8:1)>
+- ポスタリゼーション：強度0～1、高いほど色の階調が少なくなります。
+
+
 ### Hue / Tint
 S <Hue*(True,角度[,切替時間])>
 S <Tint*(True,RRGGBB,強度[,切替時間])>
@@ -1257,4 +1337,13 @@ E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
   <data name="UtageLabel" xml:space="preserve"><value>左上の文字</value></data>
   <data name="UtageCoop" xml:space="preserve"><value>協力譜面</value></data>
   <data name="RefreshPreview" xml:space="preserve"><value>プレビュー更新</value></data>
+<data name="JudgeLineStyle" xml:space="preserve"><value>判定ライン</value></data>
+<data name="JudgeLineOff" xml:space="preserve"><value>非表示</value></data>
+<data name="JudgeLineStyle1" xml:space="preserve"><value>デフォルト</value></data>
+<data name="JudgeLineStyle2" xml:space="preserve"><value>判定エリア</value></data>
+<data name="JudgeLineStyle3" xml:space="preserve"><value>Magical</value></data>
+  <data name="StarDisplayMode" xml:space="preserve"><value>星の表示モード</value></data>
+  <data name="StarDisplayModeLegacy" xml:space="preserve"><value>旧版</value></data>
+  <data name="StarDisplayModeModern" xml:space="preserve"><value>新版</value></data>
+  <data name="DisableAutomaticSongDetailRefresh" xml:space="preserve"><value>ジャケットの自動更新を無効にする</value></data>
 </root>

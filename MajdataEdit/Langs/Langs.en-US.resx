@@ -150,9 +150,6 @@
   <data name="ShowJudgeLine" xml:space="preserve">
     <value>Show judge line during playback</value>
   </data>
-  <data name="ShowJudgeArea" xml:space="preserve">
-    <value>Show judge area</value>
-  </data>
   <data name="ShowAllPerfect" xml:space="preserve">
     <value>Show and play All Perfect</value>
   </data>
@@ -702,7 +699,7 @@ Basic rules
 Available note types: tap, each, hold, slide, star, break, touch, and touchhold.
 Per-type values override global values; use NULL to restore the inherited value.
 Durations accept seconds or beat lengths such as 8:1 and 16:1. Beat lengths use the latest BPM before the command, with the same conversion as Slide durations.
-When a parameter is empty, Tab inserts its recommended default. Otherwise, Tab moves to the next parameter.
+Tab cycles suggestions in the same argument. Type a comma to enter the next argument.
 
 Meter, background, and comments
 -------------------------------
@@ -754,10 +751,9 @@ Judge line and display
 <JLINE*(00FF00,8:1)> Transition over an eighth note at the current BPM
 <JLINE*NULL>         Restore the skin's default color
 Display commands change immediately when the final transition duration is omitted. Durations also accept 8:1, 16:1, and similar beat lengths.
-<ShowJudgeLine*(False)>
-<ShowJudgeLine*(False,1)>
-<ShowJudgeLine*(False,8:1)>
-<ShowJudgeArea*(True,1)>
+<JUDGELINE*(False)>
+<JUDGELINE*(False,1)>
+<JUDGELINE*(False,8:1)>
 <ShowJudgeText*(False,1)>
 <ShowJudgeInfo*(False,1)>
 <ShowComboInfo*(False,1)>
@@ -937,7 +933,7 @@ The gesture creates only the Slide path; its duration comes from the editor's du
 - True / False controls state. NULL clears note properties that support reset.
 - Durations accept seconds (0.5, 2) or beat lengths (8:1, 16:3), using the nearest preceding BPM.
 - Per-type keys: tap, each, hold, slide, star, break, touch, touchhold. Visual COLOR/SIZE/ALPHA commands also support slidestar for moving guide stars. A typed value overrides the global value.
-- Type “<” for categorized completion. Tab fills an empty argument with its default or advances to the next argument.
+- Type “<” for categorized completion. Tab cycles suggestions in the same argument; type a comma for the next argument.
 ! Arguments drawn in grey italics may be left out. A grey italic ,duration means the final comma and the duration can both be omitted. Brackets that are drawn plainly, such as h[duration], are part of the syntax and are typed as written.
 E (120){4}<SV*1.5>1,2,<TEXT*("Chorus",2)>3,4,
 ## 2  Editor markers and comments
@@ -1040,6 +1036,17 @@ E 1~[5-7[8:1]] / 1b~[5-7[8:1]] / 1$~[5-7[8:1]] / 1~[C1-A5[8:1]] / 1~[2P35[8:1]]
 - The note before ~[] is the carrier: 1~[...] moves a Tap; only 1$~[...] moves a star.
 - The brackets need a complete slide, duration included. Key slides and Touch slides can both be borrowed; a wifi slide is three stars and cannot.
 - A borrowed trajectory cannot be followed by a slide. Modifiers (b, h, $, f) may be written on either side of the ~[].
+### X Noise zones
+S XD1[8:1] / XC[4:1] / XA1 / XE1[4:1]/XC[4:1]/XE2[4:1]/XE3[4:1]/XE4[4:1]
+E (120){4}XD1[8:1],D1,XE1[1:1]/XC[1:1]/XE2[1:1],,
+- X prefixes a touch area: A1–A8, B1–B8, C, D1–D8 or E1–E8. Prefix every area with X and join simultaneous zones with /.
+- Durations use Hold syntax: at 120 BPM, [8:1] is 0.25 seconds. [#seconds] is supported. Omission is one short judgement frame, like 1h.
+- Touch speed determines outline warning lead time; HS/SV adjust appearance time and white Ready flashes start when the outline appears without disabling input. Short zones show the full glitch field for at least 0.1 seconds visually, without extending input blocking.
+E <COLOR*noise=00BBFF> / <SIZE*noise=0.8> / <ALPHA*noise=0.5>
+- Global SV/HS include noise warnings by default; noise= overrides them. SV=2 halves the warning lead. Global COLOR/SIZE/ALPHA and their live variants exclude noise; use noise= explicitly. Screen filters include noise; styling does not change disabled sensors or duration.
+- At the authored beat, a red glitch-filled zone disables that sensor; A zones also block their outer button. Zones add no note count, score or hand requirement.
+- Later adjacent active zones grow from shared edges; ending zones retreat toward surviving neighbors before their authored end, and split when a bridge ends. Missing sensor regions are never filled. Active rendering follows Phira-Pro displacement, edge/glow and scene sampling; warnings remain red outlines. Overlaps last until the final event ends; seeking reconstructs state.
+
 ## 4  Note Alpha commands
 ### SV — true scroll velocity
 S <SV*multiplier>
@@ -1062,7 +1069,7 @@ S <SPAWN*type=radius,type=radius>
 S <SPAWN*NULL> / <SPAWN*type=NULL>
 E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
 E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
-- Radius ranges from -4.8 to 4.8: 1.225 is the original position, 0 is center, 4.8 is the near judge line, and -4.8 is the opposite judge line.
+- Radius accepts any finite number: 1.225 is the original position, 0 is center, 4.8 is the near judge line, and -4.8 is the opposite judge line. Values outside the judgement ring are supported.
 - Changing radius automatically changes first-visible and movement-start times. SV × HS still determines actual speed, the final judgment key remains unchanged, and the guide line preserves that target as a reference.
 - Applies to Tap, Hold, Star heads, Each, and Break ring notes. Touch, TouchHold, and Slide paths are unchanged.
 ### SPAWNMODE — spawn state after SV reversal
@@ -1099,10 +1106,18 @@ S <COLOR*type=color,type=color>
 S <COLOR*NULL> / <COLOR*type=NULL>
 E <COLOR*FF6699> / <COLOR*star=FF77AA,slidestar=FFFFFF,slide=66DDFF> / <COLOR*slidestar=NULL> / <COLOR*NULL>
 - The global value affects following notes; typed values win. star controls star-shaped notes and Slide heads, slidestar controls moving guide stars, and slide controls paths. Colors must use six-digit RGB.
+E <COLOR*mine=00BBFF>
+E <COLOR*mine=NULL>
+- Global and ordinary type colors (tap/hold, etc.) exclude mines. Use mine= explicitly; mine=NULL restores gray. Global color also excludes blockarea.
+
 ### COLORV — live note color
 S <COLORV*RRGGBB> / <COLORV*type=RRGGBB>
 E <COLORV*FFFFFF> / <COLORV*star=FF77AA,slidestar=FFFFFF,slide=66DDFF>
 - Applies immediately to already loaded notes. Typed targets include regular note types plus star, slidestar, and slide.
+E <COLORV*mine=00BBFF>
+E <COLORV*mine=NULL>
+- Global and ordinary type colors (tap/hold, etc.) exclude mines. Use mine= explicitly; mine=NULL restores gray. Global color also excludes blockarea.
+
 ### SIZE — note scale
 S <SIZE*scale> / <SIZE*(scaleX,scaleY)>
 S <SIZE*type=scale> / <SIZE*type=(scaleX,scaleY)>
@@ -1134,16 +1149,32 @@ E <TEXT*("Chorus")> / <TEXT*("Watch the double",2,index=1)> / <TEXT*("Typing",3,
 - Text must be inside double quotes. Without duration it remains until the next TEXT with the same index. Indices 0-4 are independent and can coexist.
 - font accepts Default, CascadiaMono, CascadiaCode, MicrosoftYaHei, NotoSansSC, SimSun, DengXian, NotoSerifSC, GlobalMonospace, Aileron, and Allerta. Default preserves the original caption font instead of following the player font.
 - With style=Fade, transition is the fade-in time. With style=Typewriter, transition is the total typing time. Durations accept seconds or beat notation such as 8:1.
+### JUDGELINEEXPAND — additional judge line
+S <JUDGELINEEXPAND*(True[,duration,1|-1])>
+S <JUDGELINEEXPAND*(False)>
+E <JUDGELINEEXPAND*(True,0.5,1)> / <JUDGELINEEXPAND*(True,8:1,-1)> / <JUDGELINEEXPAND*(False)>
+- True adds a white judge line rotated 22.5 degrees. False immediately removes only the added line.
+- Duration defaults to 0 seconds and accepts seconds or beats. Direction defaults to 1/CW; -1/CCW is counterclockwise. The old (duration,direction) syntax remains valid.
+- Seeking restores the on/off state and angle; enabling again starts from the original position.
+### Restore configured display — Default
+S <INNERBRIGHTNESS*(Default[,transition])> / <OUTERBRIGHTNESS*(Default[,transition])>
+S <COMBODISPLAY*(Default[,transition])>
+S <SHOWJUDGETEXT*(Default[,transition])> / <SHOWJUDGEINFO*(Default[,transition])> / <SHOWCOMBOINFO*(Default[,transition])>
+S <JUDGELINE*(Default[,transition])>
+E <INNERBRIGHTNESS*(0.8)> / <INNERBRIGHTNESS*(Default,0.5)>
+E <COMBODISPLAY*(None)> / <COMBODISPLAY*(Default)>
+- Default restores the current View settings without changing those settings. It does not force full brightness, visibility or Combo mode.
+- Parameter 1 is case-insensitive Default. Parameter 2 optionally sets a transition in seconds or beats; omit it for an immediate reset. Combo mode and line style switch immediately; line opacity follows the transition.
+- Seeking before or after these commands restores the corresponding state.
 ### Visibility switches
-S <ShowJudgeLine*(True|False[,transition])>
-S <ShowJudgeArea*(True|False[,transition])>
+S <JUDGELINE*(0|1|2|3|4[,transition])>
 S <ShowJudgeText*(True|False[,transition])>
 S <ShowJudgeInfo*(True|False[,transition])>
 S <ShowComboInfo*(True|False[,transition])>
-E <ShowJudgeLine*(False,8:1)> / <ShowJudgeArea*(True,0.5)>
+E <JUDGELINE*(False,8:1)>
 E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
-- Omitting transition switches immediately. The commands control the line, area, judgment text, left statistics, and right combo panel respectively.
-- ShowJudgeArea opacity is capped by ShowJudgeLine; when the judge line is hidden, the judge area is also invisible.
+- Omitting transition switches immediately. The commands control the line style, judgment text, left statistics, and right combo panel respectively.
+- JUDGELINE: 1 = Classic; 2 = Classic full; 3 = MAGiCAL; 0 / False = Off. 4+ reserved for additional styles.
 ### ComboDisplay — center indicator
 S <ComboDisplay*(mode[,transition])>
 E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
@@ -1181,13 +1212,62 @@ S <Rainbow*(True,strength[,transition])>
 E <Saturation*(True,1,1)> / <Contrast*(True,0.6)> / <Rainbow*(True,0.5,8:1)>
 - Saturation 0 keeps color and 1 approaches monochrome. Contrast strengthens contrast; Rainbow adds animated color.
 ### Vignette / Zoom / Glitch / TVNoise
-S <Vignette*(True,strength[,transition])>
+S <Vignette*(True,strength[,transition][,gradient])>
+E <Vignette*(True,0.5,0.3,True)>
+- Gradient True fades outward from the circular opening; Omitted or empty defaults to True; False retains the hard edge.
 S <Zoom*(True,scale[,transition])>
 S <Glitch*(True,strength[,transition])>
 S <TVNoise*(True,strength[,transition])>
 E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
 E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
 - Vignette shrinks the circular view; Zoom uses a direct scale (0.6=60%, 1=unchanged, 1.5=150%, range 0.1-8); Glitch displaces horizontal bands; TVNoise adds scan lines and noise.
+### Additional screen filters
+- True stays on, False turns off. Instant holds for a duration; envelopes use attack, hold and release durations. Times accept seconds or beats; transitions are optional. These filters only change the image, not note judgment.
+- Argument positions: strength is argument 2 after True/Instant. True uses optional transition as argument 3; False uses optional fade-out as argument 2; Instant requires duration as argument 3. Times accept seconds or beats such as 8:1.
+
+### SHATTER
+S <SHATTER*(True,strength[,transition])> / <SHATTER*(False[,transition])> / <SHATTER*(Instant,strength,duration)>
+E <SHATTER*(True,0.5,8:1)> / <SHATTER*(False,8:1)>
+E <SHATTER*(Instant,0.6,8:1)>
+- Glass shatter: a central impact sends thick shards outward along gently varied radial fractures, with extruded edges, layered refraction, reflection and facet highlights; strength 0–1, 0 restores the image.
+### RADIALBLUR
+S <RADIALBLUR*(True,strength[,transition])> / <RADIALBLUR*(False[,transition])> / <RADIALBLUR*(Instant,strength,duration)>
+E <RADIALBLUR*(True,0.5,8:1)> / <RADIALBLUR*(False,8:1)>
+- Radial blur: streaks radiate from the center; strength 0–1.
+### RIPPLE
+S <RIPPLE*(True,strength[,transition])> / <RIPPLE*(False[,transition])> / <RIPPLE*(Instant,strength,duration)>
+E <RIPPLE*(True,0.5,8:1)> / <RIPPLE*(False,8:1)>
+- Ripple: repeated expanding rings refract the image from the center; strength 0–1.
+### PIXELATE
+S <PIXELATE*(True,strength[,transition])> / <PIXELATE*(False[,transition])> / <PIXELATE*(Instant,strength,duration)>
+E <PIXELATE*(True,0.5,8:1)> / <PIXELATE*(False,8:1)>
+- Pixelation: strength 0–1 controls block size; 0 is unchanged.
+### LENSDISTORT
+S <LENSDISTORT*(True,strength[,transition])> / <LENSDISTORT*(False[,transition])> / <LENSDISTORT*(Instant,strength,duration)>
+E <LENSDISTORT*(True,0.5,8:1)> / <LENSDISTORT*(False,8:1)>
+- Lens distortion: strength -1–1; positive bulges outward, negative contracts inward; 0 is unchanged.
+### SPLIT
+S <SPLIT*(True,strength[,transition])> / <SPLIT*(False[,transition])> / <SPLIT*(Instant,strength,duration)>
+E <SPLIT*(True,0.5,8:1)> / <SPLIT*(False,8:1)>
+- Split displacement: horizontal strips alternate left and right; strength 0–1.
+### KALEIDOSCOPE
+S <KALEIDOSCOPE*(True,degrees[,transition])> / <KALEIDOSCOPE*(False[,transition])> / <KALEIDOSCOPE*(Instant,degrees,duration)>
+E <KALEIDOSCOPE*(True,45,8:1)> / <KALEIDOSCOPE*(False,8:1)>
+- Parameter 2 is rotation in degrees, including negative angles. Transitions rotate to the target; 0 degrees remains enabled, False disables.
+### BLOOM
+S <BLOOM*(True,strength[,transition])> / <BLOOM*(False[,transition])> / <BLOOM*(Instant,strength,duration)>
+E <BLOOM*(True,0.5,8:1)> / <BLOOM*(False,8:1)>
+- Bloom: bright areas glow into their surroundings; strength 0–4, without RGB splitting.
+### INVERT
+S <INVERT*(True,strength[,transition])> / <INVERT*(False[,transition])> / <INVERT*(Instant,strength,duration)>
+E <INVERT*(True,0.5,8:1)> / <INVERT*(False,8:1)>
+- Invert: strength 0–1; 1 fully inverts RGB colors.
+### POSTERIZE
+S <POSTERIZE*(True,strength[,transition])> / <POSTERIZE*(False[,transition])> / <POSTERIZE*(Instant,strength,duration)>
+E <POSTERIZE*(True,0.5,8:1)> / <POSTERIZE*(False,8:1)>
+- Posterization: strength 0–1; higher strength reduces color levels.
+
+
 ### Hue / Tint
 S <Hue*(True,degrees[,transition])>
 S <Tint*(True,RRGGBB,strength[,transition])>
@@ -1227,4 +1307,13 @@ E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
   <data name="UtageLabel" xml:space="preserve"><value>Header text</value></data>
   <data name="UtageCoop" xml:space="preserve"><value>Co-op chart</value></data>
   <data name="RefreshPreview" xml:space="preserve"><value>Refresh preview</value></data>
+<data name="JudgeLineStyle" xml:space="preserve"><value>Judge line style</value></data>
+<data name="JudgeLineOff" xml:space="preserve"><value>Off</value></data>
+<data name="JudgeLineStyle1" xml:space="preserve"><value>Default</value></data>
+<data name="JudgeLineStyle2" xml:space="preserve"><value>Judge area</value></data>
+<data name="JudgeLineStyle3" xml:space="preserve"><value>Magical</value></data>
+  <data name="StarDisplayMode" xml:space="preserve"><value>Star display mode</value></data>
+  <data name="StarDisplayModeLegacy" xml:space="preserve"><value>Legacy</value></data>
+  <data name="StarDisplayModeModern" xml:space="preserve"><value>Modern</value></data>
+  <data name="DisableAutomaticSongDetailRefresh" xml:space="preserve"><value>Disable automatic cover refresh</value></data>
 </root>

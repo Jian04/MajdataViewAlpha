@@ -1,4 +1,4 @@
-﻿/*
+/*
   Copyright (c) Moying-moe All rights reserved. Licensed under the MIT license.
   See LICENSE in the project root for license information.
 */
@@ -13,7 +13,7 @@ namespace MajdataEdit.AutoSaveModule;
 /// </summary>
 public sealed class SafeTerminationDetector
 {
-    public readonly string RecordPath = Environment.CurrentDirectory + "/PROGRAM_RUNNING";
+    public readonly string RecordPath = MajdataCore.AlphaSession.Current == null ? Environment.CurrentDirectory + "/PROGRAM_RUNNING" : System.IO.Path.Combine(MajdataCore.AlphaSession.Current.DirectoryPath, "PROGRAM_RUNNING");
 
     private SafeTerminationDetector()
     {

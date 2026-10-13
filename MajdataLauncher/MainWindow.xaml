@@ -14,6 +14,10 @@
     <Grid.ContextMenu>
       <ContextMenu>
         <MenuItem x:Name="LaunchMenuItem" Click="Launch_Click" />
+        <MenuItem Header="新建独立 Edit + View" Click="NewSession_Click" />
+        <MenuItem Header="Edit + View 实例列表" Click="Sessions_Click" />
+        <MenuItem Header="多窗口控制台…" Click="MultiControl_Click" />
+        <MenuItem Header="连接联机写谱服务器…" Click="JoinRoom_Click" />
         <MenuItem x:Name="OpenFolderMenuItem" Click="OpenFolder_Click" />
         <Separator />
         <MenuItem x:Name="ExitMenuItem" Click="Close_Click" />
@@ -23,9 +27,14 @@
     <Image x:Name="PetPreviousImage" Width="168" Height="182" VerticalAlignment="Bottom" Margin="0,0,0,22"
            Stretch="Uniform" Opacity="0" Visibility="Collapsed" IsHitTestVisible="False"
            RenderOptions.BitmapScalingMode="LowQuality" />
-    <Image x:Name="PetImage" Width="168" Height="182" VerticalAlignment="Bottom" Margin="0,0,0,22"
+    <Grid x:Name="PetMotionHost" Width="168" Height="182" VerticalAlignment="Bottom" Margin="0,0,0,22" RenderTransformOrigin="0.5,0.15">
+      <Grid.RenderTransform><RotateTransform /></Grid.RenderTransform>
+    <Image x:Name="PetImage" Width="168" Height="182" VerticalAlignment="Bottom"
            Stretch="Uniform" IsHitTestVisible="False"
-           RenderOptions.BitmapScalingMode="LowQuality" />
+           RenderOptions.BitmapScalingMode="LowQuality" RenderTransformOrigin="0.5,1">
+      <Image.RenderTransform><ScaleTransform ScaleY="1" /></Image.RenderTransform>
+    </Image>
+    </Grid>
 
     <Grid x:Name="SpeechBubbleHost" HorizontalAlignment="Left" VerticalAlignment="Top"
           MaxWidth="176" Margin="4,2,4,0" Visibility="Collapsed" IsHitTestVisible="False">

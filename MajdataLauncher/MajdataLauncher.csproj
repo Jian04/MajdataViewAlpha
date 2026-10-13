@@ -2,6 +2,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net6.0-windows</TargetFramework>
+    <Version>0.6.0</Version>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -11,8 +13,18 @@
     <ApplicationIcon>..\MajdataEdit\bear-3.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="SIPSorcery" Version="10.0.17" />
     <Content Include="Pets\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\SessionUi\SessionManagerWindow.cs" Link="Sessions\SessionManagerWindow.cs" />
+    <Compile Include="..\SessionUi\SessionTheme.cs" Link="Sessions\SessionTheme.cs" />
+    <Compile Include="..\SessionUi\MultiControlWindow.cs" Link="Sessions\MultiControlWindow.cs" />
+    <Compile Include="..\Collaboration\*.cs" Link="Collaboration\%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Assets\MajdataCore\AlphaSession.cs" Link="Sessions\AlphaSession.cs" />
   </ItemGroup>
 </Project>

@@ -6,6 +6,7 @@ using UnityEngine.Rendering;
 #nullable enable
 public class TouchHoldDrop : NoteLongDrop
 {
+    private bool noiseInterrupted;
     public bool isFirework;
     public char touchArea = 'C';
     public bool isBreak;
@@ -62,6 +63,20 @@ public class TouchHoldDrop : NoteLongDrop
     private void Awake() => HideFansUntilInitialized(fans);
 
     // Start is called before the first frame update
+    internal override void RestoreTimelineState(float at)
+    {
+        if (!JudgmentDisabled && at > time && at < time + LastFor && !isJudged)
+        {
+            isJudged = true;
+            judgeResult = JudgeType.Perfect;
+            judgeDiff = 0;
+            playerIdleTime = 0;
+            isAutoTrigger = true;
+            objectCounter.NextTouch(sensor.Type);
+        }
+        base.RestoreTimelineState(at);
+    }
+
     private void Start()
     {
         wholeDuration = AlphaVisualTiming.GetTouchMotionDuration(speed);
@@ -90,8 +105,8 @@ public class TouchHoldDrop : NoteLongDrop
 
         for (var i = 0; i < 6; i++)
             fansSprite[i] = fans[i].GetComponent<SpriteRenderer>();
-        var sortingGroup = GetComponent<SortingGroup>() ??
-                           gameObject.AddComponent<SortingGroup>();
+        var sortingGroup = GetComponent<SortingGroup>();
+        if (sortingGroup == null) sortingGroup = gameObject.AddComponent<SortingGroup>();
         sortingGroup.sortingLayerID = fansSprite[0].sortingLayerID;
         sortingGroup.sortingOrder = noteSortOrder;
         mask.isCustomRangeActive = true;
@@ -100,7 +115,8 @@ public class TouchHoldDrop : NoteLongDrop
         mask.backSortingOrder = 0;
         mask.frontSortingOrder = 5;
 
-        for (var i = 0; i < 4; i++) fansSprite[i].sprite = TouchHoldSprite[i];
+        for (var i = 0; i < 4; i++)
+            fansSprite[i].sprite = ResolveCustomSkin(TouchHoldSprite[i]) ?? TouchHoldSprite[i];
         fansSprite[5].sprite = TouchHoldSprite[4]; // TouchHold Border
         fansSprite[4].sprite = TouchPointSprite;
         authoredCenterPointScale = fans[4].transform.localScale;
@@ -143,13 +159,23 @@ public class TouchHoldDrop : NoteLongDrop
     {
         if (JudgmentDisabled || JudgmentSuspended)
             return;
+        // A DJAuto tap pulse is over before FixedUpdate polls the sensor. Keep
+        // mine bodies sensitive to that contact without making them press it.
+        if (isMine && (InputManager.Mode is AutoPlayMode.DJAuto or AutoPlayMode.Disable) &&
+            isJudged && judgeResult == JudgeType.Perfect &&
+            GetRemainingTime() > 0f && arg.IsClick)
+        {
+            judgeResult = JudgeType.Miss;
+            Destroy(gameObject);
+            return;
+        }
         if (isJudged || !noteManager.CanJudge(gameObject, sensor.Type))
             return;
         else if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
             return;
         else if (arg.IsClick)
         {
-            if (InputManager.Mode != AutoPlayMode.DJAuto)
+            if (!isMine)
             {
                 if (!inputManager.IsIdle(arg))
                     return;
@@ -160,6 +186,7 @@ public class TouchHoldDrop : NoteLongDrop
             {
                 inputManager.UnbindSensor(Check, sensor.Type);
                 objectCounter.NextTouch(sensor.Type);
+                if (isMine) Destroy(gameObject);
             }
         }
     }
@@ -176,6 +203,7 @@ public class TouchHoldDrop : NoteLongDrop
             return;
 
         var timing = timeProvider.AudioTime - time;
+        if (isMine && !MajdataCore.MineJudgment.HeadCanHit(timing, true)) return;
         var isFast = timing < 0;
         var diff = MathF.Abs(timing * 1000);
         JudgeType result;
@@ -196,7 +224,7 @@ public class TouchHoldDrop : NoteLongDrop
         else
             judgeDiff = diff;
 
-        judgeResult = result;
+        judgeResult = isMine ? JudgeType.Miss : result;
         isJudged = true;
         PlayHoldEffect();
     }
@@ -206,6 +234,28 @@ public class TouchHoldDrop : NoteLongDrop
             return;
         var remainingTime = GetRemainingTime();
         var timing = GetJudgeTiming();
+        if (timing >= 0 && (remainingTime > 0 || LastFor <= 0 && timing <= 0.15f) && NoiseZoneInputGate.IsBlocked(sensor.Type))
+            noiseInterrupted = true;
+
+        if (isMine)
+        {
+            if (!isJudged && MajdataCore.MineJudgment.HeadCleared(timing, true))
+            {
+                isJudged = true;
+                judgeResult = JudgeType.Perfect;
+                objectCounter.NextTouch(sensor.Type);
+            }
+            if (isJudged && remainingTime > 0f &&
+                InputManager.Mode is AutoPlayMode.DJAuto or AutoPlayMode.Disable &&
+                inputManager.CheckSensorStatus(sensor.Type, SensorStatus.On))
+            {
+                judgeResult = JudgeType.Miss;
+                Destroy(gameObject);
+            }
+            else if (isJudged && remainingTime == 0f)
+                Destroy(gameObject);
+            return;
+        }
         var holdTime = timing - LastFor;
 
         if (remainingTime == 0 && isJudged)
@@ -216,19 +266,18 @@ public class TouchHoldDrop : NoteLongDrop
         else if (timing >= -0.01f)
         {
             // AutoPlay behavior
-            switch (InputManager.Mode)
+            if (!NoiseZoneInputGate.IsBlocked(sensor.Type)) switch (InputManager.Mode)
             {
                 case AutoPlayMode.Enable:
                     if (!isJudged)
                         objectCounter.NextTouch(sensor.Type);
-                    judgeResult = JudgeType.Perfect;
+                    if (!noiseInterrupted || !isJudged) judgeResult = JudgeType.Perfect;
                     isJudged = true;
                     PlayHoldEffect();
                     return;
                 case AutoPlayMode.DJAuto:
-                    if (!isJudged)
-                        inputManager.ClickSensor(sensor.Type, true);
-                    if (isJudged)
+                    // Scrubbed sustains restore the head before playback resets sensors.
+                    if (!isJudged || isAutoTrigger)
                         manager.SetSensorOn(sensor.Type, guid);
                     break;
                 case AutoPlayMode.Random:
@@ -395,7 +444,7 @@ public class TouchHoldDrop : NoteLongDrop
             }
         }
 
-        switch (InputManager.Mode)
+        if (!noiseInterrupted) switch (InputManager.Mode)
         {
             case AutoPlayMode.Enable:
                 result = JudgeType.Perfect;
@@ -408,6 +457,7 @@ public class TouchHoldDrop : NoteLongDrop
                 break;
         }
 
+        if (isMine) result = judgeResult;
         objectCounter.ReportResult(this, result, isBreak);
         if (!isJudged)
             objectCounter.NextTouch(sensor.Type);

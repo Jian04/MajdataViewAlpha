@@ -17,6 +17,7 @@ public sealed class TouchSlideDrop : NoteDrop
     public List<SlidePathSegmentData> pathSegments;
     public bool bodyBreak;
     public bool bodyMine;
+    public bool smoothSlideAnime;
     public bool suppressGuideStarFadeIn;
     public float timeStart;
     public float duration = 1f;
@@ -40,6 +41,7 @@ public sealed class TouchSlideDrop : NoteDrop
     private readonly List<SpriteRenderer> bars = new();
     private readonly List<float> barProgress = new();
     private readonly List<SensorType> sensorRoute = new();
+    private readonly List<float> sensorRouteProgress = new();
     private readonly HashSet<SensorType> boundSensors = new();
     private SpriteRenderer starRenderer;
     private float starRotationOffset;
@@ -50,15 +52,23 @@ public sealed class TouchSlideDrop : NoteDrop
     private float trailLeadProgress;
     private bool initialized;
     private bool completed;
+    private bool mineSafeResolved;
     private bool isSlideCode;
     private bool endsWithCircle;
     private bool endCounterClockwise;
     private GameObject judgeVisual;
     private SlideAreaRawData[] codeAreas;
     private readonly List<JudgeArea> codeJudgeAreas = new();
+    private readonly List<JudgeArea> normalJudgeAreas = new();
     private float lastBarAlpha = -1f;
     private int hiddenBarCount;
     private string motionScrollType;
+    private SensorManager sensorManager;
+    private readonly Guid autoInputId = Guid.NewGuid();
+    private readonly List<(Sensor Sensor, RectTransform Rect)> autoRegions = new();
+    private readonly HashSet<Sensor> autoPressed = new();
+    private float previousAutoProgress;
+    private bool sweepingAutoSensors;
 
     public override void ApplyLiveScale(Vector2? scale)
     {
@@ -102,6 +112,21 @@ public sealed class TouchSlideDrop : NoteDrop
         starScale = scale ?? liveStarScaleDefault.Value;
     }
 
+    internal override void RestoreTimelineState(float at)
+    {
+        Initialize();
+        if (!JudgmentDisabled && !bodyMine && at > time)
+        {
+            var progress = SvController.GetTypedOnlyProgress(time, Mathf.Max(0.01f, duration), at, motionScrollType);
+            var count = isSlideCode ? codeJudgeAreas.Count : normalJudgeAreas.Count;
+            while (routeIndex < count && GetClearedAreaProgress(routeIndex + 1) <= progress) routeIndex++;
+            headTriggered = true;
+            previousAutoProgress = progress;
+            SetBarAlpha(1f, smoothSlideAnime ? progress : GetClearedAreaProgress(routeIndex));
+        }
+        base.RestoreTimelineState(at);
+    }
+
     private void Start() => Initialize();
 
     public void Initialize()
@@ -112,6 +137,11 @@ public sealed class TouchSlideDrop : NoteDrop
         motionScrollType = SvController.ForSameStream(scrollType, "slide");
         if (timeProvider == null) timeProvider = GameObject.Find("AudioTimeProvider")?.GetComponent<AudioTimeProvider>();
         inputManager = GameObject.Find("Input")?.GetComponent<InputManager>();
+        sensorManager = GameObject.Find("Sensors")?.GetComponent<SensorManager>();
+        if (sensorManager != null)
+            foreach (var sensor in sensorManager.GetComponentsInChildren<Sensor>())
+                if (sensor.TryGetComponent<RectTransform>(out var rect))
+                    autoRegions.Add((sensor, rect));
         if (objectCounter == null) objectCounter = GameObject.Find("ObjectCounter")?.GetComponent<ObjectCounter>();
 
         BuildPath();
@@ -123,6 +153,7 @@ public sealed class TouchSlideDrop : NoteDrop
                 $"touch slide path '{pathExpression}' resolved to " +
                 $"{path.Count} point(s), nothing will be drawn");
         BuildSensorRoute();
+        pathSprite = ResolveCustomSkin(pathSprite) ?? pathSprite;
         CreateVisuals();
         CreateJudgeVisual();
         InvalidateLiveVisual();
@@ -138,10 +169,16 @@ public sealed class TouchSlideDrop : NoteDrop
 
     private void Update()
     {
-        if (timeProvider == null || path.Count < 2 || starRenderer == null)
+        if (completed || timeProvider == null || path.Count < 2 || starRenderer == null)
             return;
 
         var now = timeProvider.AudioTime;
+        if (JudgmentSuspended || now < time)
+        {
+            ReleaseAutoSensors();
+            previousAutoProgress = now < time ? 0f : SvController.GetTypedOnlyProgress(
+                time, Mathf.Max(0.01f, duration), now, motionScrollType);
+        }
         if (now <= timeStart)
         {
             SetBarAlpha(GetBodyAlpha(now), 0f);
@@ -196,46 +233,77 @@ public sealed class TouchSlideDrop : NoteDrop
             1.5f * starScale.y,
             1f);
         SetStarPose(progress);
-        // Nothing judges a fake or preview path, so nothing consumes its trail
-        // either: the star travels and the bars stay, the way a missed slide
-        // looks. SlideDrop forces its bars back on for the same reason, and a
-        // touch slide has no business ending up looking different.
-        var trailProgress = progress;
-        if (isSlideCode && InputManager.Mode == AutoPlayMode.Disable)
-            trailProgress = routeIndex >= codeAreas.Length ? 1f
-                : (float)((codeJudgeAreas[routeIndex].On
-                    ? codeAreas[routeIndex].LengthAfterPush
-                    : routeIndex > 0 ? codeAreas[routeIndex - 1].LengthAfterFinish : 0d) / totalPathLength);
-        SetBarAlpha(1f, JudgmentDisabled ? 0f : trailProgress);
-
-        if (!JudgmentDisabled && InputManager.Mode != AutoPlayMode.Disable)
+        if (!JudgmentDisabled && !bodyMine && InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
             routeIndex = Mathf.Max(
                 routeIndex,
-                Mathf.CeilToInt(progress * (isSlideCode ? codeAreas.Length : sensorRoute.Count)));
+                Mathf.FloorToInt(progress * (isSlideCode ? codeAreas.Length : sensorRoute.Count)));
+        if (!JudgmentSuspended && !JudgmentDisabled)
+        {
+            UpdateAutoSensors(progress);
+            if (!mineSafeResolved && isSlideCode && (InputManager.Mode == AutoPlayMode.Disable ||
+                bodyMine && InputManager.Mode == AutoPlayMode.DJAuto))
+                CheckCodeSensors();
+            else if (!mineSafeResolved && !isSlideCode && (InputManager.Mode == AutoPlayMode.Disable ||
+                bodyMine && InputManager.Mode == AutoPlayMode.DJAuto))
+                CheckNormalSensors();
+        }
 
-        // SV controls only the visual path within the authored interval.
-        // Judgement and lifetime always end at the chart's declared duration.
-        if (now < time + Mathf.Max(0.01f, duration))
-            return;
+        // Smooth mode follows the moving star. Otherwise the whole judged area
+        // disappears at once, exactly as SlideDrop.HideBar(first.SlideIndex) does.
+        // The visual setting never changes which sensors DJAuto presses.
+        // A mine does not press sensors, but its guide star still wipes its
+        // visible path as it moves (as SlideDrop.UpdateStar does for mine slides).
+        // This timed visual progress never advances the judgement queue.
+        var visibleAreaIndex = routeIndex;
+        if (bodyMine && !JudgmentDisabled)
+            visibleAreaIndex = Mathf.Max(visibleAreaIndex,
+                Mathf.FloorToInt(progress * (isSlideCode ? codeAreas.Length : sensorRoute.Count)));
+        var trailProgress = smoothSlideAnime
+            ? progress : GetClearedAreaProgress(visibleAreaIndex);
+        SetBarAlpha(1f, JudgmentDisabled ? 0f : trailProgress);
+
         if (JudgmentSuspended)
             return;
         if (JudgmentDisabled)
         {
-            star.SetActive(false);
+            if (now >= time + Mathf.Max(0.01f, duration)) star.SetActive(false);
             return;
         }
-
-        judgeResult = InputManager.Mode == AutoPlayMode.Random
-            ? (JudgeType)UnityEngine.Random.Range(1, 14)
-            : InputManager.Mode != AutoPlayMode.Disable || routeIndex >= (isSlideCode ? codeAreas.Length : sensorRoute.Count)
-                ? JudgeType.Perfect
-                : JudgeType.Miss;
+        var endTime = time + Mathf.Max(0.01f, duration);
+        var expectedTime = isSlideCode && codeAreas.Length >= 2
+            ? time + duration * (float)(codeAreas[^2].LengthAfterFinish / totalPathLength)
+            : time + duration * 0.9f;
+        var finished = routeIndex >= (isSlideCode ? codeAreas.Length : sensorRoute.Count);
+        if (bodyMine)
+        {
+            // Resolve safety at the judgement point but let the guide star
+            // finish travelling. Once safe, later sensor contact cannot turn
+            // this already-judged mine into a hit.
+            if (!finished && now >= expectedTime)
+                mineSafeResolved = true;
+            if (!finished && now < endTime)
+                return;
+            judgeResult = finished && !mineSafeResolved ? JudgeType.Miss : JudgeType.Perfect;
+        }
+        else if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
+        {
+            if (now < endTime) return;
+            judgeResult = InputManager.Mode == AutoPlayMode.Random
+                ? (JudgeType)UnityEngine.Random.Range(1, 14) : JudgeType.Perfect;
+        }
+        else
+        {
+            if (!finished && now < endTime + 0.6f) return;
+            judgeResult = finished ? (JudgeType)SlideJudgeTiming.Grade(now, expectedTime, endTime) : JudgeType.Miss;
+        }
         completed = true;
+        ReleaseAutoSensors();
         Destroy(gameObject);
     }
 
     private void OnDisable()
     {
+        ReleaseAutoSensors();
         // Key-head TouchSlides are disabled by their StarDrop when the paused
         // clock returns before reveal. The guide star is not a child of this
         // object, so hide it explicitly before this component stops updating.
@@ -258,39 +326,117 @@ public sealed class TouchSlideDrop : NoteDrop
 
     private void OnSensorChanged(object sender, InputEventArgs args)
     {
-        if (JudgmentDisabled || JudgmentSuspended ||
-            InputManager.Mode != AutoPlayMode.Disable || sensorRoute.Count == 0)
+        if (JudgmentDisabled || JudgmentSuspended || sweepingAutoSensors || mineSafeResolved ||
+            InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random || sensorRoute.Count == 0)
             return;
 
         if (isSlideCode)
         {
-            if (timeProvider.AudioTime < time || routeIndex >= codeJudgeAreas.Count)
-                return;
-            var current = codeJudgeAreas[routeIndex];
-            current.Judge(args.Type, args.Status);
-            if (routeIndex + 1 < codeJudgeAreas.Count)
-            {
-                var next = codeJudgeAreas[routeIndex + 1];
-                next.Judge(args.Type, args.Status);
-                if (next.On)
-                    routeIndex++;
-            }
-            if (routeIndex < codeJudgeAreas.Count && codeJudgeAreas[routeIndex].IsFinished)
-                routeIndex++;
+            CheckCodeSensors(args);
             return;
         }
-        if (args.Status != SensorStatus.On)
-            return;
-
         if (timeProvider != null && timeProvider.AudioTime < time)
         {
-            if (args.Type == sensorRoute[0])
+            if (args.Status == SensorStatus.On && args.Type == sensorRoute[0])
                 headTriggered = true;
+        }
+        // Like SlideDrop, the first and next areas can be pressed before the
+        // star starts moving. Also consume Off: ordinary areas finish only
+        // after release. Sensor.SetOff raises its event before changing Status,
+        // so the event's status must override the stale sensor property.
+        CheckNormalSensors(args);
+    }
+
+    private void CheckNormalSensors(InputEventArgs? changed = null)
+    {
+        if (completed || JudgmentDisabled || JudgmentSuspended || inputManager == null ||
+            timeProvider.AudioTime < timeStart - 0.05f || routeIndex >= normalJudgeAreas.Count)
+            return;
+        routeIndex = SlideJudgeQueue.AdvanceOne(normalJudgeAreas, routeIndex,
+            type => changed.HasValue && type == changed.Value.Type ? changed.Value.Status :
+                inputManager.CheckSensorStatus(type, SensorStatus.On) ? SensorStatus.On : SensorStatus.Off);
+    }
+
+    private void CheckCodeSensors(InputEventArgs? changed = null)
+    {
+        if (completed || JudgmentDisabled || JudgmentSuspended || inputManager == null ||
+            timeProvider.AudioTime < timeStart - 0.05f || routeIndex >= codeJudgeAreas.Count)
+            return;
+        routeIndex = SlideJudgeQueue.AdvanceOne(codeJudgeAreas, routeIndex,
+            type => changed.HasValue && type == changed.Value.Type ? changed.Value.Status :
+                inputManager.CheckSensorStatus(type, SensorStatus.On) ? SensorStatus.On : SensorStatus.Off);
+    }
+
+    private float GetClearedAreaProgress(int areaIndex)
+    {
+        if (areaIndex <= 0)
+            return 0f;
+        if (isSlideCode)
+            return areaIndex >= codeAreas.Length ? 1f :
+                totalPathLength > 0.0001f
+                    ? Mathf.Clamp01((float)(codeAreas[areaIndex - 1].LengthAfterFinish / totalPathLength))
+                    : 0f;
+        return areaIndex >= sensorRouteProgress.Count ? 1f :
+            sensorRouteProgress[areaIndex];
+    }
+
+    private void UpdateAutoSensors(float progress)
+    {
+        if (bodyMine || JudgmentDisabled || JudgmentSuspended ||
+            InputManager.Mode != AutoPlayMode.DJAuto || sensorManager == null)
+        {
+            ReleaseAutoSensors();
+            previousAutoProgress = progress;
             return;
         }
+        // Sweep the travelled path so low frame rates cannot skip a small sensor.
+        var from = Mathf.Min(previousAutoProgress, progress);
+        var steps = Mathf.Clamp(Mathf.CeilToInt((progress - from) * totalPathLength / 0.15f), 1, 128);
+        sweepingAutoSensors = true;
+        try
+        {
+            for (var step = 0; step <= steps; step++)
+            {
+                var position = transform.TransformPoint(EvaluatePath(Mathf.Lerp(from, progress, step / (float)steps)));
+                var routeSensorChanged = false;
+                foreach (var region in autoRegions)
+                {
+                    var rect = region.Rect;
+                    var radius = Mathf.Max(rect.rect.width * Mathf.Abs(rect.lossyScale.x),
+                        rect.rect.height * Mathf.Abs(rect.lossyScale.y)) * 0.5f;
+                    const float handRadius = 0.763736616f;
+                    var pressed = (position - rect.position).sqrMagnitude <= radius * radius + handRadius * handRadius;
+                    if (pressed && autoPressed.Add(region.Sensor))
+                    {
+                        sensorManager.SetSensorOn(region.Sensor.Type, autoInputId);
+                        routeSensorChanged |= boundSensors.Contains(region.Sensor.Type);
+                    }
+                    else if (!pressed && autoPressed.Remove(region.Sensor))
+                    {
+                        sensorManager.SetSensorOff(region.Sensor.Type, autoInputId);
+                        routeSensorChanged |= boundSensors.Contains(region.Sensor.Type);
+                    }
+                }
+                // Only a fresh contact or release can consume a zone. Polling a
+                // stationary held sensor on every sweep sample would drain the
+                // entire route without the star moving to another region.
+                if (routeSensorChanged)
+                {
+                    if (isSlideCode) CheckCodeSensors();
+                    else CheckNormalSensors();
+                }
+            }
+        }
+        finally { sweepingAutoSensors = false; }
+        previousAutoProgress = progress;
+    }
 
-        if (routeIndex < sensorRoute.Count && args.Type == sensorRoute[routeIndex])
-            routeIndex++;
+    private void ReleaseAutoSensors()
+    {
+        if (sensorManager != null)
+            foreach (var sensor in autoPressed)
+                sensorManager.SetSensorOff(sensor.Type, autoInputId);
+        autoPressed.Clear();
     }
 
     private void BuildPath()
@@ -458,6 +604,20 @@ public sealed class TouchSlideDrop : NoteDrop
         {
             AppendLine(start, Vector3.zero, firstSample, segments / 2);
             AppendLine(Vector3.zero, end, 1, segments / 2);
+            return;
+        }
+
+        if (segmentShape is "s" or "z")
+        {
+            var opposite = (segmentStartPosition + 3) % 8 + 1;
+            if (slideRouteSource == null || !slideRouteSource.TryGetSlideVisualRoute(
+                    $"{segmentStartPosition}{segmentShape}{opposite}[4:1]", out var source))
+                throw new InvalidOperationException("Missing s/z slide route prefab.");
+            var original = new List<Vector3> { AreaPosition('K', segmentStartPosition, false) };
+            original.AddRange(source);
+            original.Add(AreaPosition('K', opposite, false));
+            var lightning = SlideDrop.BuildLightningRoute(original, start, end);
+            for (var i = firstSample; i < lightning.Length; i++) path.Add(lightning[i]);
             return;
         }
 
@@ -652,47 +812,41 @@ public sealed class TouchSlideDrop : NoteDrop
             }
             return;
         }
-        var sensorsRoot = GameObject.Find("Sensors");
-        if (sensorsRoot != null)
+        var centers = new List<(int Sensor, System.Numerics.Vector2 Center)>();
+        foreach (var area in new[] { 'A', 'B', 'C', 'D', 'E' })
         {
-            var regions = new List<(SensorType Type, Vector2 Position, float RadiusSquared)>();
-            for (var i = 0; i < sensorsRoot.transform.childCount; i++)
+            var end = area == 'C' ? 1 : 8;
+            for (var i = 1; i <= end; i++)
             {
-                var child = sensorsRoot.transform.GetChild(i);
-                if (!child.TryGetComponent<Sensor>(out var sensor) ||
-                    !child.TryGetComponent<RectTransform>(out var rect))
-                    continue;
-                var radius = Mathf.Max(rect.rect.width * Mathf.Abs(rect.lossyScale.x),
-                    rect.rect.height * Mathf.Abs(rect.lossyScale.y)) * 0.5f + 0.15f;
-                regions.Add((sensor.Type, rect.position, radius * radius));
+                var point = AreaPosition(area, i, false);
+                centers.Add(((int)GetSensor(area, i, false),
+                    new System.Numerics.Vector2(point.x, point.y)));
             }
-            foreach (var localPosition in path)
-            {
-                var worldPosition = transform.TransformPoint(localPosition);
-                SensorType? nearest = null;
-                var nearestDistance = float.MaxValue;
-                foreach (var region in regions)
-                {
-                    var distance = ((Vector2)worldPosition - region.Position).sqrMagnitude;
-                    if (distance <= region.RadiusSquared && distance < nearestDistance)
-                    {
-                        nearest = region.Type;
-                        nearestDistance = distance;
-                    }
-                }
-
-                if (nearest != null &&
-                    (sensorRoute.Count == 0 || sensorRoute[^1] != nearest.Value))
-                    sensorRoute.Add(nearest.Value);
-            }
+        }
+        var localPath = new List<System.Numerics.Vector2>(path.Count);
+        foreach (var point in path)
+            localPath.Add(new System.Numerics.Vector2(point.x, point.y));
+        foreach (var zone in TouchSlideSensorRoute.Build(localPath, centers, GetTemplateSpacing()))
+        {
+            sensorRoute.Add((SensorType)zone.Sensor);
+            sensorRouteProgress.Add(zone.Entry);
         }
 
         var startSensor = GetSensor(startArea, startPosition, isDZone);
         var endSensor = GetSensor(endArea, endPosition, isDZoneEnd);
         if (sensorRoute.Count == 0 || sensorRoute[0] != startSensor)
+        {
             sensorRoute.Insert(0, startSensor);
+            sensorRouteProgress.Insert(0, 0f);
+        }
         if (sensorRoute[^1] != endSensor)
+        {
             sensorRoute.Add(endSensor);
+            sensorRouteProgress.Add(1f);
+        }
+        for (var i = 0; i < sensorRoute.Count; i++)
+            normalJudgeAreas.Add(new JudgeArea(
+                new Dictionary<SensorType, bool> { [sensorRoute[i]] = i == sensorRoute.Count - 1 }, i));
     }
 
     private void CreateVisuals()
@@ -979,6 +1133,7 @@ public sealed class TouchSlideDrop : NoteDrop
 
     private void OnDestroy()
     {
+        ReleaseAutoSensors();
         if (inputManager != null)
         {
             foreach (var sensorType in boundSensors)

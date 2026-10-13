@@ -1,8 +1,9 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using MajdataCore;
+using MajdataEdit.Editor;
 
 namespace MajdataEdit;
 
@@ -140,6 +141,66 @@ internal static class Program
                 Apply(sample, Mirror.HandleType.Rotation45),
                 Mirror.HandleType.CcwRotation45) == sample,
             "Mirror transformations are not reversible.");
+    }
+
+    private static void CheckCommaTerminatedSlots()
+    {
+        SimaiProcess.ClearData();
+        foreach (var source in new[] { "(120){4},,,,Cf/B1/B2/B3/B4/B5/B6/B7/B8,,,,,,,,,,,,,,", "(120){16}1,", "(120){8}1,\n", "(120){4}<COLOR*(FF0000,8:1)>1," })
+        {
+            var comma = source.LastIndexOf(',');
+            var before = SimaiProcess.Serialize(source, comma);
+            var after = SimaiProcess.Serialize(source, comma + 1);
+            var division = source.Contains("{16}") ? 16 : source.Contains("{8}") ? 8 : 4;
+            Assert(Math.Abs(after - before - 2d / division) < .000001,
+                "Caret after the final comma must advance one authored division: " + source);
+        }
+        var interior = "(120){4}1,2,";
+        Assert(Math.Abs(SimaiProcess.Serialize(interior, interior.IndexOf(',') + 1) - .5) < .000001,
+            "Interior comma must still address the following slot.");
+        var overlay = "(120){4}1,\n@{16}2,3,";
+        Assert(Math.Abs(SimaiProcess.Serialize(overlay, overlay.Length) - .75) < .000001,
+            "The final overlay comma must retain its independent timing.");
+        foreach (var source in new[] { "@{8}1,2,\n{4}3,", "@*{8}1,2,*@\n{4}3," })
+        {
+            var start = source.IndexOf('@');
+            var end = source.StartsWith("@*") ? source.IndexOf("*@") + 2 : source.IndexOf('\n');
+            Assert(NoteStreamMerger.TryGetMergeCaret(source, start, start, 0, out _), "Stream start must enable merge.");
+            Assert(NoteStreamMerger.TryGetMergeCaret(source, end, start, end - start, out _), "Selected stream must enable merge.");
+            Assert(!NoteStreamMerger.TryGetMergeCaret(source, source.Length, source.Length, 0, out _), "Main stream must disable merge.");
+            Assert(!NoteStreamMerger.TryGetMergeCaret(source, source.Length, start, source.Length - start, out _), "Selection crossing into main stream must disable merge.");
+        }
+        Assert(!NoteStreamMerger.IsInStream("@*{4}1,*@", 9), "Caret after block stream must disable merge.");
+        Assert(!NoteStreamMerger.IsInStream("  @{4}1,", 0), "Indentation outside stream must disable merge.");
+        Assert(!NoteStreamMerger.IsInStream("", 0), "Empty editor must disable merge.");
+        foreach (var source in new[] { "{16}1", "{16}1\n", "(120){16}1\nE", "@{16}1", "@*{16}1*@" })
+        {
+            SimaiProcess.Serialize(source);
+            Assert(SimaiProcess.notelist.Count == 0, "Unterminated note must not be read: " + source);
+            Assert(SimaiProcess.timinglist.Count == 0, "No synthetic main-stream slot: " + source);
+        }
+        foreach (var source in new[] { "{16}1", "{16}1\n", "{16}1，", "<COLOR*(FF0000,8:1)>1" })
+            Assert(NotePreviewModule.ExtractNoteGroupAtCaret(source, source.LastIndexOf('1')) == null,
+                "Standby preview must not read an unterminated slot: " + source);
+        foreach (var source in new[] { "{16}1,", "{16}1\n,", "@{16}1," })
+            Assert(NotePreviewModule.ExtractNoteGroupAtCaret(source, source.LastIndexOf('1')) == "1",
+                "Standby preview must retain a comma-terminated slot: " + source);
+        foreach (var source in new[] { "{16}1,", "{16}1,\n", "(120){16}1,\nE", "@{16}1,", "@*{16}1,*@" })
+        {
+            SimaiProcess.Serialize(source);
+            Assert(SimaiProcess.notelist.Count == 1 && SimaiProcess.notelist[0].getNotes().Count == 1,
+                "Comma-terminated note must be read: " + source);
+        }
+        SimaiProcess.Serialize("(120){16}1,2");
+        Assert(SimaiProcess.notelist.Count == 1 && SimaiProcess.timinglist.Count == 1,
+            "An unfinished last slot must not remove the preceding completed slot or advance time.");
+        SimaiProcess.Serialize("(120){16}<COLOR*(FF0000,8:1)>1");
+        Assert(SimaiProcess.notelist.Count == 0,
+            "A comma inside an Alpha command must not terminate a note slot.");
+        SimaiProcess.Serialize("(120){16}@{16}1,2\n3,");
+        Assert(SimaiProcess.notelist.Count == 2 && SimaiProcess.notelist.All(point => point.time == SimaiProcess.first),
+            "Only completed overlay slots are read; overlays must not advance the main stream.");
+        SimaiProcess.ClearData();
     }
 
     private static SimaiNote ParseRuntime(string source)
@@ -1911,6 +1972,51 @@ internal static class Program
 
     private static void CheckPerNoteSkin()
     {
+        foreach (var plain in new[] { "1", "1b", "1h[8:1]", "1bh[8:1]", "1$", "1b$", "C", "Ch[8:1]" })
+        {
+            Assert(NoteExpressionParser.TryParse(plain, out var expected, out _) &&
+                   NoteExpressionParser.TryParse(plain + "~[break-hold_star.jpg]", out var decorated, out _) &&
+                   decorated.kind == expected.kind && decorated.duration == expected.duration &&
+                   decorated.modifiers.Equals(expected.modifiers) && decorated.position.skin == "break-hold_star.jpg",
+                $"Removing a picture must leave the kind, duration and modifiers of '{plain}' unchanged.");
+        }
+        foreach (var expression in new[] { "1~[star.png]-5[4:1]~[slide.png]", "1~[star.png]-5b~[slide.png][4:1]" })
+        {
+            var decorated = ParseRuntime(expression);
+            Assert(decorated.noteSkin == "star.png" && decorated.slidePath[^1].end.skin == "slide.png",
+                "Star head and Slide trail pictures must be bound independently after parsing.");
+        }
+        var trailingHold = ParseRuntime("1h[8:1]~[1.jpg]");
+        Assert(trailingHold.noteSkin == "1.jpg" && trailingHold.noteType == SimaiNoteType.Hold,
+            "A picture after the Hold duration must replace the Hold skin without changing note kind.");
+        Assert(ParseError("1h[8:1]~[1.jpg]") == null, "Trailing Hold pictures must pass validation.");
+        foreach (var expression in new[]
+                 {
+                     "1~[a.png]h[4:1]", "C~[a.png]h[4:1]",
+                     "1~[a.png]$", "1~[a.png]-5[4:1]",
+                 })
+            Assert(ParseRuntime(expression).noteSkin == "a.png",
+                $"'{expression}' must retain its head skin through serialization.");
+        foreach (var expression in new[]
+                 {
+                     "1~[star.png]-5~[slide.png][4:1]",
+                     "1~[star.png]w5~[slide.png][4:1]",
+                     "A1~[touch.png]-E5~[slide.png][4:1]",
+                 })
+        {
+            var note = ParseRuntime(expression);
+            Assert(note.noteSkin != "slide.png" &&
+                   note.slidePath[note.slidePath.Count - 1].end.skin == "slide.png",
+                $"'{expression}' must keep head and trail images separate.");
+        }
+        var carrier = ParseRuntime("1~[5-7[8:1]]");
+        var delayedSkin = ParseRuntime("1~[star.png]-5~[slide.png][2##4:1]");
+        Assert(Math.Abs(delayedSkin.slideStartTime - 3d) < 0.0001d,
+            "Skin brackets must not override an explicit slide delay.");
+        Assert(ParseRuntime("1~[folder\\8d_fx.png]h[4:1]").noteContent.Contains("8d_fx.png"),
+            "Normalizing modifiers and D-zone suffixes must preserve image filenames.");
+        Assert(carrier.isTrajectoryOnly && carrier.isFakeHead && carrier.isFakeSlide,
+            "A borrowed Tap trajectory must remain a silent visual carrier.");
         // A skin rides the same "~[...]" suffix as a radius, so the first thing to
         // pin down is that neither reading ever claims the other's input.
         Assert(
@@ -2197,7 +2303,8 @@ internal static class Program
         // written, so the brackets that stand for "you may leave this out" were
         // still on screen for exactly those commands that had a second form.
         Assert(
-            source.Contains("Split(\" / \")", StringComparison.Ordinal),
+            source.Contains("Regex.Split(signature", StringComparison.Ordinal) &&
+            source.Contains("block.Inlines.Add(new LineBreak())", StringComparison.Ordinal),
             "Each accepted form in a hint has to be laid out on its own, or the " +
             "later ones keep whatever notation they were written with.");
         Assert(
@@ -2501,6 +2608,17 @@ internal static class Program
             exactCarriers[0].trajectoryCarrierType == SimaiNoteType.Tap,
             "The complete chart fragment around a borrowed Tap must retain exactly " +
             "one visible Tap carrier.");
+        foreach (var state in new[] { "<FAKE*False>", "<FAKE*slide=False>", "<FAKE*tap=True>",
+                     "<FAKE*True><FAKE*False>" })
+        {
+            SimaiProcess.ClearData();
+            SimaiProcess.Serialize("(120){4}" + state + "1~[1-5[8:1]],E");
+            Assert(SimaiProcess.fakeTable.Count > 0, "Regression chart must apply FAKE state.");
+            var visual = SimaiProcess.notelist.SelectMany(point => point.getNotes()).Single();
+            Assert(visual.isTrajectoryOnly && visual.isSlideNoHead &&
+                   visual.isFake && visual.isFakeHead && visual.isFakeSlide,
+                "FAKE state must not turn a borrowed trajectory into a counted/judged Slide: " + state);
+        }
         SimaiProcess.ClearData();
         Assert(
             NoteExpressionParser.TryParse("1$~[5-7[8:1]]", out var star, out _) &&
@@ -3606,6 +3724,12 @@ internal static class Program
     // rejects must not quietly reach the timeline.
     private static void CheckAlphaCommandGrammar()
     {
+        foreach (var command in new[] { "COLOR*blockarea=00BBFF", "COLORV*blockarea=FF0000", "SIZE*blockarea=(0.8,1.2)", "SIZEV*blockarea=0.5", "ALPHA*blockarea=0.4", "ALPHAV*blockarea=NULL" }) {
+            Assert(AlphaCommandGrammar.TryValidate(command,120,out _),"Noise typed grammar: "+command);
+            SimaiProcess.Serialize("(120){4}<"+command+">XD1[1:1],");
+            Assert(SimaiProcess.colorTable.Count+SimaiProcess.sizeTable.Count+SimaiProcess.alphaTable.Count==1,
+                "Noise typed command does not reach runtime tables: "+command);
+        }
         var random = new Random(20260819);
         var mismatches = new List<string>();
         var checkedTokens = 0;
@@ -3712,6 +3836,10 @@ internal static class Program
         {
             if (!described.TryGetValue(command.name, out var languages))
             {
+                // New filters keep all three translations in the shared catalog.
+                // Completion consumes these through Localized(filter.Chinese,...).
+                var dynamic = AlphaExtraFilters.Find(command.name);
+                if(dynamic!=null && !string.IsNullOrWhiteSpace(dynamic.Chinese) && !string.IsNullOrWhiteSpace(dynamic.English) && !string.IsNullOrWhiteSpace(dynamic.Japanese) && source.Contains("Localized(filter.Chinese, filter.English, filter.Japanese)")) continue;
                 missing.Add(command.name + " (no wording at all)");
                 continue;
             }
@@ -3935,8 +4063,7 @@ internal static class Program
             RepositoryRoot(), "MajdataEdit/MainWindowCore.cs"));
         Assert(
             editor.Contains("var viewHasPreviousChart =", StringComparison.Ordinal) &&
-            editor.Contains("if (viewHasPreviousChart)\n            sendRequestStop();",
-                StringComparison.Ordinal),
+            Regex.IsMatch(editor, @"if \(viewHasPreviousChart\)\r?\n            sendRequestStop\(\);"),
             "Changing folders must stop the previous View chart and clear its " +
             "paused seek state so the next request loads the new PV.");
         Assert(
@@ -4595,6 +4722,48 @@ internal static class Program
                 out var loadError),
             $"Muri measurements failed to load: {loadError}");
         var table = loaded!;
+        SimaiProcess.Serialize("(120){4}1/1,C1/C1,");
+        Assert(new MuriDetector(SimaiProcess.notelist, table, true).DetectStatic() == 2, "Static overlap must cover ring and touch notes.");
+        SimaiProcess.Serialize("(120){4}1,1,C1,C1,");
+        Assert(new MuriDetector(SimaiProcess.notelist, table, true).DetectStatic() == 0, "Separated taps and touches are not static muri.");
+        SimaiProcess.Serialize("(120){4}1/2/3m,");
+        Assert(new MuriDetector(SimaiProcess.notelist, table, true).DetectStatic() == 0,
+            "Mine heads do not occupy a hand in simultaneous-note checks.");
+        Assert(new MuriDetector(SimaiProcess.notelist, table).DetectStatic() == 0,
+            "The legacy static checker must not count a mine as a third hand either.");
+        SimaiProcess.Serialize("(120){4}1m-3[8:1],");
+        var mineHeadOps = new MuriDetector(SimaiProcess.notelist, table).BuildSlideOperations();
+        Assert(mineHeadOps != null && mineHeadOps.Any(op => op.ntype == 1) &&
+               mineHeadOps.All(op => op.ntype != 0),
+            "A mine slide head takes no hand, while its ordinary slide body still does.");
+        SimaiProcess.Serialize("(120){4}1^4m[8:1],");
+        var mineBodyOps = new MuriDetector(SimaiProcess.notelist, table).BuildSlideOperations();
+        Assert(mineBodyOps != null && mineBodyOps.Any(op => op.ntype == 0) &&
+               mineBodyOps.All(op => op.ntype != 1),
+            "A playable star head still counts when only the slide body is a mine.");
+        SimaiProcess.Serialize("(120){4}2/3/4,");
+        Assert(new MuriDetector(SimaiProcess.notelist, table, true).DetectStatic() > 0,
+            "Three simultaneous playable taps must remain a static impossibility.");
+        foreach (var source in new[] {
+            "(120){4}@{4}1/2,\n3,", "(120){4}@{4}1,\n@{4}2,\n3,",
+            "(120){4}@{4}1h[1:1],\n@{4}2h[1:1],\n3,", "(120){4}@{4}1,\n1,",
+            "(120){4}@{4}1-5[4:1],\n1,",
+            "(120){4}@{4}1-5[4:1],\n1-5[4:1]," })
+        {
+            SimaiProcess.Serialize(source);
+            Assert(new MuriDetector(SimaiProcess.notelist, table, true).DetectStatic() > 0,
+                "Static hand/overlap detection must combine overlay streams: " + source);
+        }
+        foreach (var source in new[] { "(120){4}@{4}1/2m,\n3,", "(120){4}@{4}<FAKE*1>1/2,\n3,", "(120){4}@{4}1,\n,1,", "(120){4}1-5[4:1]*-7[4:1]," })
+        {
+            SimaiProcess.Serialize(source);
+            Assert(new MuriDetector(SimaiProcess.notelist, table, true).DetectStatic() == 0,
+                "Stream-local fake/mine and separate-time notes must not occupy extra hands: " + source);
+        }
+
+        SimaiProcess.Serialize("(120){4}@{4}1/2,\n3,");
+        Assert(new MuriDetector(SimaiProcess.notelist, MuriSlideTimeTable.Empty, true).DetectStatic() > 0,
+            "Missing slide measurements must not suppress multi-hand checks across streams.");
 
         string?[] shapes =
         {
@@ -5058,6 +5227,19 @@ internal static class Program
     /// </summary>
     private static void CheckEditorDirectives()
     {
+        foreach (var marker in new[] { "@3/4", "  @3/4" })
+        for (var caret = marker.IndexOf('@'); caret <= marker.Length; caret++)
+            Assert(NotePreviewModule.ExtractNoteGroupAtCaret(marker, caret) == null,
+                "Meter directives must never preview as chords.");
+        SimaiProcess.ClearData();
+        SimaiProcess.Serialize("(120){4}\n@3/4\n<TEXT*(\"1234\")>\n1,");
+        Assert(SimaiProcess.subtitleTable.Count == 1 && SimaiProcess.notelist.Count == 1,
+            "A TEXT command after a meter must serialize without phantom notes.");
+        Assert(SimaiProcess.ValidateAlphaCommands("@3/4\n<TEXT*(\"1234\")>").Count == 0,
+            "Meter digits must not mark the following command as misplaced.");
+        SimaiProcess.Serialize("(120){4}\n@3/4");
+        Assert(SimaiProcess.meterTable.Count == 1 && SimaiProcess.notelist.Count == 0,
+            "A terminal meter must survive the final slot flush.");
         static EditorDirective Read(string text)
         {
             Assert(
@@ -5204,6 +5386,12 @@ internal static class Program
             "The merge must replace both source streams atomically.");
         Assert(merged == "{12}1/1,,,1,1,,1,,1,1,,,",
            $"Unexpected merged grid: {merged}");
+        const string inherited="(120){4}1,\n@{8}<SV*2>2,<TEXT*(\"{64},<>\")>4<8d[8:1],\n3,5,6,";
+        Assert(Editor.NoteStreamMerger.IsInStream(inherited,inherited.IndexOf("SV")),"A cursor in an Alpha directive must keep Merge enabled");
+        Assert(Editor.NoteStreamMerger.TryBuildMerge(inherited,inherited.IndexOf("SV"),out start,out length,out merged,out mergeError),$"Inherited main division merge: {mergeError}");
+        Assert(merged.StartsWith("{8}<SV*2>2/3,") && merged.Contains("<TEXT*(\"{64},<>\")>4<8d[8:1]") && merged.EndsWith("{4}"),"Merge must preserve Alpha, arcs, quoted divisions and main remainder grid: "+merged);
+        const string skipStream="@{4}1,\n@{8}2,2,\n{4}3,4,";
+        Assert(Editor.NoteStreamMerger.TryBuildMerge(skipStream,2,out start,out length,out merged,out mergeError) && merged.StartsWith("@{8}2,2,\n"),"Merge should find the main stream below other overlays without dropping them");
 
         const string stacked = "@{2}2,2,\n@{3}1,1,1,\n{6}3,3,3,3,3,3,";
         Assert(
@@ -5233,11 +5421,188 @@ internal static class Program
 
     public static void Main(string[] args)
     {
+        if (args.Contains("--comma-only"))
+        {
+            CheckCommaTerminatedSlots();
+            CheckOverlayBlocksAndMerge();
+            CheckMirror();
+            SlideGeometryRegression.Run();
+            Console.WriteLine($"COMMA MIRROR PASS: {assertions} assertions");
+            return;
+        }
+        var guide=AlphaGuideFormatter.Format("### SV — 真实滚动速度\nS <SV*倍率>\n- 改变音符滚动速度。\nE <SV*2>\n- 倍率为 0 时暂停。\n### KALEIDOSCOPE\nS <KALEIDOSCOPE*(True,角度)>\nE <KALEIDOSCOPE*(True,45)>\n- 六个镜像扇区。\n## 下一章\n保留内容");
+        Assert(Array.IndexOf(guide,"#### 写法")<Array.IndexOf(guide,"#### 示例") && Array.IndexOf(guide,"#### 示例")<Array.IndexOf(guide,"#### 参数与影响"),"Guide must show syntax and examples before detailed parameters");
+        Assert(guide.Any(l=>l.Contains("倍率为 0 时暂停")) && guide.Contains("保留内容"),"Guide formatting discarded authored notes or the following chapter");
+        Assert(guide.Any(l=>l.Contains("False 写法") && l.Contains("参数 2")),"Guide must distinguish the short False parameter positions");
+        Assert(AlphaGuideFormatter.Format("### BLOOM\nS <BLOOM*(True,strength)>\nE <BLOOM*(True,2)>\n- Glow.","en").Contains("#### Parameters and effects"),"Help section labels must follow the selected language");
+        DurationBrushRegression.Run();
+        if (args.Contains("--duration-only")) return;
+        if(args.Contains("--fixture"))
+        {
+            var path=args[Array.IndexOf(args,"--fixture")+1];
+            SimaiProcess.ClearData();
+            if(!SimaiProcess.ReadData(path)) throw new Exception("Cannot load fixture");
+            SimaiProcess.Serialize(SimaiProcess.fumens[4]);
+            foreach(var timing in SimaiProcess.notelist) timing.noteList=timing.getNotes();
+            var errors=SimaiProcess.notelist.Where(t=>!string.IsNullOrEmpty(t.noteParseError)).ToList();
+            foreach(var t in errors) Console.WriteLine($"{t.time:F3} {t.notesContent}: {t.noteParseError}");
+            var commandErrors=SimaiProcess.ValidateAlphaCommands(SimaiProcess.fumens[4]);
+            foreach(var error in commandErrors) Console.WriteLine(error);
+            if(errors.Count>0||commandErrors.Count>0) throw new Exception("Fixture has syntax errors");
+            var chart=new Majson { filePath=Path.GetDirectoryName(Path.GetFullPath(path))!, title=SimaiProcess.title!,
+                timingList=SimaiProcess.notelist,svTable=SimaiProcess.svTable,hsTable=SimaiProcess.hsTable,
+                spawnTable=SimaiProcess.spawnTable,spawnModeTable=SimaiProcess.spawnModeTable,bounceTable=SimaiProcess.bounceTable,
+                destroyTable=SimaiProcess.destroyTable,fakeTable=SimaiProcess.fakeTable,colorTable=SimaiProcess.colorTable,
+                sizeTable=SimaiProcess.sizeTable,alphaTable=SimaiProcess.alphaTable,displayTable=SimaiProcess.displayTable,
+                subtitleTable=SimaiProcess.subtitleTable,effectTable=SimaiProcess.effectTable,mediaTable=SimaiProcess.mediaTable };
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(path)!,"view.json"),System.Text.Json.JsonSerializer.Serialize(chart,new System.Text.Json.JsonSerializerOptions { IncludeFields=true }));
+            Console.WriteLine($"VIEW FIXTURE PASS: {SimaiProcess.notelist.Count} timings; end {SimaiProcess.timinglist.Max(t=>t.time):F2}s"); return;
+        }
+        if (args.Contains("--noise-only")) { NoiseZoneRegression.Run(); return; }
+        foreach (var values in new[] { "True,0.5,True", "True,0.5,0.3,True", "Instant,0.5,8:1,True", "2,0.5,True", "0.2,1,0.2,0.5,True" })
+        {
+            var token = "VIGNETTE*(" + values + ")";
+            Assert(AlphaCommandGrammar.TryValidate(token, 120, out _), "Gradient vignette rejected: " + token);
+            SimaiProcess.Serialize("(120){4}<" + token + ">1,E");
+            Assert(SimaiProcess.effectTable.Count == 1 && SimaiProcess.effectTable[0].gradient && SimaiProcess.effectTable[0].intensity == .5f,
+                "Edit did not serialize vignette gradient: " + token);
+        }
+        foreach (var values in new[] { "True,0.5", "True,0.5,0.3", "True,0.5,0.3,", "Instant,0.5,1", "2,0.5", "0.2,1,0.2,0.5" })
+        {
+            SimaiProcess.Serialize("(120){4}<VIGNETTE*(" + values + ")>1,E");
+            Assert(SimaiProcess.effectTable.Count == 1 && SimaiProcess.effectTable[0].gradient, "Omitted gradient must default to True: " + values);
+        }
+        SimaiProcess.Serialize("(120){4}<VIGNETTE*(True,0.5,0.3,False)>1,E");
+        Assert(!SimaiProcess.effectTable[0].gradient, "Explicit hard vignette ignored");
+        foreach (var filter in AlphaExtraFilters.All)
+        {
+            foreach (var arguments in new[] { "True,0.5", "True,0.5,8:1", "Instant,0.5,8:1", "1,0.5", "0.1,1,0.1,0.5" })
+            {
+                var token = filter.Name + "*(" + arguments + ")";
+                Assert(AlphaCommandGrammar.TryValidate(token, 120, out _), "Filter grammar rejected: " + token);
+                SimaiProcess.Serialize("(120){4}<" + token + ">1,E");
+                Assert(SimaiProcess.effectTable.Count == 1 && SimaiProcess.effectTable[0].effect == filter.Canonical && SimaiProcess.effectTable[0].intensity == .5f,
+                    "Filter serialization lost: " + token);
+            }
+            SimaiProcess.Serialize("(120){4}<" + filter.Name + "*(False,8:1)>1,E");
+            Assert(SimaiProcess.effectTable.Count == 1 && !SimaiProcess.effectTable[0].enabled && Math.Abs(SimaiProcess.effectTable[0].transition - .25) < .0001,
+                "Filter off/beat transition lost: " + filter.Name);
+        }
+        Assert(AlphaCommandGrammar.TryValidate("LENSDISTORT*(True,-0.5)", 120, out _), "Negative lens strength must be accepted");
+        foreach(var degrees in new[]{"0","45","-90","360"}) {
+            var command="KALEIDOSCOPE*(True,"+degrees+",1)";
+            Assert(AlphaCommandGrammar.TryValidate(command,120,out _),"Kaleidoscope degrees rejected: "+command);
+            SimaiProcess.Serialize("(120){4}<"+command+">1,E");
+            Assert(SimaiProcess.effectTable.Count==1 && SimaiProcess.effectTable[0].intensity==float.Parse(degrees),"Kaleidoscope degrees lost");
+        }
+        foreach (var token in new[] { "SHATTER*(True,NaN)", "RIPPLE*(True,2)", "LENSDISTORT*(True,-2)", "BLOOM*(True,5)" })
+            Assert(!AlphaCommandGrammar.TryValidate(token, 120, out _), "Bad filter strength accepted: " + token);
+        foreach (var angle in new[] { 0, 90 })
+        {
+            var token = $"SHAKE*(Instant,1,10,{angle},0.2)";
+            Assert(AlphaCommandGrammar.TryValidate(token, 120, out _), "Shake direction grammar: " + token);
+            SimaiProcess.Serialize("(120){4}<" + token + ">1,");
+            Assert(SimaiProcess.effectTable.Count == 1, "Shake direction lost while serializing");
+            var effect = SimaiProcess.effectTable[0];
+            Assert(effect.hasDirection && Math.Abs(effect.paramB - angle * Math.PI / 180) < .0001,
+                "Shake direction changed: " + token);
+            Assert(Math.Abs(effect.duration - .2) < .0001 && effect.paramA == 10, "Shake frequency/duration changed");
+            var folder = Path.GetFullPath(".codex-build/shake-fixtures"); Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, $"instant-{angle}.json"), JsonSerializer.Serialize(
+                new Majson { effectTable = SimaiProcess.effectTable }, new JsonSerializerOptions { IncludeFields = true }));
+        }
+        if (args.Contains("--filters-only")) { Console.WriteLine($"PASS: {assertions} new filters and default vignette assertions"); return; }
+        if (args.Contains("--vignette-only")) { Console.WriteLine($"PASS: {assertions} Edit vignette grammar/serialization assertions"); return; }
+        Assert(EditorErrorCount("{1}1-5，,") > 0, "Invalid content in a comma-terminated slot must be diagnosed.");
+        foreach (var text in new[] { "{1}1-5,", "{1}1-5,\n" })
+            Assert(EditorErrorCount(text) > 0, "Missing duration: " + text);
+        foreach (var direction in new[] { "1", "-1", "CW", "CCW" })
+        {
+            var command = "JUDGELINEEXPAND*(8:1," + direction + ")";
+            Assert(AlphaCommandGrammar.TryValidate(command, 120, out _), "Expand grammar: " + command);
+            SimaiProcess.Serialize("(120){4}<" + command + ">1,E");
+            Assert(SimaiProcess.displayTable.Any(ev => ev.property == "JudgeLineExpand" &&
+                Math.Abs(ev.duration - 0.25f) < 0.001f &&
+                ev.target == (direction is "1" or "CW" ? -22.5f : 22.5f)), "Expand duration/direction: " + command);
+        }
+        foreach (var argsText in new[] { "1", "1,0", "1,2", "-1,CW", "NaN,CW", "1,CW,1" })
+            Assert(!AlphaCommandGrammar.TryValidate("JUDGELINEEXPAND*(" + argsText + ")", 120, out _), "Invalid expand: " + argsText);
+        foreach (var direction in new[] { "1", "-1", "CW", "CCW" })
+        {
+            var command = "JUDGELINEEXPAND*(True,8:1," + direction + ")";
+            Assert(AlphaCommandGrammar.TryValidate(command, 120, out _), "Expand on grammar: " + command);
+            SimaiProcess.Serialize("(120){4}<" + command + ">1,<JUDGELINEEXPAND*(fAlSe)>2,<JUDGELINEEXPAND*(True)>3,E");
+            var entries = SimaiProcess.displayTable.Where(ev => ev.property == "JudgeLineExpand").ToArray();
+            Assert(entries.Length == 3 && entries[0].duration == .25f &&
+                entries[0].target == (direction is "1" or "CW" ? -22.5f : 22.5f), "Expand on duration/direction lost");
+            Assert(entries[1].target == 0 && entries[1].duration == 0 && entries[1].time == .5,
+                "Expand off must remain a timed event for seeking");
+            Assert(entries[2].target == -22.5f && entries[2].duration == 0, "Re-enable/default arguments lost");
+            Assert(SimaiProcess.displayTable.All(ev => ev.property == "JudgeLineExpand"), "Expand off changed the original line");
+        }
+        foreach (var arguments in new[] { "True", "true,0.5", "False", "false" })
+            Assert(AlphaCommandGrammar.TryValidate("JUDGELINEEXPAND*(" + arguments + ")", 120, out _), "Expand switch: " + arguments);
+        foreach (var arguments in new[] { "False,1", "True,-1,CW", "True,NaN,1", "True,1,2", "True,,1", "True,1,CW,1" })
+            Assert(!AlphaCommandGrammar.TryValidate("JUDGELINEEXPAND*(" + arguments + ")", 120, out _), "Invalid expand switch: " + arguments);
+        Assert(AlphaCommandGrammar.TryFind("JUDGELINEEXPAND", out var expandDescriptor) &&
+            expandDescriptor.MaximumArgumentCount(false) == 1 && expandDescriptor.MaximumArgumentCount(true) == 3 &&
+            expandDescriptor.DefaultArgument(1, false) == "False" && expandDescriptor.DefaultArgument(1, true) == "True",
+            "Expand completion does not offer the state forms");
+        foreach (var name in new[] { "INNERBRIGHTNESS", "OUTERBRIGHTNESS", "COMBODISPLAY", "SHOWJUDGETEXT", "SHOWJUDGEINFO", "SHOWCOMBOINFO", "JUDGELINE" })
+        {
+            foreach (var arguments in new[] { "Default", "default,8:1", "DeFaUlT,0.5" })
+            {
+                var token = name + "*(" + arguments + ")";
+                Assert(AlphaCommandGrammar.TryValidate(token, 120, out _), "Default grammar rejected: " + token);
+                SimaiProcess.Serialize("(120){4}1,<" + token + ">2,E");
+                Assert(SimaiProcess.displayTable.Count == 1 && SimaiProcess.displayTable[0].resetToDefault &&
+                    SimaiProcess.displayTable[0].time == .5, "Default must preserve a reset event instead of a fixed value: " + token);
+                var expected = arguments == "Default" ? 0 : arguments.Contains("8:1") ? .25f : .5f;
+                Assert(SimaiProcess.displayTable[0].duration == expected, "Default transition lost: " + token);
+                var defaultDisplayJson = System.Text.Json.JsonSerializer.Serialize(SimaiProcess.displayTable,
+                    new System.Text.Json.JsonSerializerOptions { IncludeFields = true });
+                Assert(defaultDisplayJson.Contains("\"resetToDefault\":true"), "Default reset flag missing from View JSON");
+            }
+            foreach (var arguments in new[] { "Default,", "Default,NaN", "Default,1,2" })
+                Assert(!AlphaCommandGrammar.TryValidate(name + "*(" + arguments + ")", 120, out _), "Invalid default: " + name + arguments);
+        }
+        foreach (var name in new[] { "SV", "COLOR", "JUDGELINEEXPAND", "FAKE" })
+            Assert(!AlphaCommandGrammar.TryValidate(name + "*(Default)", 120, out _), "Default accepted by an unrelated command: " + name);
+        foreach (var value in new[] { "0", "1", "2", "3", "4", "False", "65535" })
+        {
+            var expected = value == "False" ? 0 : int.Parse(value);
+            foreach (var token in new[] { "JUDGELINE*" + value, "JUDGELINE*(" + value + ",8:1)" })
+            {
+                Assert(AlphaCommandGrammar.TryValidate(token, 120, out _), "Judge style grammar: " + token);
+                SimaiProcess.Serialize("(120){4}<" + token + ">1,E");
+                Assert(SimaiProcess.displayTable.Any(ev => ev.property == "JudgeLineStyle" && ev.target == expected),
+                    "Judge style must preserve its ID: " + token);
+            }
+        }
+        foreach (var value in new[] { "-1", "1.5", "True", "NaN", "65536" })
+            Assert(!AlphaCommandGrammar.TryValidate("JUDGELINE*(" + value + ")", 120, out _), "Invalid style: " + value);
+        Assert(!AlphaCommandGrammar.TryFind("SHOWJUDGEAREA", out _), "Removed area command must not be suggested");
+        SimaiProcess.ClearData();
+        SimaiProcess.title = "联机 TXT 往返";
+        SimaiProcess.artist = "Artist";
+        SimaiProcess.first = 1.25f;
+        SimaiProcess.other_commands = "&custom_field=keep";
+        for (int i = 0; i < 7; i++)
+        {
+            SimaiProcess.levels[i] = (i + 8).ToString();
+            SimaiProcess.fumens[i] = $"(190){{4}}{i + 1},E";
+        }
+        var sharedText = SimaiProcess.ExportText();
+        SimaiProcess.ClearData();
+        Assert(SimaiProcess.ReadText(sharedText), "Shared TXT must load from memory.");
+        Assert(SimaiProcess.ExportText() == sharedText, "Shared TXT must preserve metadata, unknown fields and all seven difficulties without accumulating formatting changes.");
+        SimaiProcess.ClearData();
         SlideGeometryRegression.Run();
         if (args.Contains("--mirror-only"))
         {
             CheckMirror();
-            Console.WriteLine($"PASS: {assertions} mirror assertions");
+            CheckCommaTerminatedSlots();
+            Console.WriteLine($"COMMA MIRROR PASS: {assertions} assertions");
             return;
         }
 
@@ -5323,6 +5688,14 @@ internal static class Program
         }
         ParserMessageLocale.PreferChinese = callerPrefersChinese;
 
+        foreach (var chart in new[] { "1,r,2", "1,2,r,", "1，1,1,1," })
+        {
+            SimaiProcess.Serialize(chart);
+            foreach (var slot in SimaiProcess.notelist) slot.getNotes();
+            Assert(SimaiProcess.notelist.Any(slot => !string.IsNullOrWhiteSpace(slot.noteParseError)), "Unknown/fullwidth/trailing slot must report: " + chart);
+        }
+        SimaiProcess.Serialize("(120){4}1,2");
+        Assert(SimaiProcess.notelist.Count == 1, "A final note without comma must not be read.");
         CheckNoteExpression();
         CheckTouchRadius();
         CheckSlideShapeResolver();
@@ -5618,6 +5991,13 @@ internal static class Program
             "Malformed typed DESTROY partially applied.");
         Assert(SimaiProcess.fakeTable.Count == 0,
             "Malformed typed FAKE partially applied.");
+
+        SimaiProcess.ClearData();
+        SimaiProcess.Serialize("(120){4}<SPAWN*tap=-40,hold=60><DESTROY*tap=80,hold=-90>1,E");
+        Assert(SimaiProcess.spawnTable.Any(c => c.radius == -40) &&
+               SimaiProcess.spawnTable.Any(c => c.radius == 60), "SPAWN still clamps outer radii.");
+        Assert(SimaiProcess.destroyTable.Any(c => c.radius == 80) &&
+               SimaiProcess.destroyTable.Any(c => c.radius == -90), "DESTROY still clamps outer radii.");
 
         SimaiProcess.ClearData();
         SimaiProcess.Serialize(
@@ -5963,17 +6343,17 @@ internal static class Program
                 "if (deferPlaybackStart)",
                 StringComparison.Ordinal),
             "Runtime does not defer and schedule playback activation.");
+        var continueBranch = runtimeControl.Substring(
+            runtimeControl.IndexOf("case EditorControlMethod.Continue:", StringComparison.Ordinal));
+        continueBranch = continueBranch.Substring(0,
+            continueBranch.IndexOf("case EditorControlMethod.TimelinePreview:", StringComparison.Ordinal));
         Assert(
-            runtimeControl.Contains(
-                "playbackStartDeferred = data.deferPlaybackStart;",
-                StringComparison.Ordinal) &&
-            runtimeControl.Contains(
-                "var startsDeferredChart = playbackStartDeferred;",
-                StringComparison.Ordinal) &&
-            runtimeControl.Contains(
-                "if (!resumedTimelinePreview && !startsDeferredChart)",
-                StringComparison.Ordinal),
-            "The deferred first playback can resume before restoring autoplay mode.");
+            continueBranch.Contains("CompleteAsyncStartWhenPlayable(", StringComparison.Ordinal) &&
+            continueBranch.Contains("var activationMode =", StringComparison.Ordinal) &&
+            continueBranch.IndexOf("InputManager.Mode = AutoPlayMode.Disable;", StringComparison.Ordinal) >= 0 &&
+            continueBranch.IndexOf("InputManager.Mode = AutoPlayMode.Disable;", StringComparison.Ordinal) <
+            continueBranch.IndexOf("StartCoroutine(CompleteContinueAt(", StringComparison.Ordinal),
+            "Preview resume must prepare restored notes and defer autoplay until the shared clock starts.");
         Assert(
             audioClock.Contains(
                 "Time.realtimeSinceStartup >= startTime",
@@ -6078,7 +6458,7 @@ internal static class Program
                 "Continue from a timeline preview requires jsonPath.",
                 StringComparison.Ordinal) &&
             editorControl.Contains(
-                "resumeFromTimelinePreview: resumePreview",
+                "resumeFromTimelinePreview: true",
                 StringComparison.Ordinal),
             "Resuming a paused preview still needs a full chart reload.");
         Assert(
@@ -6293,11 +6673,13 @@ internal static class Program
             trajectoryCarrier.Contains("CreateGuideLine(", StringComparison.Ordinal) &&
             trajectoryCarrier.Contains("UpdateGuideLine();", StringComparison.Ordinal),
             "A borrowed Tap must retain its radial guide while travelling.");
-        var simaiProcess = File.ReadAllText("MajdataEdit/SimaiProcess.cs");
-        Assert(
-            simaiProcess.Contains("Xcount - noteTemp.Length", StringComparison.Ordinal) &&
-            simaiProcess.Contains("commaIndex - rawContent.Length", StringComparison.Ordinal),
-            "Basic parse diagnostics must store the note start rather than the next comma.");
+        foreach (var ending in new[] { ",", "\n,", ",\n" })
+        {
+            SimaiProcess.Serialize("{1}1-5" + ending);
+            var broken = SimaiProcess.notelist.First(point => !string.IsNullOrEmpty(point.noteParseError));
+            Assert(broken.rawTextPositionX == 3 && broken.rawTextPositionY == 0,
+                "Missing-duration diagnostic must remain on the note start across a newline or comma.");
+        }
         Assert(
             songDetail.Contains(
                 "designerText.font = regularFont;",
@@ -6308,7 +6690,7 @@ internal static class Program
                 "sendRequestTimelineSeek",
                 StringComparison.Ordinal) &&
             editorControl.Contains(
-                "bool resumeFromTimelinePreview = false)",
+                "bool resumeFromTimelinePreview = false",
                 StringComparison.Ordinal),
             "Editor cannot tell Continue that it resumes a paused preview.");
         Assert(

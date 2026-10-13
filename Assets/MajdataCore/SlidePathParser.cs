@@ -12,6 +12,7 @@ namespace MajdataCore
         public int position;
         public bool isDZone;
         public string source = string.Empty;
+        [NonSerialized] public int sourceOffset = -1;
         // 0 keeps the area's authored distance; a positive value places the Note at
         // that distance along the same direction, in the radius unit shared with
         // SPAWN/DESTROY (see AlphaVisualTiming: 4.8 is the judgement ring).
@@ -127,6 +128,14 @@ namespace MajdataCore
             bool isDZone,
             bool includeDZone)
         {
+            if (parsed != null && parsed.HasSkin)
+            {
+                result.Append(parsed.area == 'C' ? "C" : parsed.area == 'K'
+                    ? parsed.position.ToString() + (includeDZone && parsed.isDZone ? "d" : "")
+                    : parsed.area.ToString() + parsed.position);
+                result.Append("~[").Append(parsed.skin.Replace('/', '\\')).Append(']');
+                return;
+            }
             if (parsed != null && parsed.position != 0)
             {
                 if (parsed.area == 'C')
@@ -178,6 +187,7 @@ namespace MajdataCore
                 return false;
 
             var start = offset;
+            position.sourceOffset = start;
             if (text[offset] is >= '1' and <= '8')
             {
                 position.area = 'K';
@@ -209,6 +219,16 @@ namespace MajdataCore
 
             nextOffset = offset;
             position.source = text.Substring(start, offset - start);
+            // Images belong to a position in both notes and slide paths. Leave
+            // numeric radius overrides to the note-kind validator.
+            var skinPosition = new SlidePositionData { source = position.source };
+            if (TryReadRadiusOverride(text, offset, skinPosition, out var afterSkin) ==
+                RadiusOverrideResult.Applied && skinPosition.HasSkin)
+            {
+                position.skin = skinPosition.skin;
+                position.source = skinPosition.source;
+                nextOffset = afterSkin;
+            }
             return true;
         }
 
@@ -258,6 +278,8 @@ namespace MajdataCore
                 }
             }
             if (!recognised)
+                return false;
+            if (cleaned.LastIndexOf('.') <= cleaned.LastIndexOf('/') + 1)
                 return false;
 
             foreach (var part in cleaned.Split('/'))
@@ -567,11 +589,20 @@ namespace MajdataCore
         {
             if (SlideCodeParser.LooksLikeSlideCode(expression))
                 return true;
-            var durationStart = expression.IndexOf('[');
-            var end = durationStart < 0 ? expression.Length : durationStart;
-            for (var index = 0; index < end; index++)
+            for (var index = 0; index < expression.Length; index++)
+            {
+                if (expression[index] == '~' && index + 1 < expression.Length &&
+                    expression[index + 1] == '[')
+                {
+                    var close = expression.IndexOf(']', index + 2);
+                    if (close < 0) return false;
+                    index = close;
+                    continue;
+                }
+                if (expression[index] == '[') break;
                 if ("-<>^vVPQpqrszw".IndexOf(expression[index]) >= 0)
                     return true;
+            }
             return false;
         }
 
@@ -581,13 +612,16 @@ namespace MajdataCore
                 expression.IndexOf('d') < 0)
                 return expression;
             var result = new StringBuilder(expression.Length);
+            var depth = 0;
             for (var index = 0; index < expression.Length; index++)
             {
-                if (expression[index] == 'd' &&
+                if (expression[index] == '[') depth++;
+                if (depth == 0 && expression[index] == 'd' &&
                     index > 0 &&
                     expression[index - 1] is >= '1' and <= '8')
                     continue;
                 result.Append(expression[index]);
+                if (expression[index] == ']' && depth > 0) depth--;
             }
             return result.ToString();
         }

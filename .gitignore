@@ -7,7 +7,6 @@ UserSettings/
 .vs/
 .vscode/
 .DS_Store
-._*
 
 # Unity generated project files
 *.csproj
@@ -22,9 +21,15 @@ UserSettings/
 # swallowed too, so the workflow that builds it was pointing at a file the repo
 # did not contain.
 !Tests/SlideAstRegression/SlideAstRegression.csproj
+!Tests/**/*.csproj
+!Tests/SessionRegression/SessionRegression.csproj
+!Tests/CollaborationRegression/CollaborationRegression.csproj
+!Tests/MultiControlRegression/MultiControlRegression.csproj
+!Tests/SkinRegression/SkinRegression.csproj
 !MajdataEdit/MajdataEdit.csproj
 !MajdataEdit/MajdataEdit.sln
 !MajdataLauncher/MajdataLauncher.csproj
+._*
 *.tmp
 *.user
 *.userprefs
@@ -45,6 +50,7 @@ dist/
 
 # Local test / cache folders
 .codex-temp/
+.codex-build/
 .codex-tmp/
 .autosave/
 .upstream/

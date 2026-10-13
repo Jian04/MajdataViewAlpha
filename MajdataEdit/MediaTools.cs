@@ -8,6 +8,8 @@ namespace MajdataEdit;
 
 internal static class MediaTools
 {
+    internal static Task ExtractMp3Async(string input, string output) => RunFfmpegAsync(FindFfmpeg(),
+        $"-nostdin -y -i {Q(input)} -map 0:a:0 -vn -ar 44100 -ac 2 -c:a libmp3lame -q:a 2 {Q(output)}");
     public static string? FindCachedTimelineAudio(string chartDirectory)
     {
         var project = MediaTimelineProject.LoadWorking(chartDirectory);
@@ -43,9 +45,14 @@ internal static class MediaTools
         {
             var clip = clips[index];
             var delay = Math.Max(0L, (long)Math.Round(clip.TimelineStart * 1000d));
+            var effects = $"volume={Fmt(clip.Volume)},";
+            if (clip.FadeIn > 0.0001d)
+                effects += $"afade=t=in:st=0:d={Fmt(clip.FadeIn)},";
+            if (clip.FadeOut > 0.0001d)
+                effects += $"afade=t=out:st={Fmt(Math.Max(0d, clip.Duration - clip.FadeOut))}:d={Fmt(clip.FadeOut)},";
             filters.Add(
                 $"[{index}:a:0]atrim=start={Fmt(clip.SourceOffset)}:duration={Fmt(clip.Duration)}," +
-                $"asetpts=PTS-STARTPTS,aresample=44100," +
+                $"asetpts=PTS-STARTPTS,{effects}aresample=44100," +
                 $"aformat=sample_fmts=s16:channel_layouts=stereo,adelay={delay}:all=1[a{index}]");
         }
         var labels = string.Concat(Enumerable.Range(0, clips.Count).Select(index => $"[a{index}]"));
@@ -119,7 +126,7 @@ internal static class MediaTools
             .Select(clip => new ResolvedVideoClip(
                 project.ResolveSourcePath(chartDirectory, clip), clip))
             .Where(item => File.Exists(item.Path))
-            // Video track 1 is the upper lane and must be composited over track 2.
+            // FFmpeg overlays later inputs on top: composite lower track 2 first.
             .OrderByDescending(item => item.Clip.TrackIndex)
             .ThenBy(item => item.Clip.TimelineStart)
             .ToList();
@@ -201,11 +208,14 @@ internal static class MediaTools
         {
             var item = videoClips[index];
             var sourceOffset = item.Clip.IsStillImage ? 0d : item.Clip.SourceOffset;
+            var light = Math.Abs(item.Clip.Brightness) > 0.0001d
+                ? $"eq=brightness={Fmt(item.Clip.Brightness)}," : "";
             filters.Add(
                 $"[{index}:v:0]trim=start={Fmt(sourceOffset)}:duration={Fmt(item.Clip.Duration)}," +
                 $"setpts=PTS-STARTPTS+{Fmt(item.Clip.TimelineStart)}/TB," +
-                $"format=rgba,scale={width}:{height}:force_original_aspect_ratio=decrease," +
-                $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0[v{index}]");
+                $"{light}format=rgba,scale={width}:{height}:force_original_aspect_ratio=decrease," +
+                $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black@0," +
+                $"colorchannelmixer=aa={Fmt(item.Clip.Opacity)}[v{index}]");
         }
 
         var previous = "base";
@@ -214,7 +224,7 @@ internal static class MediaTools
             var clip = videoClips[index].Clip;
             var output = $"mix{index}";
             filters.Add(
-                $"[{previous}][v{index}]overlay=0:0:eof_action=pass:shortest=0:" +
+                $"[{previous}][v{index}]overlay=0:0:eof_action=pass:repeatlast=0:shortest=0:" +
                 $"enable='between(t,{Fmt(clip.TimelineStart)},{Fmt(clip.TimelineEnd)})'[{output}]");
             previous = output;
         }
@@ -349,10 +359,11 @@ internal static class MediaTools
         }
     }
 
-    private static string FindFfmpeg()
+    internal static string FindFfmpeg()
     {
         var candidates = new List<string>();
         candidates.Add(AppContext.BaseDirectory);
+        candidates.Add(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "MajdataView", "MajdataView_Data", "StreamingAssets")));
         candidates.Add(Environment.CurrentDirectory);
         candidates.AddRange((Environment.GetEnvironmentVariable("PATH") ?? "")
             .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
@@ -582,7 +593,10 @@ internal static class MediaTools
                 clip.TimelineStart,
                 clip.SourceOffset,
                 clip.Duration,
-                clip.SourceDuration))
+                clip.SourceDuration,
+                clip.Volume,
+                clip.FadeIn,
+                clip.FadeOut))
             .Where(clip => File.Exists(clip.SourcePath))
             .OrderBy(clip => clip.TrackIndex)
             .ThenBy(clip => clip.TimelineStart)
@@ -598,7 +612,8 @@ internal static class MediaTools
             return false;
         var clip = clips[0];
         if (clip.TrackIndex != 0 || clip.TimelineStart > 0.0001d ||
-            clip.SourceOffset > 0.0001d || clip.Duration + 0.02d < clip.SourceDuration)
+            clip.SourceOffset > 0.0001d || clip.Duration + 0.02d < clip.SourceDuration ||
+            Math.Abs(clip.Volume - 1d) > 0.0001d || clip.FadeIn > 0.0001d || clip.FadeOut > 0.0001d)
             return false;
         var fileName = Path.GetFileName(clip.SourcePath);
         if (!fileName.Equals("track.mp3", StringComparison.OrdinalIgnoreCase) &&
@@ -621,7 +636,10 @@ internal static class MediaTools
                 .Append(clip.TrackIndex).Append('|')
                 .Append(clip.TimelineStart.ToString("R", CultureInfo.InvariantCulture)).Append('|')
                 .Append(clip.SourceOffset.ToString("R", CultureInfo.InvariantCulture)).Append('|')
-                .Append(clip.Duration.ToString("R", CultureInfo.InvariantCulture)).Append(';');
+                .Append(clip.Duration.ToString("R", CultureInfo.InvariantCulture)).Append('|')
+                .Append(clip.Volume.ToString("R", CultureInfo.InvariantCulture)).Append('|')
+                .Append(clip.FadeIn.ToString("R", CultureInfo.InvariantCulture)).Append('|')
+                .Append(clip.FadeOut.ToString("R", CultureInfo.InvariantCulture)).Append(';');
         }
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signature.ToString())))
             .Substring(0, 16).ToLowerInvariant();
@@ -634,7 +652,10 @@ internal static class MediaTools
         double TimelineStart,
         double SourceOffset,
         double Duration,
-        double SourceDuration);
+        double SourceDuration,
+        double Volume,
+        double FadeIn,
+        double FadeOut);
 
     private sealed record ResolvedVideoClip(string Path, MediaTimelineClip Clip);
 }

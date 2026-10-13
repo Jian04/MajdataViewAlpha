@@ -17,6 +17,21 @@ internal sealed record MediaPlayheadRequest(double Time);
 
 public partial class MediaTimelineEditor : UserControl
 {
+    private void ToolbarButtonsScroll_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        var available = ToolbarButtonsScroll.ScrollableWidth;
+        ToolbarScrollBar.Visibility = available > 1d ? Visibility.Visible : Visibility.Collapsed;
+        ToolbarScrollBar.Minimum = 0d;
+        ToolbarScrollBar.Maximum = available;
+        ToolbarScrollBar.ViewportSize = ToolbarButtonsScroll.ViewportWidth;
+        ToolbarScrollBar.SmallChange = 30d;
+        ToolbarScrollBar.LargeChange = Math.Max(60d, ToolbarButtonsScroll.ViewportWidth * 0.7d);
+        ToolbarScrollBar.Value = ToolbarButtonsScroll.HorizontalOffset;
+    }
+
+    private void ToolbarScrollBar_Scroll(object sender, System.Windows.Controls.Primitives.ScrollEventArgs e) =>
+        ToolbarButtonsScroll.ScrollToHorizontalOffset(e.NewValue);
+
     private enum ClipDragMode
     {
         None,
@@ -79,6 +94,25 @@ public partial class MediaTimelineEditor : UserControl
 
     public event EventHandler? CloseRequested;
     public event EventHandler? ProjectChanged;
+    internal event EventHandler? SelectedClipChanged;
+    internal MediaTimelineClip? SelectedClip => selectedClip?.Copy();
+    internal void UpdateSelectedClip(double duration, double volume, double fadeIn, double fadeOut,
+        double brightness, double opacity)
+    {
+        if (selectedClip == null) return;
+        var snapshot = CaptureSnapshot();
+        selectedClip.Duration = Math.Clamp(duration, MinimumClipDuration,
+            selectedClip.IsStillImage ? 36000d :
+            Math.Max(MinimumClipDuration, selectedClip.SourceDuration - selectedClip.SourceOffset));
+        selectedClip.Volume = Math.Clamp(volume, 0d, 4d);
+        selectedClip.FadeIn = Math.Clamp(fadeIn, 0d, selectedClip.Duration);
+        selectedClip.FadeOut = Math.Clamp(fadeOut, 0d, selectedClip.Duration);
+        selectedClip.Brightness = Math.Clamp(brightness, -1d, 1d);
+        selectedClip.Opacity = Math.Clamp(opacity, 0d, 1d);
+        CommitEdit(snapshot);
+        SaveProject("已更新片段参数");
+        RenderTimeline();
+    }
     internal event EventHandler<MediaMarkerRequest>? MarkerRequested;
     internal event EventHandler<MediaPlayheadRequest>? PlayheadChanged;
     internal bool HasPendingChanges => hasPendingChanges;
@@ -105,6 +139,7 @@ public partial class MediaTimelineEditor : UserControl
         if (!sameChart)
             playhead = 0d;
         selectedClip = null;
+        SelectedClipChanged?.Invoke(this, EventArgs.Empty);
         if (sameChart)
         {
             RenderTimeline();
@@ -649,6 +684,19 @@ public partial class MediaTimelineEditor : UserControl
             Cursor = Cursors.SizeWE,
             ToolTip = missing ? $"文件不存在：{sourcePath}" : sourcePath
         };
+        if (clip.Track == MediaTrackKind.Audio && (clip.FadeIn > 0d || clip.FadeOut > 0d))
+        {
+            // The fade envelope is visible directly on the clip, including after
+            // reopening the timeline. Keep a faint edge so trim handles remain usable.
+            var fadeInPart = Math.Min(.49d, clip.FadeIn / Math.Max(.05d, clip.Duration));
+            var fadeOutPart = Math.Min(.49d, clip.FadeOut / Math.Max(.05d, clip.Duration));
+            var mask = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(clip.FadeIn > 0d ? 45 : 255), 255, 255, 255), 0));
+            mask.GradientStops.Add(new GradientStop(Colors.White, fadeInPart));
+            mask.GradientStops.Add(new GradientStop(Colors.White, 1d - fadeOutPart));
+            mask.GradientStops.Add(new GradientStop(Color.FromArgb((byte)(clip.FadeOut > 0d ? 45 : 255), 255, 255, 255), 1));
+            border.OpacityMask = mask;
+        }
         var clipGrid = new Grid();
         clipGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(TrimHandleWidth) });
         clipGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1d, GridUnitType.Star) });
@@ -683,6 +731,7 @@ public partial class MediaTimelineEditor : UserControl
         border.PreviewMouseRightButtonDown += (_, _) =>
         {
             selectedClip = clip;
+            SelectedClipChanged?.Invoke(this, EventArgs.Empty);
             border.BorderBrush = new SolidColorBrush(Color.FromRgb(250, 204, 21));
             border.BorderThickness = new Thickness(2.2d);
         };
@@ -823,6 +872,7 @@ public partial class MediaTimelineEditor : UserControl
         if (sender is not Border { Tag: MediaTimelineClip clip } border)
             return;
         selectedClip = clip;
+        SelectedClipChanged?.Invoke(this, EventArgs.Empty);
         Focus();
         Keyboard.Focus(this);
         var position = e.GetPosition(TimelineCanvas);
@@ -1157,6 +1207,7 @@ public partial class MediaTimelineEditor : UserControl
             project.SaveTemporary(chartDirectory);
             hasPendingChanges = true;
             ProjectChanged?.Invoke(this, EventArgs.Empty);
+            SelectedClipChanged?.Invoke(this, EventArgs.Empty);
             if (!string.IsNullOrWhiteSpace(status))
                 SetStatus(status);
         }
@@ -1168,32 +1219,34 @@ public partial class MediaTimelineEditor : UserControl
 
     private void Timeline_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key is Key.Delete or Key.Back)
+        var keys = (Window.GetWindow(this) as MainWindow)?.editorSetting;
+        if (MainWindow.ShortcutMatches(e, keys?.MediaDeleteKey) ||
+            MainWindow.ShortcutMatches(e, keys?.MediaDeleteAlternateKey))
         {
             DeleteSelectedClip();
             e.Handled = true;
         }
-        else if (e.Key == Key.C && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        else if (MainWindow.ShortcutMatches(e, keys?.MediaCopyKey))
         {
             CopySelectedClip();
             e.Handled = true;
         }
-        else if (e.Key == Key.V && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        else if (MainWindow.ShortcutMatches(e, keys?.MediaPasteKey))
         {
             PasteCopiedClip();
             e.Handled = true;
         }
-        else if (e.Key == Key.Z && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        else if (MainWindow.ShortcutMatches(e, keys?.MediaUndoKey))
         {
             Undo();
             e.Handled = true;
         }
-        else if (e.Key == Key.Y && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        else if (MainWindow.ShortcutMatches(e, keys?.MediaRedoKey))
         {
             Redo();
             e.Handled = true;
         }
-        else if (e.Key == Key.S && Keyboard.Modifiers == ModifierKeys.None)
+        else if (MainWindow.ShortcutMatches(e, keys?.MediaSplitKey))
         {
             SplitSelectedClip();
             e.Handled = true;
@@ -1270,7 +1323,7 @@ public partial class MediaTimelineEditor : UserControl
             Title = "导出时间线音频",
             Filter = "MP3 音频|*.mp3|WAV 音频|*.wav|OGG 音频|*.ogg",
             FileName = "timeline_audio.mp3",
-            InitialDirectory = chartDirectory
+            InitialDirectory = Directory.CreateDirectory(Path.Combine(chartDirectory, "outputs")).FullName
         };
         if (dialog.ShowDialog() != true)
             return;
@@ -1290,7 +1343,7 @@ public partial class MediaTimelineEditor : UserControl
             Title = "导出时间线视频",
             Filter = "MP4 视频|*.mp4",
             FileName = "timeline_video.mp4",
-            InitialDirectory = chartDirectory
+            InitialDirectory = Directory.CreateDirectory(Path.Combine(chartDirectory, "outputs")).FullName
         };
         if (dialog.ShowDialog() != true)
             return;
@@ -1384,7 +1437,12 @@ public partial class MediaTimelineEditor : UserControl
         SourceOffset = clip.SourceOffset,
         SourceDuration = clip.SourceDuration,
         Duration = clip.Duration,
-        IsStillImage = clip.IsStillImage
+        IsStillImage = clip.IsStillImage,
+        Volume = clip.Volume,
+        FadeIn = clip.FadeIn,
+        FadeOut = clip.FadeOut,
+        Brightness = clip.Brightness,
+        Opacity = clip.Opacity
     };
 
     private sealed record TimelineSnapshot(List<MediaTimelineClip> Clips, string? SelectedId);

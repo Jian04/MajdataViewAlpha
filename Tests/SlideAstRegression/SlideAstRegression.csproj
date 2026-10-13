@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -18,6 +18,12 @@
     <Compile Include="../../Assets/MajdataCore/ChartBracketTracker.cs" />
     <Compile Include="../../Assets/MajdataCore/ChartTokens.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaCommandGrammar.cs" />
+    <Compile Include="../../Assets/MajdataCore/AlphaCommandExamples.cs" />
+    <Compile Include="../../Assets/MajdataCore/AlphaExtraFilters.cs" />
+    <Compile Include="../../Assets/MajdataCore/NoiseZoneTimeline.cs" />
+    <Compile Include="../../Assets/MajdataCore/NoiseZoneGeometry.cs" />
+    <Compile Include="NoiseZoneRegression.cs" />
+    <Compile Include="../../Assets/MajdataCore/JudgeLineStyles.cs" />
     <Compile Include="../../Assets/MajdataCore/EditorDirective.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaVisualTiming.cs" />
     <Compile Include="../../Assets/Scripts/SvController.cs" />
@@ -28,11 +34,23 @@
     <Compile Include="../../Assets/MajdataCore/SlidePathParser.cs" />
     <Compile Include="../../Assets/MajdataCore/SlideCodeParser.cs" />
     <Compile Include="../../Assets/MajdataCore/TouchSlideDirection.cs" />
+    <Compile Include="../../Assets/MajdataCore/TouchSlideSensorRoute.cs" />
     <Compile Include="../../Assets/MajdataCore/SlideCodeJudgment.cs" />
+    <Compile Include="../../Assets/MajdataCore/SlideJudgeTiming.cs" />
+    <Compile Include="../../Assets/MajdataCore/EffectEnvelope.cs" />
+    <Compile Include="../../Assets/MajdataCore/MineJudgment.cs" />
+    <Compile Include="../../Assets/Scripts/Types/Enums.cs" />
+    <Compile Include="../../Assets/Scripts/JudgeArea.cs" />
+    <Compile Include="../../Assets/Scripts/SlideJudgeQueue.cs" />
     <Compile Include="../../Assets/Scripts/Notes/SlideCodePathGeometry.cs" />
+    <Compile Include="../../Assets/Scripts/Notes/SlideGuideGeometry.cs" />
     <Compile Include="SlideGeometryRegression.cs" />
     <Compile Include="../../Assets/MajdataCore/SlideSyntaxValidator.cs" />
     <Compile Include="../../MajdataEdit/Editor/BeatFormatBrush.cs" />
+    <Compile Include="../../MajdataEdit/Editor/AlphaGuideFormatter.cs" />
+    <Compile Include="../../MajdataEdit/Editor/NoteDurationBrush.cs" />
+    <Compile Include="../../MajdataEdit/Editor/NoteModifierBrush.cs" />
+    <Compile Include="DurationBrushRegression.cs" />
     <Compile Include="../../MajdataEdit/Editor/NoteDurationTarget.cs" />
     <Compile Include="../../MajdataEdit/Editor/NoteStreamMerger.cs" />
     <Compile Include="../../MajdataEdit/Editor/VisualNoteEditor.cs" />

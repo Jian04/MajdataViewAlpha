@@ -1,4 +1,4 @@
-<Window x:Class="MajdataEdit.NoteDensityWindow"
+﻿<Window x:Class="MajdataEdit.NoteDensityWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:lex="http://wpflocalizeextension.codeplex.com"
@@ -15,23 +15,27 @@
         </Grid.RowDefinitions>
         <Border Grid.Row="0" BorderBrush="{DynamicResource ButtonsBackground}"
                 BorderThickness="1" CornerRadius="4" ClipToBounds="True">
-            <Image x:Name="DensityImage" Stretch="Fill" SnapsToDevicePixels="True" />
+            <ScrollViewer x:Name="DensityScroller" HorizontalScrollBarVisibility="Visible"
+                          VerticalScrollBarVisibility="Disabled" PanningMode="HorizontalOnly">
+                <Image x:Name="DensityImage" Stretch="Fill" HorizontalAlignment="Left"
+                       SnapsToDevicePixels="True" Cursor="Hand" />
+            </ScrollViewer>
         </Border>
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="2,7,2,0">
-            <Rectangle Width="12" Height="12" Fill="#FF5A8C" VerticalAlignment="Center" />
+        <WrapPanel Grid.Row="1" Margin="2,7,2,0">
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6"><Rectangle Width="12" Height="12" Fill="#FF5A8C" VerticalAlignment="Center" />
             <TextBlock Text="{lex:Loc SlideHeadLegend}" Foreground="{DynamicResource ButtonForeground}"
                        Margin="5,0,14,0" VerticalAlignment="Center" />
-            <Rectangle Width="12" Height="12" Fill="#37B6FF" VerticalAlignment="Center" />
+            </StackPanel><StackPanel Orientation="Horizontal" Margin="0,0,0,6"><Rectangle Width="12" Height="12" Fill="#37B6FF" VerticalAlignment="Center" />
             <TextBlock Text="{lex:Loc SlideBodyLegend}" Foreground="{DynamicResource ButtonForeground}"
                        Margin="5,0,14,0" VerticalAlignment="Center" />
-            <Rectangle Width="12" Height="12" Fill="#FFD23C" VerticalAlignment="Center" />
+            </StackPanel><StackPanel Orientation="Horizontal" Margin="0,0,0,6"><Rectangle Width="12" Height="12" Fill="#FFD23C" VerticalAlignment="Center" />
             <TextBlock Text="Touch" Foreground="{DynamicResource ButtonForeground}"
                        Margin="5,0,14,0" VerticalAlignment="Center" />
-            <Rectangle Width="18" Height="2" Fill="#63D2FF" VerticalAlignment="Center" />
+            </StackPanel><StackPanel Orientation="Horizontal" Margin="0,0,0,6"><Rectangle Width="18" Height="2" Fill="#63D2FF" VerticalAlignment="Center" />
             <TextBlock Text="{lex:Loc AudioIntensityLegend}" Foreground="{DynamicResource ButtonForeground}"
                        Margin="5,0,14,0" VerticalAlignment="Center" />
-            <TextBlock x:Name="SummaryText" Foreground="{DynamicResource HelperForeground}"
+            </StackPanel><TextBlock x:Name="SummaryText" Foreground="{DynamicResource HelperForeground}"
                        Margin="8,0,0,0" VerticalAlignment="Center" />
-        </StackPanel>
+        </WrapPanel>
     </Grid>
 </Window>

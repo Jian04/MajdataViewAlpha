@@ -228,7 +228,8 @@ public partial class MainWindow
             {
                 if (note.noteType == SimaiNoteType.Tap || note.noteType == SimaiNoteType.Touch)
                     noteTime = baseTime;
-                else if (note.noteType == SimaiNoteType.Hold || note.noteType == SimaiNoteType.TouchHold)
+                else if (note.noteType == SimaiNoteType.Hold || note.noteType == SimaiNoteType.TouchHold ||
+                         note.noteType == SimaiNoteType.NoiseZone)
                     noteTime = baseTime + note.holdTime;
                 else if (note.noteType == SimaiNoteType.Slide)
                     noteTime = note.slideStartTime + note.slideTime;
@@ -279,7 +280,7 @@ public partial class MainWindow
             var noteGroup = SimaiProcess.notelist[i];
             if (noteGroup.time < startTime)
             {
-                ScheduleTouchHoldTailsAfter(noteGroup, i, startTime);
+                ScheduleSustainSoundsAfter(noteGroup, i, startTime);
                 continue;
             }
 
@@ -297,6 +298,10 @@ public partial class MainWindow
             var notes = noteGroup.getNotes();
             foreach (var note in notes)
             {
+                // Borrowed trajectories are visual carriers, including older
+                // snapshots without the fake-head/fake-slide flags.
+                if (note.isTrajectoryOnly)
+                    continue;
                 if (note.noteType != SimaiNoteType.Slide && note.isFake)
                     continue;
                 switch (note.noteType)
@@ -521,12 +526,40 @@ public partial class MainWindow
         //Console.WriteLine(JsonConvert.SerializeObject(waitToBePlayed));
     }
 
-    private void ScheduleTouchHoldTailsAfter(
+    private void ScheduleSustainSoundsAfter(
         SimaiTimingPoint noteGroup, int noteGroupIndex, double startTime)
     {
         var schedule = waitToBePlayed!;
         foreach (var note in noteGroup.getNotes())
         {
+            if (note.isTrajectoryOnly) continue;
+            if (note.noteType == SimaiNoteType.Hold && !note.isFake && note.holdTime > 0f)
+            {
+                var end = noteGroup.time + note.holdTime;
+                if (end >= startTime - 0.001d)
+                {
+                    var holdTail = SustainSoundAt(end, noteGroupIndex);
+                    holdTail.AddSound(SoundDataType.Answer, note.isMineHead);
+                    if (!note.isBreak && !note.isEx)
+                        holdTail.AddSound(SoundDataType.Judge, note.isMineHead);
+                }
+                continue;
+            }
+            if (note.noteType == SimaiNoteType.Slide && !note.isFakeSlide)
+            {
+                if (note.slideStartTime >= startTime - 0.001d)
+                    SustainSoundAt(note.slideStartTime, noteGroupIndex).AddSound(
+                        note.isSlideBreak ? SoundDataType.BreakSlideStart : SoundDataType.Slide,
+                        note.isMineSlide);
+                var end = note.slideStartTime + note.slideTime;
+                if (note.isSlideBreak && end >= startTime - 0.001d)
+                {
+                    var slideTail = SustainSoundAt(end, noteGroupIndex);
+                    slideTail.AddSound(SoundDataType.BreakSlide, note.isMineSlide);
+                    slideTail.AddSound(SoundDataType.JudgeBreakSlide, note.isMineSlide);
+                }
+                continue;
+            }
             if (note.noteType != SimaiNoteType.TouchHold ||
                 note.isFake || note.holdTime <= 0f)
                 continue;
@@ -555,7 +588,16 @@ public partial class MainWindow
         }
     }
 
-    private void renderSoundEffect(double delaySeconds)
+    private SoundEffectTiming SustainSoundAt(double time, int groupIndex)
+    {
+        var found = waitToBePlayed!.FindIndex(item => Math.Abs(item.time - time) < 0.001d);
+        if (found >= 0) return waitToBePlayed[found];
+        var timing = new SoundEffectTiming(time) { noteGroupIndex = groupIndex };
+        waitToBePlayed.Add(timing);
+        return timing;
+    }
+
+    private void renderSoundEffect(double delaySeconds, bool includeMusic = true)
     {
         // TODO: Make this asynchronous and add a prompt window.
         var path = Environment.CurrentDirectory + "/SFX";
@@ -563,6 +605,7 @@ public partial class MainWindow
 
         var pathEnv = new List<string>
         {
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "MajdataView", "MajdataView_Data", "StreamingAssets")),
             tempPath,
             AppContext.BaseDirectory,
             Environment.CurrentDirectory
@@ -882,7 +925,7 @@ public partial class MainWindow
 
         for (var i = 0; i < delayEmpty.Length; i++)
         {
-            if (i < trackStartRaw.Length)
+            if (includeMusic && i < trackStartRaw.Length)
                 delayEmpty[i] = trackStartRaw[i];
             filehead.AddRange(BitConverter.GetBytes(delayEmpty[i]));
         }
@@ -893,6 +936,7 @@ public partial class MainWindow
             var sampleValue = timelineAudioReplacesBgm
                 ? mediaSamples[i] * bgmVol
                 : bgmRaw[i] * bgmVol + mediaSamples[i];
+            if (!includeMusic) sampleValue = 0;
 
             foreach (var sampleTuple in typeSamples)
             {
@@ -912,7 +956,7 @@ public partial class MainWindow
         }
 
         filehead.AddRange(filedata);
-        File.WriteAllBytes(maidataDir + "/out.wav", filehead.ToArray());
+        File.WriteAllBytes(MajdataCore.AlphaSession.ChartWorkFile(maidataDir, "out.wav"), filehead.ToArray());
 
         typeSamples.Clear();
         Array.Clear(mineSamples);
@@ -979,10 +1023,11 @@ public partial class MainWindow
             Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_STOPPED)
         {
             isPlan2Stop = true;
+            var endGeneration = viewControlGeneration;
             if (extraTime4AllPerfect < 0)
             {
                 // Stop immediately when there is enough time to finish.
-                Dispatcher.Invoke(() => { ToggleStop(); });
+                Dispatcher.Invoke(() => { if (endGeneration == viewControlGeneration) StopPlayback(true); });
             }
             else
             {
@@ -991,7 +1036,7 @@ public partial class MainWindow
                 {
                     AutoReset = false
                 };
-                stopPlayingTimer.Elapsed += (sender, e) => { Dispatcher.Invoke(() => { ToggleStop(); }); };
+                stopPlayingTimer.Elapsed += (sender, e) => { Dispatcher.Invoke(() => { if (endGeneration == viewControlGeneration) StopPlayback(true); }); stopPlayingTimer.Dispose(); };
                 stopPlayingTimer.Start();
             }
         }

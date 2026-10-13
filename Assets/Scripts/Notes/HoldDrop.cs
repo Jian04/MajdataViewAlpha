@@ -5,6 +5,7 @@ using UnityEngine;
 #nullable enable
 public class HoldDrop : NoteLongDrop
 {
+    private bool noiseInterrupted;
     /// <summary>The tail crosses its own spawn ring, so it remembers separately.</summary>
     private MajdataCore.SpawnCrossingMemo tailSpawnCrossingMemo;
     public bool isEX;
@@ -85,13 +86,32 @@ public class HoldDrop : NoteLongDrop
             endCap.enabled = false;
     }
 
+    internal override void RestoreTimelineState(float at)
+    {
+        if (!JudgmentDisabled && at > time && at < time + LastFor && !isJudged)
+        {
+            isJudged = true;
+            judgeResult = JudgeType.Perfect;
+            judgeDiff = 0;
+            playerIdleTime = 0;
+            isAutoTrigger = true;
+            objectCounter.NextNote(JudgeQueueKey);
+        }
+        base.RestoreTimelineState(at);
+    }
+
     private void Start()
     {
+        var skin = ResolveCustomSkin(isBreak ? breakSpr : isEach ? eachSpr : tapSpr);
+        if (skin != null)
+            tapSpr = holdOnSpr = holdOffSpr = eachSpr = eachHoldOnSpr =
+                breakSpr = breakHoldOnSpr = skin;
         var notes = noteManager != null ? noteManager.transform : GameObject.Find("Notes").transform;
         if (objectCounter == null) objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
         if (noteManager == null) noteManager = notes.GetComponent<NoteManager>();
         holdEffect = Instantiate(holdEffect, notes);
         holdEffect.SetActive(false);
+        holdEffect.transform.localPosition = getPositionFromDistance(destroyRadius);
 
         tapLine = Instantiate(tapLine, notes);
         tapLine.SetActive(false);
@@ -176,6 +196,28 @@ public class HoldDrop : NoteLongDrop
             return;
         var timing = GetJudgeTiming();
         var remainingTime = GetRemainingTime();
+        if (timing >= 0 && (remainingTime > 0 || LastFor <= 0 && timing <= MissWindow) && NoiseZoneInputGate.IsBlocked(sensor.Type))
+            noiseInterrupted = true;
+
+        if (isMine)
+        {
+            if (!isJudged && MajdataCore.MineJudgment.HeadCleared(timing, false))
+            {
+                isJudged = true;
+                judgeResult = JudgeType.Perfect;
+                objectCounter.NextNote(JudgeQueueKey);
+            }
+            if (isJudged && remainingTime > 0f &&
+                InputManager.Mode is AutoPlayMode.DJAuto or AutoPlayMode.Disable &&
+                inputManager.CheckAreaStatus(sensorPos, SensorStatus.On))
+            {
+                judgeResult = JudgeType.Miss;
+                Destroy(gameObject);
+            }
+            else if (isJudged && remainingTime == 0f)
+                Destroy(gameObject);
+            return;
+        }
 
         if (remainingTime == 0 && isJudged) // Destroy after the Hold completes
         {
@@ -186,19 +228,18 @@ public class HoldDrop : NoteLongDrop
         else if(timing >= -0.01f)
         {
             // AutoPlay behavior
-            switch (InputManager.Mode)
+            if (!NoiseZoneInputGate.IsBlocked(sensor.Type)) switch (InputManager.Mode)
             {
                 case AutoPlayMode.Enable:
                     if(!isJudged)
                         objectCounter.NextNote(JudgeQueueKey);
-                    judgeResult = JudgeType.Perfect;
+                    if (!noiseInterrupted || !isJudged) judgeResult = JudgeType.Perfect;
                     isJudged = true;
                     PlayHoldEffect();
                     return;
                 case AutoPlayMode.DJAuto:
-                    if (!isJudged)
-                        inputManager.ClickSensor(sensorPos, true);
-                    if (isJudged)
+                    // Scrubbed sustains restore the head before playback resets sensors.
+                    if (!isJudged || isAutoTrigger)
                         manager.SetSensorOn(sensor.Type, guid);
                     break;
                 case AutoPlayMode.Random:
@@ -247,13 +288,24 @@ public class HoldDrop : NoteLongDrop
             return;
         if (arg.Type != sensor.Type)
             return;
+        // DJAuto's tap pulse restores the sensor state before the next
+        // FixedUpdate. A mine whose head was safely passed still has to lose
+        // when that pulse touches its body; polling Status alone misses it.
+        if (isMine && (InputManager.Mode is AutoPlayMode.DJAuto or AutoPlayMode.Disable) &&
+            isJudged && judgeResult == JudgeType.Perfect &&
+            GetRemainingTime() > 0f && arg.IsClick)
+        {
+            judgeResult = JudgeType.Miss;
+            Destroy(gameObject);
+            return;
+        }
         else if (isJudged || !noteManager.CanJudge(gameObject, JudgeQueueKey))
             return;
         else if (InputManager.Mode is AutoPlayMode.Enable or AutoPlayMode.Random)
             return;
         if (arg.IsClick)
         {
-            if (InputManager.Mode != AutoPlayMode.DJAuto)
+            if (!isMine)
             {
                 if (!inputManager.IsIdle(arg))
                     return;
@@ -264,6 +316,7 @@ public class HoldDrop : NoteLongDrop
             {
                 inputManager.UnbindArea(Check, sensorPos);
                 objectCounter.NextNote(JudgeQueueKey);
+                if (isMine) Destroy(gameObject);
             }
         }
     }
@@ -283,6 +336,7 @@ public class HoldDrop : NoteLongDrop
             return;
 
         var timing = timeProvider.AudioTime - time;
+        if (isMine && !MajdataCore.MineJudgment.HeadCanHit(timing, false)) return;
         var isFast = timing < 0;
         var diff = MathF.Abs(timing * 1000);
         JudgeType result;
@@ -314,7 +368,7 @@ public class HoldDrop : NoteLongDrop
         else
             judgeDiff = diff;
 
-        judgeResult = result;
+        judgeResult = isMine ? JudgeType.Miss : result;
         isJudged = true;
         PlayHoldEffect();
     }
@@ -364,8 +418,10 @@ public class HoldDrop : NoteLongDrop
 
         var isBouncing = IsBounceActive();
         var distance = isBouncing ? GetBounceDistance() : GetSvDistance();
-        if (isBouncing)
+        if (isBouncing || (bounceDuration > 0f &&
+            timeProvider.AudioTime >= time && timeProvider.AudioTime < time + LastFor))
         {
+            var headDistance = isBouncing ? distance : destroyRadius;
             State = NoteStatus.Running;
             spriteRenderer.forceRenderingOff = false;
             if (isEX)
@@ -374,14 +430,22 @@ public class HoldDrop : NoteLongDrop
             var bounceTailScrollPosition =
                 SvController.GetCumulativeScroll((double)time + LastFor, scrollType);
             var pathDirection = SvController.GetPathDirection(spawnRadius, destroyRadius);
-            var fullBodyLength = pathDirection * speed * (float)(bounceTailScrollPosition -
-                SvController.GetCumulativeScroll(time, scrollType));
             var visibleBodyLimit = Mathf.Abs(destroyRadius - spawnRadius);
-            var bodyLength = Mathf.Sign(fullBodyLength) *
-                             Mathf.Min(Mathf.Abs(fullBodyLength), visibleBodyLimit);
-            var tailDistance = distance - bodyLength;
-            var bodyCenter = (distance + tailDistance) * 0.5f;
-            var bodySize = Mathf.Abs(distance - tailDistance) + 1.4f;
+            // The tail moves along its own scroll path. Its remaining travel
+            // distance, rather than the head's bounce duration, determines when
+            // the body starts to retract. A short Hold therefore shrinks
+            // smoothly from head landing until its actual end time.
+            // Before the head lands, the Hold already has its authored length.
+            // Only after landing does the tail travel toward the judgment ring.
+            // Measuring from the current pre-hit time made even a 16:1 Hold
+            // initially span the entire spawn-to-destroy path.
+            var tailTravelFrom = Math.Max(timeProvider.AudioTime, (double)time);
+            var remainingBody = pathDirection * speed * (float)(bounceTailScrollPosition -
+                SvController.GetCumulativeScroll(tailTravelFrom, scrollType));
+            var bodyLength = Mathf.Clamp(remainingBody, -visibleBodyLimit, visibleBodyLimit);
+            var tailDistance = headDistance - bodyLength;
+            var bodyCenter = (headDistance + tailDistance) * 0.5f;
+            var bodySize = Mathf.Abs(headDistance - tailDistance) + 1.4f;
             holdEndRender.enabled = Mathf.Abs(bodyLength) > 0.001f;
             spriteRenderer.size = new Vector2(1.22f, bodySize);
             exSpriteRender.size = spriteRenderer.size;
@@ -392,12 +456,15 @@ public class HoldDrop : NoteLongDrop
                 noteScale * noteScaleY,
                 1f);
 
-            var absoluteBounceDistance = Mathf.Abs(distance);
+            var absoluteBounceDistance = Mathf.Abs(headDistance);
             var bounceLineScale = absoluteBounceDistance / DefaultDestroyRadius;
-            tapLine.SetActive(absoluteBounceDistance > 0.001f);
+            tapLine.SetActive(isBouncing && absoluteBounceDistance > 0.001f);
             tapLine.transform.localScale = new Vector3(
                 bounceLineScale, bounceLineScale, 1f);
-            UpdateVisualRotation(distance);
+            // The bounce branch returns before the ordinary Hold visual path,
+            // which normally places this detached particle system at the key.
+            holdEffect.transform.localPosition = getPositionFromDistance(destroyRadius);
+            UpdateVisualRotation(headDistance);
             return;
         }
 
@@ -445,7 +512,7 @@ public class HoldDrop : NoteLongDrop
 
         // Judgement remains on the original key even when SV moves the note body
         // to the opposite side.
-        holdEffect.transform.position = getPositionFromDistance(destroyRadius);
+        holdEffect.transform.localPosition = getPositionFromDistance(destroyRadius);
 
         if (isBreak &&
             !holdAnimStart && 
@@ -582,7 +649,7 @@ public class HoldDrop : NoteLongDrop
             }
         }
 
-        switch (InputManager.Mode)
+        if (!noiseInterrupted) switch (InputManager.Mode)
         {
             case AutoPlayMode.Enable:
                 result = JudgeType.Perfect;
@@ -594,6 +661,7 @@ public class HoldDrop : NoteLongDrop
             case AutoPlayMode.Disable:
                 break;
         }
+        if (isMine) result = judgeResult;
         var effectManager = GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
         if (effectManager != null &&
             (!isMine || NoteEffectManager.ShowMineHitFeedback))

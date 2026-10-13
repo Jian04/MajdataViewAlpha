@@ -241,131 +241,44 @@ internal static class SlideCodePathGeometry
 
         var b = Cos22_5 * 0.5f;
         var a = 1f - b;
-        var gamma = 44.2f * Mathf.Deg2Rad;
+        // MajdataPlay SlideGeo.TransferOutData: the connector is fixed by
+        // orbit and direction, never selected by shortest travel from the head.
+        var gamma = Mathf.PI / 4f;
         var s = (a * a + b * b - 2f * a * b * Mathf.Cos(gamma)) /
                 (2f * a - 2f * b * Mathf.Cos(gamma));
         var connectorRadius = JudgeRadius * (b + s);
         var connectorCenterDistance = JudgeRadius * (a - s);
-        var innerToConnectorDistance = JudgeRadius * s;
-        if (!CircleIntersections(
-                Vector2.zero, connectorCenterDistance,
-                inner.Center, innerToConnectorDistance,
-                out var firstCenter, out var secondCenter))
-        {
-            nextAngle = 0f;
-            return false;
-        }
-
-        var first = ConnectorCandidate(
-            current, currentAngle, inner, firstCenter,
-            connectorRadius, direction, current.Index != 9);
-        var second = ConnectorCandidate(
-            current, currentAngle, inner, secondCenter,
-            connectorRadius, direction, current.Index != 9);
-        var selected = first.Cost <= second.Cost ? first : second;
+        var transferAngle = Mathf.Acos(Mathf.Clamp(
+            (s * s + b * b - (a - s) * (a - s)) / (2f * b * s), -1f, 1f));
+        var outwardDirection = current.Index == 9 ? -direction : direction;
+        var innerAngle = OrbitAngle(inner.Index) - outwardDirection * transferAngle;
+        var outerAngle = OrbitAngle(inner.Index) + outwardDirection * gamma;
+        var connector = new Circle(-1, Polar(connectorCenterDistance, outerAngle), connectorRadius);
 
         if (current.Index != 9)
         {
             AppendArc(
-                target, current, currentAngle, selected.InnerAngle,
+                target, current, currentAngle, innerAngle,
                 direction, false);
             AppendArc(
-                target, selected.Connector,
-                selected.InnerConnectorAngle,
-                selected.OuterConnectorAngle,
+                target, connector,
+                innerAngle,
+                outerAngle,
                 direction, false);
-            nextAngle = selected.OuterAngle;
+            nextAngle = outerAngle;
         }
         else
         {
             AppendArc(
-                target, current, currentAngle, selected.OuterAngle,
-                direction, false);
+                target, current, currentAngle, outerAngle,
+                direction, true);
             AppendArc(
-                target, selected.Connector,
-                selected.OuterConnectorAngle,
-                selected.InnerConnectorAngle,
+                target, connector,
+                outerAngle,
+                innerAngle,
                 direction, false);
-            nextAngle = selected.InnerAngle;
+            nextAngle = innerAngle;
         }
-        return true;
-    }
-
-    private readonly struct ConnectorRoute
-    {
-        public ConnectorRoute(
-            Circle connector,
-            float innerAngle,
-            float outerAngle,
-            float innerConnectorAngle,
-            float outerConnectorAngle,
-            float cost)
-        {
-            Connector = connector;
-            InnerAngle = innerAngle;
-            OuterAngle = outerAngle;
-            InnerConnectorAngle = innerConnectorAngle;
-            OuterConnectorAngle = outerConnectorAngle;
-            Cost = cost;
-        }
-
-        public Circle Connector { get; }
-        public float InnerAngle { get; }
-        public float OuterAngle { get; }
-        public float InnerConnectorAngle { get; }
-        public float OuterConnectorAngle { get; }
-        public float Cost { get; }
-    }
-
-    private static ConnectorRoute ConnectorCandidate(
-        Circle current,
-        float currentAngle,
-        Circle inner,
-        Vector2 center,
-        float radius,
-        int direction,
-        bool innerToOuter)
-    {
-        var connector = new Circle(-1, center, radius);
-        var innerDirection = (inner.Center - center).normalized;
-        var outerDirection = center.normalized;
-        var innerAngle = Mathf.Atan2(innerDirection.y, innerDirection.x);
-        var outerAngle = Mathf.Atan2(outerDirection.y, outerDirection.x);
-        var firstAngle = innerToOuter ? innerAngle : outerAngle;
-        var secondAngle = innerToOuter ? outerAngle : innerAngle;
-        var firstCircle = innerToOuter ? inner : current;
-        var cost = DirectedSweep(currentAngle, firstAngle, direction, false) *
-                   firstCircle.Radius +
-                   DirectedSweep(firstAngle, secondAngle, direction, false) * radius;
-        return new ConnectorRoute(
-            connector, innerAngle, outerAngle, innerAngle, outerAngle, cost);
-    }
-
-    private static bool CircleIntersections(
-        Vector2 firstCenter,
-        float firstRadius,
-        Vector2 secondCenter,
-        float secondRadius,
-        out Vector2 first,
-        out Vector2 second)
-    {
-        var delta = secondCenter - firstCenter;
-        var distance = delta.magnitude;
-        if (distance <= Epsilon ||
-            distance > firstRadius + secondRadius + Epsilon ||
-            distance < Mathf.Abs(firstRadius - secondRadius) - Epsilon)
-        {
-            first = second = Vector2.zero;
-            return false;
-        }
-        var along = (firstRadius * firstRadius - secondRadius * secondRadius +
-                     distance * distance) / (2f * distance);
-        var height = Mathf.Sqrt(Mathf.Max(0f, firstRadius * firstRadius - along * along));
-        var axis = delta / distance;
-        var basePoint = firstCenter + axis * along;
-        var perpendicular = new Vector2(-axis.y, axis.x) * height;
-        first = basePoint + perpendicular;
-        second = basePoint - perpendicular;
         return true;
     }
 

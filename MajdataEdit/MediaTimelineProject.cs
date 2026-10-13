@@ -21,6 +21,11 @@ internal sealed class MediaTimelineClip
     public double SourceDuration { get; set; }
     public double Duration { get; set; } = 1d;
     public bool IsStillImage { get; set; }
+    public double Volume { get; set; } = 1d;
+    public double FadeIn { get; set; }
+    public double FadeOut { get; set; }
+    public double Brightness { get; set; }
+    public double Opacity { get; set; } = 1d;
 
     [JsonIgnore]
     public double TimelineEnd => TimelineStart + Duration;
@@ -35,7 +40,12 @@ internal sealed class MediaTimelineClip
         SourceOffset = SourceOffset,
         SourceDuration = SourceDuration,
         IsStillImage = IsStillImage,
-        Duration = Duration
+        Duration = Duration,
+        Volume = Volume,
+        FadeIn = FadeIn,
+        FadeOut = FadeOut,
+        Brightness = Brightness,
+        Opacity = Opacity
     };
 }
 
@@ -142,6 +152,11 @@ internal sealed class MediaTimelineProject
             clip.SourceDuration = Math.Max(
                 clip.SourceOffset + clip.Duration,
                 FiniteOr(clip.SourceDuration, clip.SourceOffset + clip.Duration));
+            clip.Volume = Math.Clamp(FiniteOr(clip.Volume, 1d), 0d, 4d);
+            clip.FadeIn = Math.Clamp(FiniteOr(clip.FadeIn, 0d), 0d, clip.Duration);
+            clip.FadeOut = Math.Clamp(FiniteOr(clip.FadeOut, 0d), 0d, clip.Duration);
+            clip.Brightness = Math.Clamp(FiniteOr(clip.Brightness, 0d), -1d, 1d);
+            clip.Opacity = Math.Clamp(FiniteOr(clip.Opacity, 1d), 0d, 1d);
         }
     }
 

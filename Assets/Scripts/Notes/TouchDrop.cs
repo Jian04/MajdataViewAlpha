@@ -52,6 +52,9 @@ public class TouchDrop : TouchBase
     // Start is called before the first frame update
     void Start()
     {
+        var skin = ResolveCustomSkin(fanNormalSprite);
+        if (skin != null)
+            fanNormalSprite = fanEachSprite = skin;
         wholeDuration = AlphaVisualTiming.GetTouchMotionDuration(speed);
         moveDuration = 0.8f * wholeDuration;
         displayDuration = 0.2f * wholeDuration;
@@ -134,7 +137,7 @@ public class TouchDrop : TouchBase
             return;
         else if (arg.IsClick)
         {
-            if (InputManager.Mode != AutoPlayMode.DJAuto)
+            if (!isMine)
             {
                 if (!inputManager.IsIdle(arg))
                     return;
@@ -153,6 +156,15 @@ public class TouchDrop : TouchBase
         if (JudgmentDisabled || JudgmentSuspended)
             return;
         var timing = GetJudgeTiming();
+        if (isMine)
+        {
+            if (!isJudged && !MajdataCore.MineJudgment.HeadCleared(timing, true)) return;
+            if (!isJudged) judgeResult = JudgeType.Perfect;
+            isJudged = true;
+            FinalizeJudge();
+            Destroy(gameObject);
+            return;
+        }
         if (!isJudged && timing <= 0.316667f)
         {
             if (GroupInfo is not null)
@@ -179,7 +191,7 @@ public class TouchDrop : TouchBase
             Destroy(gameObject);
         }
 
-        if (GetJudgeTiming() >= 0)
+        if (GetJudgeTiming() >= 0 && !NoiseZoneInputGate.IsBlocked(GetSensor()))
         {
             switch (InputManager.Mode)
             {
@@ -214,6 +226,7 @@ public class TouchDrop : TouchBase
             return;
 
         var timing = timeProvider.AudioTime - time;
+        if (isMine && !MajdataCore.MineJudgment.HeadCanHit(timing, true)) return;
         var isFast = timing < 0;
         var diff = MathF.Abs(timing * 1000);
         JudgeType result;
@@ -230,7 +243,7 @@ public class TouchDrop : TouchBase
         else
             result = JudgeType.Miss;
 
-        judgeResult = result;
+        judgeResult = isMine ? JudgeType.Miss : result;
         isJudged = true;
     }
     /// <summary>
@@ -362,7 +375,7 @@ public class TouchDrop : TouchBase
             return;
 
         judgeFinalized = true;
-        if (GroupInfo is not null && judgeResult != JudgeType.Miss)
+        if (!isMine && GroupInfo is not null && judgeResult != JudgeType.Miss)
             GroupInfo.JudgeResult = judgeResult;
         objectCounter.ReportResult(this, judgeResult, isBreak);
         objectCounter.NextTouch(sensor.Type);

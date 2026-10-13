@@ -6,7 +6,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <UseWPF>true</UseWPF>
 
-        <Version>4.4.0</Version>
+        <Version>0.6.0</Version>
         <Company />
         <GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
         <Authors>bbben</Authors>
@@ -19,6 +19,8 @@
     </PropertyGroup>
     <ItemGroup>
       <None Remove="Image\bg_dummy.jpg" />
+      <None Remove="Image\PetDock.png" />
+      <Resource Include="Image\PetDock.png" />
       <None Remove="Image\outline_find_replace_white_24dp.png" />
       <None Remove="Image\outline_search_white_24dp.png" />
     </ItemGroup>
@@ -32,6 +34,7 @@
         </Compile>
     </ItemGroup>
     <ItemGroup>
+        <PackageReference Include="SIPSorcery" Version="10.0.17" />
         <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
         <PackageReference Include="radio42.Bass.Net.core" Version="2.4.17.5" />
         <PackageReference Include="DiscordRichPresence" Version="1.2.1.24" />
@@ -51,7 +54,7 @@
         <Content Include="Themes\**\*.png">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
-        <Content Include="ChartSearchCache\**\*">
+        <Content Include="Themes\**\*.jpg">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
         <Content Include="EditorSetting.json">
@@ -79,6 +82,14 @@
         </Content>
         <Content Include="..\Assets\Resources\Fonts\Aileron-Regular.otf">
             <Link>Resources\Fonts\Aileron-Regular.otf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="..\Assets\Resources\Fonts\FOT-NewRodin Pro EB.otf;..\Assets\Resources\Fonts\FOT-Seurat Pro DB.otf;..\Assets\Resources\Fonts\FOT-Rodin Pro EB.otf">
+            <Link>Resources\Fonts\%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
+        <Content Include="Assets\Fonts\GenSenRounded2TW-R.otf">
+            <Link>Resources\Fonts\GenSenRounded2TW-R.otf</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
         <Content Include="..\Assets\Resources\Fonts\Allerta-Regular.ttf">
@@ -124,14 +135,33 @@
       <Resource Include="Image\outline_find_replace_white_24dp.png" />
       <Resource Include="Image\outline_search_white_24dp.png" />
     </ItemGroup>
+    <ItemGroup>
+        <Content Include="..\Skin\**\*.png">
+            <Link>Skin\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </Content>
+    </ItemGroup>
     <!-- Distribute MaiMuriDX with the application. Its tools directory contains
          roughly 72 MB and 2,788 Python runtime/script files, so robocopy mirrors
          it incrementally instead of making MSBuild enumerate every file.
          Robocopy exit codes below 8 indicate success and are normalized to zero. -->
     <Target Name="CopyMuriTools" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
-        <Exec Command="robocopy &quot;$(ProjectDir)tools&quot; &quot;$(TargetDir)tools&quot; /MIR /XO /NFL /NDL /NJH /NJS /NC /NS /NP &amp; if %25ERRORLEVEL%25 LSS 8 exit 0 &amp; exit %25ERRORLEVEL%25" />
+        <Exec Command="robocopy &quot;$(ProjectDir)tools\MaiMuriDX&quot; &quot;$(TargetDir)tools\MaiMuriDX&quot; /MIR /XO /XD __pycache__ pip pip-24.2.dist-info pip-25.1.1.dist-info wheel wheel-0.44.0.dist-info tests test docs examples /XF *.pyc *.pdb /NFL /NDL /NJH /NJS /NC /NS /NP &amp; if %25ERRORLEVEL%25 LSS 8 exit 0 &amp; exit %25ERRORLEVEL%25" />
     </Target>
     <Target Name="CopyToolsToPublish" AfterTargets="Publish" Condition="'$(OS)' == 'Windows_NT'">
-        <Exec Command="robocopy &quot;$(ProjectDir)tools&quot; &quot;$(PublishDir)tools&quot; /MIR /XO /NFL /NDL /NJH /NJS /NC /NS /NP &amp; if %25ERRORLEVEL%25 LSS 8 exit 0 &amp; exit %25ERRORLEVEL%25" />
+        <Exec Command="robocopy &quot;$(ProjectDir)tools\MaiMuriDX&quot; &quot;$(PublishDir)tools\MaiMuriDX&quot; /MIR /XO /XD __pycache__ pip pip-24.2.dist-info pip-25.1.1.dist-info wheel wheel-0.44.0.dist-info tests test docs examples /XF *.pyc *.pdb /NFL /NDL /NJH /NJS /NC /NS /NP &amp; if %25ERRORLEVEL%25 LSS 8 exit 0 &amp; exit %25ERRORLEVEL%25" />
     </Target>
+    <Target Name="PruneRetiredPublishPayload" AfterTargets="CopyToolsToPublish">
+        <RemoveDir Directories="$(PublishDir)tools\Maicaiyin;$(PublishDir)ChartSearchCache;$(PublishDir)tools\MaiMuriDX\lib\Lib\site-packages\pip;$(PublishDir)tools\MaiMuriDX\lib\Lib\site-packages\pip-24.2.dist-info;$(PublishDir)tools\MaiMuriDX\lib\Lib\site-packages\wheel;$(PublishDir)tools\MaiMuriDX\lib\Lib\site-packages\wheel-0.44.0.dist-info;$(PublishDir)tools\MaiMuriDX\lib\Lib\site-packages\pygame\docs;$(PublishDir)tools\MaiMuriDX\lib\Lib\site-packages\pygame\examples;$(PublishDir)tools\MaiMuriDX\lib\Lib\site-packages\pygame\tests" />
+        <ItemGroup><RetiredPublishSymbols Include="$(PublishDir)**\*.pdb;$(PublishDir)**\*.pyc" /></ItemGroup>
+        <Delete Files="@(RetiredPublishSymbols)" />
+    </Target>
+  <ItemGroup>
+    <Compile Include="..\SessionUi\SessionManagerWindow.cs" Link="Sessions\SessionManagerWindow.cs" />
+    <Compile Include="..\SessionUi\ChartRoomWindow.cs" Link="Sessions\ChartRoomWindow.cs" />
+    <Compile Include="..\SessionUi\SessionTheme.cs" Link="Sessions\SessionTheme.cs" />
+    <Compile Include="..\SessionUi\MultiControlWindow.cs" Link="Sessions\MultiControlWindow.cs" />
+    <Compile Include="..\Collaboration\*.cs" Link="Collaboration\%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net6.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup><Compile Include="../../MajdataEdit/EditorSongAudio.cs" Link="EditorSongAudio.cs"/><PackageReference Include="radio42.Bass.Net.core" Version="2.4.17.5"/></ItemGroup>
+  <ItemGroup><None Include="../../MajdataEdit/bass.dll" Link="bass.dll" CopyToOutputDirectory="PreserveNewest"/><None Include="../../MajdataEdit/bass_fx.dll" Link="bass_fx.dll" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+</Project>

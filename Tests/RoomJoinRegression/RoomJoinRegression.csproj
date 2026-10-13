@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net6.0-windows</TargetFramework><UseWPF>true</UseWPF><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><DefineConstants>ALPHA_SESSION_TESTS</DefineConstants></PropertyGroup>
+  <ItemGroup><Compile Include="../../Collaboration/*.cs" Link="Collaboration/%(Filename)%(Extension)"/><Compile Include="../../SessionUi/SessionTheme.cs" Link="SessionTheme.cs"/><Compile Include="../../SessionUi/ChartRoomWindow.cs" Link="ChartRoomWindow.cs"/><Compile Include="../../Assets/MajdataCore/AlphaSession.cs" Link="AlphaSession.cs"/><Compile Include="../../MajdataEdit/EditorSongAudio.cs" Link="EditorSongAudio.cs"/></ItemGroup>
+  <ItemGroup><PackageReference Include="SIPSorcery" Version="10.0.17"/><PackageReference Include="radio42.Bass.Net.core" Version="2.4.17.5"/></ItemGroup>
+  <ItemGroup><None Include="../../MajdataEdit/bass.dll" Link="bass.dll" CopyToOutputDirectory="PreserveNewest"/><None Include="../../MajdataEdit/bass_fx.dll" Link="bass_fx.dll" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+</Project>

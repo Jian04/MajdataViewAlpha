@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.IO;
 using System.Windows.Threading;
@@ -30,6 +29,7 @@ internal sealed class PetAnimator : IDisposable
     private readonly DispatcherTimer frameTimer = new();
     private BitmapSource? atlas;
     private BitmapSource[][] frames = Array.Empty<BitmapSource[]>();
+    private int[][] durations = Array.Empty<int[]>();
     private BitmapSource[] lookFrames = Array.Empty<BitmapSource>();
     private PetAnimation state;
     private int frame;
@@ -37,8 +37,10 @@ internal sealed class PetAnimator : IDisposable
     private bool holdFinalFrame;
     private bool showingLookDirection;
     private Action? completed;
+    private int animationGeneration;
 
     public bool HasAtlas => atlas != null;
+    public bool IsGesturePlaying => frameTimer.IsEnabled && !loop;
 
     public PetAnimator(Image previous, Image target)
     {
@@ -62,10 +64,37 @@ internal sealed class PetAnimator : IDisposable
             if (image.PixelWidth != 1536 || image.PixelHeight != 2288)
                 return false;
             atlas = image;
-            frames = FrameCounts.Select((count, row) => Enumerable.Range(0, count)
-                .Select(column => FreezeCrop(column, row)).ToArray()).ToArray();
-            lookFrames = Enumerable.Range(0, 16)
-                .Select(index => FreezeCrop(index % 8, index < 8 ? 9 : 10)).ToArray();
+            // Some atlases deliberately omit entire animations/directions.
+            // Keep only visible cells, with their original frame timing.
+            frames = new BitmapSource[FrameCounts.Length][];
+            durations = new int[FrameCounts.Length][];
+            for (int row = 0; row < FrameCounts.Length; row++)
+            {
+                var cells = Enumerable.Range(0, FrameCounts[row])
+                    .Select(column => (Image: FreezeCrop(column, row), Column: column))
+                    .Where(cell => HasVisiblePixels(cell.Image)).ToArray();
+                frames[row] = cells.Select(cell => cell.Image).ToArray();
+                durations[row] = cells.Select(cell => FrameDurations[row][cell.Column]).ToArray();
+            }
+            if (frames[(int)PetAnimation.Idle].Length == 0) return false;
+            for (int row = 0; row < frames.Length; row++)
+            {
+                if (frames[row].Length != 0) continue;
+                // Missing walking clips use the available working motion;
+                // other missing clips keep the pet visible in its idle pose.
+                int fallback = row is 1 or 2 && frames[(int)PetAnimation.Running].Length != 0
+                    ? (int)PetAnimation.Running : (int)PetAnimation.Idle;
+                frames[row] = frames[fallback]; durations[row] = durations[fallback];
+            }
+            lookFrames = Enumerable.Range(0, 16).Select(index => {
+                var crop = FreezeCrop(index % 8, index < 8 ? 9 : 10);
+                return HasVisiblePixels(crop) ? crop : frames[(int)PetAnimation.Idle][0];
+            }).ToArray();
+            frameTimer.Stop();
+            completed = null;
+            loop = false;
+            holdFinalFrame = false;
+            showingLookDirection = false;
             Play(PetAnimation.Idle, true);
             return true;
         }
@@ -78,10 +107,6 @@ internal sealed class PetAnimator : IDisposable
     public void Play(PetAnimation animation, bool shouldLoop = false, Action? onCompleted = null,
         bool holdOnLastFrame = false)
     {
-        if (atlas != null && !showingLookDirection && animation == PetAnimation.Failed &&
-            state == animation && frameTimer.IsEnabled)
-            return;
-
         if (atlas != null && !showingLookDirection && state == animation &&
             holdFinalFrame && holdOnLastFrame)
         {
@@ -95,6 +120,7 @@ internal sealed class PetAnimator : IDisposable
         }
 
         showingLookDirection = false;
+        animationGeneration++;
         state = animation;
         frame = 0;
         loop = shouldLoop;
@@ -112,6 +138,7 @@ internal sealed class PetAnimator : IDisposable
             return;
 
         showingLookDirection = true;
+        animationGeneration++;
         loop = false;
         completed = onCompleted;
         ApplyLookFrame(degrees);
@@ -125,14 +152,17 @@ internal sealed class PetAnimator : IDisposable
         if (showingLookDirection)
         {
             showingLookDirection = false;
-            completed?.Invoke();
+            var generation = animationGeneration;
+            var callback = completed;
             completed = null;
-            Play(PetAnimation.Idle, true);
+            callback?.Invoke();
+            if (animationGeneration == generation)
+                Play(PetAnimation.Idle, true);
             return;
         }
 
         frame++;
-        var count = FrameCounts[(int)state];
+        var count = frames[(int)state].Length;
         if (frame >= count)
         {
             if (!loop)
@@ -141,13 +171,17 @@ internal sealed class PetAnimator : IDisposable
                 {
                     frame = count - 1;
                     ApplyFrame();
-                    completed?.Invoke();
+                    var callback = completed;
                     completed = null;
+                    callback?.Invoke();
                     return;
                 }
-                completed?.Invoke();
+                var generation = animationGeneration;
+                var finished = completed;
                 completed = null;
-                Play(PetAnimation.Idle, true);
+                finished?.Invoke();
+                if (animationGeneration == generation)
+                    Play(PetAnimation.Idle, true);
                 return;
             }
             frame = 0;
@@ -175,6 +209,8 @@ internal sealed class PetAnimator : IDisposable
 
     private void ApplySource(BitmapSource source)
     {
+        if (ReferenceEquals(target.Source, source))
+            return;
         previous.BeginAnimation(UIElement.OpacityProperty, null);
         target.BeginAnimation(UIElement.OpacityProperty, null);
         target.Source = source;
@@ -194,9 +230,19 @@ internal sealed class PetAnimator : IDisposable
 
     private void ScheduleFrame()
     {
-        frameTimer.Interval = TimeSpan.FromMilliseconds(FrameDurations[(int)state][frame]);
+        frameTimer.Interval = TimeSpan.FromMilliseconds(durations[(int)state][frame]);
         frameTimer.Start();
     }
 
-    public void Dispose() => frameTimer.Stop();
+    private static bool HasVisiblePixels(BitmapSource image)
+    {
+        var rgba = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+        var pixels = new byte[image.PixelWidth * image.PixelHeight * 4];
+        rgba.CopyPixels(pixels, image.PixelWidth * 4, 0);
+        return Enumerable.Range(0, pixels.Length / 4).Any(i => pixels[i * 4 + 3] > 16);
+    }
+
+    public void Dispose() {
+        frameTimer.Stop();
+    }
 }

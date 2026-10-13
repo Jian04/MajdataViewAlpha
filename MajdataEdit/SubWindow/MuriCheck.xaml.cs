@@ -114,7 +114,7 @@ public partial class MuriCheck : Window
         foreach (var warning in detector.Warnings)
             addWarning(warning.Content, warning.PositionX, warning.PositionY);
 
-        mcr.Show();
+        ((MainWindow)Owner).ShowTool(mcr, "检查结果");
         if (multNoteEnable)
             MessageBox.Show(
                 string.Format(MainWindow.GetLocalizedString("CheckDone1"),

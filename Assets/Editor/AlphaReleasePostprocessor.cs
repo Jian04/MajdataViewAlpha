@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using UnityEditor;
@@ -31,6 +32,13 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
                           ?? throw new BuildFailedException("Cannot resolve the Unity project directory.");
         var releaseRoot = Path.GetDirectoryName(builtPlayerPath)
                           ?? throw new BuildFailedException("Cannot resolve the player output directory.");
+        ArchiveBuildBackup(projectRoot, releaseRoot, Path.GetFileNameWithoutExtension(builtPlayerPath));
+        // Also accept building directly to the packaged View directory.
+        var outputDirectory = new DirectoryInfo(releaseRoot);
+        if (outputDirectory.Name.Equals("MajdataView", StringComparison.OrdinalIgnoreCase) &&
+            outputDirectory.Parent?.Name.Equals("App", StringComparison.OrdinalIgnoreCase) == true)
+            releaseRoot = outputDirectory.Parent.Parent!.FullName;
+        var dotnet = ResolveDotNetSdk(projectRoot);
         var publishRoot = Path.Combine(projectRoot, "Library", "ReleasePublish");
         var tempRoot = Path.Combine(publishRoot, "temp");
         Directory.CreateDirectory(publishRoot);
@@ -44,14 +52,13 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
         var editRoot = Path.Combine(appRoot, "MajdataEdit");
         var playerName = Path.GetFileNameWithoutExtension(builtPlayerPath);
 
-        MovePlayerIntoAppFolder(releaseRoot, builtPlayerPath, viewRoot, playerName);
-
         // ReadyToRun avoids long first startup from antivirus scanning plus JIT in self-contained builds
-        var editOutput = Publish(projectRoot, "MajdataEdit", publishRoot, tempRoot,
+        var editOutput = Publish(dotnet, projectRoot, "MajdataEdit", publishRoot, tempRoot,
             "-p:PublishReadyToRun=true");
-        var launcherOutput = Publish(projectRoot, "MajdataLauncher", publishRoot, tempRoot,
+        var launcherOutput = Publish(dotnet, projectRoot, "MajdataLauncher", publishRoot, tempRoot,
             "-p:PublishSingleFile=true", "-p:IncludeNativeLibrariesForSelfExtract=true");
-        CopyDirectory(editOutput, editRoot);
+        MovePlayerIntoAppFolder(Path.GetDirectoryName(builtPlayerPath)!, builtPlayerPath, viewRoot, playerName);
+        CopyDirectory(editOutput, editRoot, leanEditor: true);
         CopyLauncherToRoot(launcherOutput, releaseRoot);
         // Single-file publishing bundles PNG/WebP content but leaves JSON external, so copy pet assets explicitly
         CopyDirectory(Path.Combine(projectRoot, "MajdataLauncher", "Pets"), Path.Combine(releaseRoot, "Pets"));
@@ -59,19 +66,43 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
         var skinSource = Path.Combine(projectRoot, "Skin");
         if (Directory.Exists(skinSource))
             CopyDirectory(skinSource, Path.Combine(editRoot, "Skin"));
-        CollectChartLibrary(projectRoot, editRoot);
-        CopyIfPresent(Path.Combine(projectRoot, "Assets", "StreamingAssets", "ffmpeg.exe"),
-            Path.Combine(editRoot, "ffmpeg.exe"));
+
+        // Edit and View share the copy in View's StreamingAssets.
+        PruneRetiredEditorFiles(editRoot);
         RemoveObsoleteReleaseNotes(releaseRoot);
         CopyIfPresent(Path.Combine(projectRoot, "README.md"), Path.Combine(releaseRoot, "README.md"));
+        var licenses=Path.Combine(projectRoot,"Licenses");
+        if(Directory.Exists(licenses)) CopyDirectory(licenses,Path.Combine(releaseRoot,"Licenses"));
 
         ValidateRelease(viewRoot, editRoot, releaseRoot, playerName, !EditorUserBuildSettings.development);
         UnityEngine.Debug.Log($"[MajdataViewAlpha] Release dependencies collected in {releaseRoot}");
     }
 
+    private static void ArchiveBuildBackup(string projectRoot, string outputDirectory, string playerName)
+    {
+        if (string.IsNullOrWhiteSpace(playerName) || Path.GetFileName(playerName) != playerName)
+            throw new BuildFailedException("Invalid player name for build backup.");
+        var outputRoot = Path.GetFullPath(outputDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var source = Path.GetFullPath(Path.Combine(outputRoot, playerName + "_BackUpThisFolder_ButDontShipItWithYourGame"));
+        if (!source.StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase))
+            throw new BuildFailedException("Build backup is outside the player output directory.");
+        if (!Directory.Exists(source)) return;
+        if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0)
+            throw new BuildFailedException("Refusing to move a linked build backup directory.");
+        var archiveRoot = Path.Combine(projectRoot, "Library", "BuildBackups");
+        Directory.CreateDirectory(archiveRoot);
+        var destination = Path.Combine(archiveRoot, playerName + "-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
+        Directory.Move(source, destination);
+        UnityEngine.Debug.Log($"[MajdataViewAlpha] Build debugging files archived in {destination}");
+    }
+
     private static void MovePlayerIntoAppFolder(
         string releaseRoot, string builtPlayerPath, string viewRoot, string playerName)
     {
+        if (Path.GetFullPath(releaseRoot).TrimEnd(Path.DirectorySeparatorChar)
+            .Equals(Path.GetFullPath(viewRoot).TrimEnd(Path.DirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+            return;
         // View contains only build output; recreate it on export to avoid mixing old and new player files
         if (Directory.Exists(viewRoot))
             Directory.Delete(viewRoot, true);
@@ -130,7 +161,6 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
             Path.Combine(dataRoot, "StreamingAssets", "Background"),
             Path.Combine(editRoot, "MajdataEdit.exe"),
             Path.Combine(editRoot, "MajdataEdit.runtimeconfig.json"),
-            Path.Combine(editRoot, "ffmpeg.exe"),
             Path.Combine(editRoot, "bass.dll"),
             Path.Combine(editRoot, "bass_fx.dll"),
             Path.Combine(editRoot, "ICSharpCode.AvalonEdit.dll"),
@@ -141,25 +171,19 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
             Path.Combine(editRoot, "Skin"),
             Path.Combine(editRoot, "tools", "MaiMuriDX", "lib", "python.exe"),
             Path.Combine(editRoot, "tools", "MaiMuriDX", "lib", "cli.py"),
-            Path.Combine(editRoot, "tools", "Maicaiyin", "infer.py"),
-            Path.Combine(editRoot, "tools", "Maicaiyin", "joint-placement-numpy.npz"),
-            Path.Combine(editRoot, "tools", "Maicaiyin", "python", "python.exe"),
-            Path.Combine(editRoot, "tools", "Maicaiyin", "python", "python312.dll"),
-            Path.Combine(editRoot, "tools", "Maicaiyin", "packages", "numpy-2.3.5.dist-info"),
-            Path.Combine(editRoot, "tools", "Maicaiyin", "packages", "scipy-1.17.1.dist-info"),
-            Path.Combine(editRoot, "tools", "Maicaiyin", "packages", "librosa-0.11.0.dist-info"),
-            Path.Combine(editRoot, "tools", "Maicaiyin", "packages", "soundfile-0.14.0.dist-info"),
             Path.Combine(releaseRoot, "MajdataLauncher.exe"),
             Path.Combine(releaseRoot, "README.md"),
             Path.Combine(releaseRoot, "Pets", "dilaxiong", "pet.json"),
-            Path.Combine(releaseRoot, "Pets", "dilaxiong", "spritesheet.png")
+            Path.Combine(releaseRoot, "Pets", "dilaxiong", "spritesheet.png"),
+            Path.Combine(releaseRoot, "Pets", "uni", "pet.json"),
+            Path.Combine(releaseRoot, "Pets", "uni", "spritesheet.png")
         };
         foreach (var path in required)
             RequirePath(path);
 
         if (!fullRelease)
             return;
-        RequirePath(Path.Combine(editRoot, "charts"));
+
     }
 
     private static void RequirePath(string path)
@@ -168,33 +192,76 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
             throw new BuildFailedException($"Release dependency is missing: {path}");
     }
 
-    private static void CollectChartLibrary(string projectRoot, string editRoot)
+    private static string ResolveDotNetSdk(string projectRoot)
     {
-        var configured = Environment.GetEnvironmentVariable("MAJDATA_CHART_LIBRARY");
-        var repositoryRoot = Directory.GetParent(projectRoot)?.FullName;
-        var candidates = new[]
+        var candidates = new List<string>
         {
-            configured,
-            Path.Combine(projectRoot, "charts"),
-            repositoryRoot == null
-                ? null
-                : Path.Combine(repositoryRoot, "release", "MaiChartAssistant", "charts")
+            Environment.GetEnvironmentVariable("MAJDATA_DOTNET"),
+            Path.Combine(projectRoot, ".codex-build", "dotnet", "dotnet.exe")
         };
+        foreach (var root in new[]
+                 {
+                     Environment.GetEnvironmentVariable("DOTNET_ROOT_X64"),
+                     Environment.GetEnvironmentVariable("DOTNET_ROOT"),
+                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet"),
+                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet")
+                 })
+            if (!string.IsNullOrWhiteSpace(root))
+                candidates.Add(Path.Combine(root, "dotnet.exe"));
+        candidates.Add("dotnet");
+
+        var attempted = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in candidates)
         {
-            if (string.IsNullOrWhiteSpace(candidate) || !Directory.Exists(candidate))
+            if (string.IsNullOrWhiteSpace(candidate) || !seen.Add(candidate))
                 continue;
-            CopyDirectory(candidate, Path.Combine(editRoot, "charts"));
-            return;
+            try
+            {
+                // A runtime-only host exists and starts, but cannot publish.
+                // --version also checks SDK selection under this project's global.json.
+                using var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = candidate,
+                    Arguments = "--version",
+                    WorkingDirectory = projectRoot,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                });
+                if (process == null) continue;
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(15000))
+                {
+                    process.Kill();
+                    attempted.Add(candidate + ": SDK probe timed out");
+                    continue;
+                }
+                var version = output.GetAwaiter().GetResult().Trim();
+                var failure = error.GetAwaiter().GetResult().Trim();
+                if (process.ExitCode == 0 &&
+                    Version.TryParse(version.Split('-')[0], out var sdkVersion) && sdkVersion.Major >= 6)
+                {
+                    UnityEngine.Debug.Log($"[MajdataViewAlpha] Desktop SDK: {candidate} ({version})");
+                    return candidate;
+                }
+                attempted.Add(candidate + ": " + version + " " + failure);
+            }
+            catch (Exception exception)
+            {
+                attempted.Add(candidate + ": " + exception.Message);
+            }
         }
-
-        UnityEngine.Debug.LogWarning(
-            "[MajdataViewAlpha] Chart library was not found. " +
-            "Set MAJDATA_CHART_LIBRARY before building to include charts in the release.");
+        throw new BuildFailedException(
+            "未找到可用的 .NET SDK（仅安装 Runtime 不能打包 Edit / Launcher）。" +
+            "安装 .NET 8 SDK，或将 MAJDATA_DOTNET 设置为含 SDK 的 dotnet.exe 完整路径。\n" +
+            string.Join("\n", attempted));
     }
 
     private static string Publish(
-        string projectRoot, string projectName, string publishRoot, string tempRoot,
+        string dotnet, string projectRoot, string projectName, string publishRoot, string tempRoot,
         params string[] extraArguments)
     {
         var projectFile = Path.Combine(projectRoot, projectName, projectName + ".csproj");
@@ -209,7 +276,7 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = "dotnet",
+            FileName = dotnet,
             WorkingDirectory = projectRoot,
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -231,6 +298,10 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
         startInfo.Environment["TEMP"] = tempRoot;
         startInfo.Environment["TMP"] = tempRoot;
         startInfo.Environment["DOTNET_CLI_HOME"] = Path.Combine(tempRoot, "dotnet-home");
+        var packageCache = Path.Combine(projectRoot, ".codex-build", "nuget");
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NUGET_PACKAGES")) &&
+            Directory.Exists(packageCache))
+            startInfo.Environment["NUGET_PACKAGES"] = packageCache;
 
         using var process = Process.Start(startInfo)
                             ?? throw new BuildFailedException($"Failed to start dotnet publish for {projectName}.");
@@ -245,14 +316,38 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
         return output;
     }
 
-    private static void CopyDirectory(string source, string destination)
+    private static bool ExcludeEditorPayload(string relative)
+    {
+        var path = relative.Replace('\\', '/');
+        return path.Equals("ffmpeg.exe", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith("tools/Maicaiyin/", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith("ChartSearchCache/", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith("charts/", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains("/__pycache__/");
+    }
+
+    private static void PruneRetiredEditorFiles(string editRoot)
+    {
+        var root = Path.GetFullPath(editRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var relative in new[] { "tools/Maicaiyin", "ChartSearchCache", "ffmpeg.exe" })
+        {
+            var path = Path.GetFullPath(Path.Combine(root, relative));
+            if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new BuildFailedException("Invalid release path.");
+            if (Directory.Exists(path)) Directory.Delete(path, true);
+            else if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    private static void CopyDirectory(string source, string destination, bool leanEditor = false)
     {
         Directory.CreateDirectory(destination);
-        foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
-            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
         foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
         {
-            var target = Path.Combine(destination, Path.GetRelativePath(source, file));
+            var relative = Path.GetRelativePath(source, file);
+            if (leanEditor && ExcludeEditorPayload(relative)) continue;
+            var target = Path.Combine(destination, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(file, target, true);
         }

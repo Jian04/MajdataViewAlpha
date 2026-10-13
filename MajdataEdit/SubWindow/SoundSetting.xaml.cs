@@ -26,6 +26,56 @@ public partial class SoundSetting : Window
         InitializeComponent();
     }
 
+    internal FrameworkElement CreateSidebarContent(Grid original)
+    {
+        // Preserve the individual mixer controls and their bindings, but lay
+        // them out in rows instead of absolute margins in a shrinking window.
+        var channels = original.Children.OfType<Grid>().Where(g => g.Children.OfType<Slider>().Any()).ToArray();
+        var commands = original.Children.OfType<Grid>().First(g => g.Children.OfType<Button>().Any());
+        original.Children.Clear();
+        var strip = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8) };
+        foreach (var channel in channels)
+        {
+            channel.Margin = new Thickness(0, 0, 6, 0); channel.Width = 88; channel.Height = 290;
+            channel.RowDefinitions.Clear();
+            channel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
+            channel.RowDefinitions.Add(new RowDefinition());
+            channel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
+            foreach (var child in channel.Children.OfType<FrameworkElement>().ToArray())
+            {
+                if (child is ScrollViewer) { channel.Children.Remove(child); continue; }
+                child.Margin = new Thickness(0);
+                if (child is Label label)
+                {
+                    Grid.SetRow(child, label.Name.EndsWith("_Value", StringComparison.Ordinal) ? 2 : 0);
+                    label.Width = double.NaN; label.VerticalAlignment = VerticalAlignment.Center;
+                    label.HorizontalAlignment = HorizontalAlignment.Stretch;
+                    label.HorizontalContentAlignment = HorizontalAlignment.Center;
+                }
+                else
+                {
+                    Grid.SetRow(child, 1); child.Margin = new Thickness(0, 6, 0, 6);
+                    child.VerticalAlignment = VerticalAlignment.Stretch;
+                    child.HorizontalAlignment = HorizontalAlignment.Center;
+                    child.Width = child is Slider ? 36 : 18;
+                }
+            }
+            strip.Children.Add(channel);
+        }
+        var root = new DockPanel();
+        var buttons = new WrapPanel { Margin = new Thickness(8) };
+        foreach (var button in commands.Children.OfType<Button>().ToArray())
+        {
+            commands.Children.Remove(button); button.Width = double.NaN;
+            button.Margin = new Thickness(0, 0, 6, 6); button.Padding = new Thickness(8, 0, 8, 0);
+            buttons.Children.Add(button);
+        }
+        DockPanel.SetDock(buttons, Dock.Bottom); root.Children.Add(buttons);
+        root.Children.Add(new ScrollViewer { Content = strip, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalAlignment = VerticalAlignment.Top });
+        return root;
+    }
+
     private void SoundSettingWindow_Loaded(object sender, RoutedEventArgs e)
     {
         SliderValueBindingMap.Add(BGM_Slider, BGM_Value);
@@ -107,6 +157,7 @@ public partial class SoundSetting : Window
             MainWindow.SetMineVolume(MainWindow.MineVolume);
 
             SliderValueBindingMap[sld].Content = sld.Value.ToString("P0");
+            SaveVolumeDefaults();
         }
 
         slider.ValueChanged += Slider_ValueChanged;
@@ -120,6 +171,7 @@ public partial class SoundSetting : Window
         {
             MainWindow.SetMineVolume((float)args.NewValue);
             Mine_Value.Content = args.NewValue.ToString("P0");
+            SaveVolumeDefaults();
         };
     }
 
@@ -129,7 +181,8 @@ public partial class SoundSetting : Window
         UpdateLevelTimer.Dispose();
     }
 
-    private void BtnSetDefault_Click(object sender, RoutedEventArgs e)
+    private void BtnSetDefault_Click(object sender, RoutedEventArgs e) => SaveVolumeDefaults();
+    private void SaveVolumeDefaults()
     {
         Bass.BASS_ChannelGetAttribute(MainWindow.bgmStream, BASSAttribute.BASS_ATTRIB_VOL,
             ref MainWindow.editorSetting!.Default_BGM_Level);
@@ -151,7 +204,7 @@ public partial class SoundSetting : Window
             ref MainWindow.editorSetting!.Default_Hanabi_Level);
         MainWindow.editorSetting!.Default_Mine_Level = MainWindow.MineVolume;
         MainWindow.SaveEditorSetting();
-        MessageBox.Show(MainWindow.GetLocalizedString("SetVolumeDefaultSuccess"));
+
     }
 
     private void BtnSetToDefault_Click(object sender, RoutedEventArgs e)

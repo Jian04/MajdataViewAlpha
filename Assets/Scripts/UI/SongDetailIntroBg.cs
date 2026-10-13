@@ -2,15 +2,17 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using UnityEngine.UI;
+using MajdataCore;
 
 // Dynamic background for the opening cover transition, recreating the layered
 // maiDecorationBg from the official maimai site in code: radial gradient, slowly
 // rotating pattern, three rings, riseAndFade tiles/stars, and orbiting objects.
-// Three themes are available through introBgTheme, sent over HTTP by Edit:
+// Themes are selected through introBgTheme, sent over HTTP by Edit:
 //   default    = original pink/purple scene objects and Animator, kept unchanged
 //   circleplus = Japanese CiRCLE PLUS website
 //   circle     = international website
-// Both website themes are fully preloaded and built in Init, so texture decoding
+//   chunithm-xversex / chunithm-mate = CHUNITHM international / Japanese websites
+// All website themes are fully preloaded and built in Init, so texture decoding
 // and upload happen only at startup. Switching only changes visibility and cannot
 // stall chart entry or first playback. Original objects move into a hidden holder,
 // invalidating Animator paths, then return to their original positions for default.
@@ -51,6 +53,7 @@ public class SongDetailIntroBg : MonoBehaviour
 
     private sealed class Deco
     {
+        public ChunithmBackground.Layer chuniLayer;
         public RectTransform rt;
         public RawImage img;
         public float baseAlpha = 1f;
@@ -98,7 +101,7 @@ public class SongDetailIntroBg : MonoBehaviour
     private readonly List<Texture2D> ownedTextures = new();
     private Transform legacyHolder;
     private ThemeRig activeRig;
-    private string activeTheme = "default";
+    private string activeTheme = ChunithmBackground.Magical;
     private float timeline = 1f;   // Hidden at >=0
     private float speed = 1f;
     private bool initialized;
@@ -156,9 +159,12 @@ public class SongDetailIntroBg : MonoBehaviour
                 jacketBaseScale = jacketTransform.localScale;
         }
 
-        // Build both website themes at startup so decoding and GPU upload never occur during playback
+        // Build website themes at startup so decoding and GPU upload never occur during playback
         rigs["circleplus"] = BuildRig("circleplus");
         rigs["circle"] = BuildRig("circle");
+        rigs[ChunithmBackground.XVerseX] = BuildRig(ChunithmBackground.XVerseX);
+        rigs[ChunithmBackground.Mate] = BuildRig(ChunithmBackground.Mate);
+        rigs[ChunithmBackground.Magical] = BuildRig(ChunithmBackground.Magical);
         PrewarmRigs();
 
         initialized = true;
@@ -194,9 +200,9 @@ public class SongDetailIntroBg : MonoBehaviour
     {
         if (!initialized)
             return;
-        themeName = themeName != null ? themeName.Trim().ToLowerInvariant() : "default";
-        if (!rigs.ContainsKey(themeName))
-            themeName = "default";
+        themeName = themeName != null ? themeName.Trim().ToLowerInvariant() : ChunithmBackground.Magical;
+        if (themeName != "default" && !rigs.ContainsKey(themeName))
+            themeName = ChunithmBackground.Magical;
         if (themeName == activeTheme)
             return;
         activeTheme = themeName;
@@ -297,6 +303,28 @@ public class SongDetailIntroBg : MonoBehaviour
         rig.root.anchorMax = Vector2.one;
         rig.root.offsetMin = Vector2.zero;
         rig.root.offsetMax = Vector2.zero;
+
+        if (ChunithmBackground.Contains(themeName))
+        {
+            foreach (var layer in ChunithmBackground.Layers(themeName))
+            {
+                var texture = layer.solidColor != null ? Texture2D.whiteTexture : LoadTexture(themeName, layer.file, layer.grayscaleScreen);
+                var viewInset = themeName == ChunithmBackground.Magical
+                    ? (layer.file == "island_01.png" ? 230f : layer.file == "island_02.png" ? -230f : 0f) : 0f;
+                var deco = AddDeco(rig, layer.file, texture, new Vector2(layer.width, layer.height),
+                    new Vector2(layer.x + viewInset + layer.width / 2 - DesignWidth / 2,
+                        DesignHeight / 2 - layer.y - layer.height / 2), Anchor.Center);
+                deco.chuniLayer = layer;
+                deco.baseAlpha = layer.opacity;
+                if (layer.solidColor != null && ColorUtility.TryParseHtmlString(layer.solidColor, out var tint))
+                    deco.img.color = tint;
+                deco.exit = layer.backdrop ? ExitKind.Backdrop : ExitKind.CenterZoom;
+                deco.zoomAmount = .12f;
+                if (texture != null && (layer.tileX != 0 || layer.tileY != 0))
+                    texture.wrapMode = TextureWrapMode.Repeat;
+            }
+            return rig;
+        }
 
         // Radial-gradient backdrop: Japanese is pink with purple/cyan edges; international is pink to magenta
         var gradientStops = intl
@@ -451,14 +479,14 @@ public class SongDetailIntroBg : MonoBehaviour
         deco.exit = ExitKind.CornerRetreat;
     }
 
-    private Texture2D LoadTexture(string themeName, string fileName)
+    private Texture2D LoadTexture(string themeName, string fileName, bool grayscaleScreen = false)
     {
-        var cacheKey = themeName + ":" + fileName;
+        var cacheKey = themeName + ":" + fileName + (grayscaleScreen ? ":screen" : "");
         if (SharedTextures.TryGetValue(cacheKey, out var cached) && cached != null)
             return cached;
 
         var path = Path.Combine(Application.streamingAssetsPath,
-            "Background", "SongDetailBg", themeName, fileName + ".png");
+            "Background", "SongDetailBg", themeName, Path.HasExtension(fileName) ? fileName : fileName + ".png");
         if (!File.Exists(path))
             return null;
         var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
@@ -466,6 +494,15 @@ public class SongDetailIntroBg : MonoBehaviour
         {
             Destroy(texture);
             return null;
+        }
+        if (grayscaleScreen)
+        {
+            // Exact grayscale screen composition through a white alpha texture.
+            var pixels = texture.GetPixels32();
+            for (var i = 0; i < pixels.Length; i++)
+                pixels[i] = new Color32(255, 255, 255, (byte)(pixels[i].r * pixels[i].a / 255));
+            texture.SetPixels32(pixels);
+            texture.Apply();
         }
         texture.wrapMode = TextureWrapMode.Clamp;
         SharedTextures[cacheKey] = texture;
@@ -549,6 +586,21 @@ public class SongDetailIntroBg : MonoBehaviour
             if (deco.rt == null)
                 continue;
             deco.rt.sizeDelta = deco.designSize * scale;
+            if (deco.chuniLayer is { backdrop: true })
+            {
+                // Cover, without stretching the official artwork on wide windows.
+                var coverScale = Mathf.Max(width / DesignWidth, height / DesignHeight);
+                deco.rt.sizeDelta = deco.designSize * coverScale;
+            }
+            if (deco.chuniLayer != null && deco.img.texture != null &&
+                deco.chuniLayer.tileX == 0 && deco.chuniLayer.tileY == 0)
+            {
+                var textureAspect = (float)deco.img.texture.width / deco.img.texture.height;
+                var targetAspect = deco.designSize.x / deco.designSize.y;
+                var uv = targetAspect > textureAspect ? new Vector2(1, textureAspect / targetAspect)
+                    : new Vector2(targetAspect / textureAspect, 1);
+                deco.img.uvRect = new Rect((Vector2.one - uv) / 2, uv);
+            }
             Vector2 pivot, point;
             switch (deco.anchor)
             {
@@ -572,7 +624,7 @@ public class SongDetailIntroBg : MonoBehaviour
                     break;
                 default:
                     pivot = new Vector2(0.5f, 0.5f);
-                    point = Vector2.zero;
+                    point = deco.chuniLayer != null ? deco.designPos : Vector2.zero;
                     break;
             }
 
@@ -709,6 +761,42 @@ public class SongDetailIntroBg : MonoBehaviour
                     break;
             }
 
+            if (deco.chuniLayer != null)
+            {
+                var layer = deco.chuniLayer;
+                // Website layers fade at their final size; only designated parts fly in.
+                uniformScale = 1;
+                // Use equal travel time for entry and exit so strips never whip away.
+                var layerExitP = Mathf.Clamp01((t + EntryDuration) / EntryDuration);
+                var layerExitEase = layerExitP * layerExitP * layerExitP;
+                pos = deco.basePos + (new Vector2(layer.enterX, -layer.enterY) * (1 - enterEase) +
+                    new Vector2(layer.exitX, -layer.exitY) * layerExitEase) * rig.layoutHeight / DesignHeight;
+                alpha = deco.baseAlpha * enterFade * (1 - layerExitP);
+                var elapsed = t + IntroLeadTime;
+                var cycle = layer.period == 0 ? 0 : Mathf.Repeat(elapsed / Mathf.Abs(layer.period), 1);
+                if (layer.shimmerPeriod > 0)
+                {
+                    var shimmer = .5f - .5f * Mathf.Cos(elapsed / layer.shimmerPeriod * Mathf.PI * 2);
+                    alpha *= 1 - shimmer;
+                    pos.y -= 5 * shimmer * rig.layoutHeight / DesignHeight;
+                }
+                if (layer.pulse != 0)
+                    uniformScale *= 1 + layer.pulse * (.5f - .5f * Mathf.Cos(cycle * Mathf.PI * 2));
+                if (layer.rotation != 0)
+                    deco.rt.localEulerAngles = new Vector3(0, 0, -360 * elapsed / layer.rotation);
+                if (layer.driftY != 0)
+                {
+                    pos += new Vector2(layer.driftX, -layer.driftY) * ((cycle - .5f) * rig.layoutHeight / DesignHeight);
+                    alpha *= Mathf.Min(Mathf.Clamp01(cycle / .04f), Mathf.Clamp01((1 - cycle) / .04f));
+                }
+                if (layer.tileX != 0 || layer.tileY != 0)
+                {
+                    var uvSize = new Vector2(layer.tileX != 0 ? layer.width / layer.tileX : 1,
+                        layer.tileY != 0 ? layer.height / layer.tileY : layer.tileHeight != 0 ? layer.height / layer.tileHeight : 1);
+                    deco.img.uvRect = new Rect(layer.tileX != 0 ? cycle * Mathf.Sign(layer.period) : 0,
+                        1 - uvSize.y - (layer.tileY != 0 ? cycle : 0), uvSize.x, uvSize.y);
+                }
+            }
             deco.rt.anchoredPosition = pos;
             deco.rt.localScale = new Vector3(uniformScale, deco.flipY ? -uniformScale : uniformScale, 1f);
             var color = deco.img.color;

@@ -9,7 +9,8 @@ namespace MajdataCore
         Hold,
         Touch,
         TouchHold,
-        Slide
+        Slide,
+        NoiseZone
     }
 
     [Serializable]
@@ -142,6 +143,63 @@ namespace MajdataCore
             out string error,
             bool forPreview = false)
         {
+            var original = text ?? string.Empty;
+            text = original;
+            var skins = new List<(int Offset, string File)>();
+            // Remove only image annotations. Numeric radii and trajectory borrows
+            // remain part of the note grammar, including their nested brackets.
+            int depth = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (depth == 0 && text[i] == '~' && i + 1 < text.Length && text[i + 1] == '[')
+                {
+                    int close = text.IndexOf(']', i + 2);
+                    if (close >= 0 && text.IndexOf('[', i + 2, close - i - 2) < 0 && SlidePathParser.IsSkinPathUsable(
+                            text.Substring(i + 2, close - i - 2), out var file))
+                    {
+                        skins.Add((i, file));
+                        text = text.Remove(i, close - i + 1);
+                        i--;
+                        continue;
+                    }
+                }
+                if (text[i] == '[') depth++;
+                else if (text[i] == ']') depth--;
+            }
+            if (!TryParseCore(text, out note, out error, forPreview)) return false;
+            note.source = original ?? string.Empty;
+            foreach (var skin in skins)
+            {
+                var target = note.position;
+                if (note.path != null)
+                {
+                    foreach (var segment in note.path.segments)
+                    {
+                        if (segment.hasMiddle && segment.middle.sourceOffset > 0 && segment.middle.sourceOffset < skin.Offset)
+                            target = segment.middle;
+                        if (segment.end.sourceOffset > 0 && segment.end.sourceOffset < skin.Offset)
+                            target = segment.end;
+                        // SlideCode has its own geometry parser; its entire code
+                        // is one trail, distinct from the head preceding it.
+                        if (!string.IsNullOrEmpty(segment.slideCode) &&
+                            SlidePathParser.ContainsSlideShape(text.Substring(0, skin.Offset)))
+                            target = segment.end;
+                    }
+                }
+                if (target.HasSkin)
+                {
+                    error = SlideSyntaxValidator.Diagnose("同一个音符不能重复指定图片", "DUPLICATE NOTE SKIN", original);
+                    return false;
+                }
+                target.skin = skin.File;
+                target.source += "~[" + skin.File.Replace('/', '\\') + "]";
+            }
+            return true;
+        }
+
+        private static bool TryParseCore(
+            string text, out NoteExpressionData note, out string error, bool forPreview)
+        {
             note = new NoteExpressionData { source = text ?? string.Empty };
             error = string.Empty;
             if (string.IsNullOrWhiteSpace(text))
@@ -154,6 +212,29 @@ namespace MajdataCore
             }
 
             text = StripInlinedCommands(text);
+
+            if (text.StartsWith("X", StringComparison.OrdinalIgnoreCase))
+            {
+                var body = text.Substring(1);
+                if (!SlidePathParser.TryReadPosition(body, 0, out var zone, out var end) ||
+                    !zone.IsTouch || zone.isDZone || zone.HasCustomRadius)
+                {
+                    error = SlideSyntaxValidator.Diagnose("噪域位置应写 A1–E8 或 C，例如 XD1[8:1]", "NOISE ZONE NEEDS A TOUCH AREA, E.G. XD1[8:1]", text);
+                    return false;
+                }
+                var duration = body.Substring(end);
+                if (duration.Length != 0 &&
+                    !SlideSyntaxValidator.TryParseDuration(duration, out _, allowZeroLength: true))
+                {
+                    error = SlideSyntaxValidator.Diagnose("噪域时长与 Hold 相同，例如 XD1[8:1]；省略为短噪域", "INVALID NOISE ZONE DURATION; USE XD1[8:1] OR XD1", text);
+                    return false;
+                }
+                note.kind = NoteExpressionKind.NoiseZone;
+                note.position = zone;
+                note.duration = duration;
+                note.isZeroLengthHold = duration.Length == 0;
+                return true;
+            }
 
             if (SlidePathParser.TryTakeTrajectoryBorrow(
                     text, out var borrowed, out var carrier))
@@ -396,8 +477,16 @@ namespace MajdataCore
             bool forPreview,
             out string error)
         {
-            if (text.IndexOf('~') >= 0)
+            // Slide positions may replace images, but may not override radius.
+            for (var at = text.IndexOf('~'); at >= 0; at = text.IndexOf('~', at + 1))
             {
+                var skinPosition = new SlidePositionData();
+                if (SlidePathParser.TryReadRadiusOverride(text, at, skinPosition, out var after) ==
+                    RadiusOverrideResult.Applied && skinPosition.HasSkin)
+                {
+                    at = after - 1;
+                    continue;
+                }
                 error = SlideSyntaxValidator.Diagnose(
                     "~ 暂不支持写在星星里",
                     "RADIUS OVERRIDE IS NOT SUPPORTED INSIDE A SLIDE",

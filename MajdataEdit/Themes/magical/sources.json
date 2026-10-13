@@ -1,0 +1,72 @@
+{
+  "assets": [
+    {
+      "file": "croud_01.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/croud_01.png",
+      "sha256": "9A2AAE66C2B9D70DC268982DE33A8303D57E0D0D0A9CB445AF79722676FCC810"
+    },
+    {
+      "file": "croud_02.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/croud_02.png",
+      "sha256": "EDF749AF9D386DB61FB83032EAB35B7025AD2DD25C84998F14F2420E4A683AAD"
+    },
+    {
+      "file": "croud_03.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/croud_03.png",
+      "sha256": "302D3E517BABF8C17B8F4D1F4C98B001383CF4FDEAA176EFA87D9CC31000BA09"
+    },
+    {
+      "file": "front.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/pc/front.png",
+      "sha256": "B02AEF222DF64A05206FB1A827765CA9DD53FF5C16B82E760F2B7F546DF49F62"
+    },
+    {
+      "file": "island_01.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/pc/island_01.png",
+      "sha256": "E6F78FA24FC8C237D37D59CB508D229E33F09545479C68A17D6D00F940D0B48C"
+    },
+    {
+      "file": "island_02.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/pc/island_02.png",
+      "sha256": "A1EDC5A5A17EE5EF8DF5B46EC332F784222E2E120641005355B6EBF079902FA6"
+    },
+    {
+      "file": "note_01.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/note_01.png",
+      "sha256": "9FA1BD5D48040EC3888F987209DFFD00ADC5DB8B220B56618DF85F686B3F5E1A"
+    },
+    {
+      "file": "note_02.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/note_02.png",
+      "sha256": "0F744D16231B27463582B2BE9E464FDEDDB533CFC89350B8C61DC5F125B7878B"
+    },
+    {
+      "file": "sea.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/sea.png",
+      "sha256": "8F0DB268DF8580AF3C971CFA12994756ED40A11B3217E5ADD0CDCD58692CB68E"
+    },
+    {
+      "file": "sp_bg_02.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/pc/sp_bg_02.png",
+      "sha256": "93322EFF54BFB4EB1E6648E8B2FC845963FA6E5A9A5638C3F096F5FC4A0BB9B2"
+    },
+    {
+      "file": "staff_01.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/staff_01.png",
+      "sha256": "0089CA9CA0F91C7378E03D509E190145B048AB7E052F6F98C0BC250F939E8AFD"
+    },
+    {
+      "file": "staff_02.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/staff_02.png",
+      "sha256": "B2E6B73034F6AC9492C922DEC117D0C511B9D11629BFECAE3195EBDFB9A50003"
+    },
+    {
+      "file": "staff_03.png",
+      "url": "https://maimai.sega.jp/assets/maiDecorationBg/staff_03.png",
+      "sha256": "F83EF3E27180E2BB03DDE0F07FF052C09F036A4A0347AFD4397B4867D8E1729A"
+    }
+  ],
+  "source": "https://maimai.sega.jp/",
+  "credit": "© SEGA",
+  "retrieved": "2026-09-17"
+}

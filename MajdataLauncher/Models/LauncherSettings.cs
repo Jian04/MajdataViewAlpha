@@ -7,6 +7,9 @@ internal sealed class LauncherSettings
     [JsonPropertyName("pet")]
     public string Pet { get; set; } = "dilaxiong";
 
+    [JsonPropertyName("petSelectionVersion")]
+    public int PetSelectionVersion { get; set; } = 1;
+
     [JsonPropertyName("viewPath")]
     public string ViewPath { get; set; } = string.Empty;
 

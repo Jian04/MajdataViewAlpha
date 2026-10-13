@@ -1,4 +1,5 @@
 using ICSharpCode.AvalonEdit;
+using System.Windows.Input;
 
 namespace MajdataEdit.Editor;
 
@@ -11,6 +12,33 @@ internal sealed class FumenEditorAdapter
     public FumenEditorAdapter(TextEditor editor)
     {
         this.editor = editor;
+        editor.Options.AllowScrollBelowDocument = true;
+        // AvalonEdit normally maps a click below the document to the last line's
+        // mouse column. Correct the drag anchor after its selection handler runs.
+        editor.TextArea.AddHandler(Mouse.MouseDownEvent, new MouseButtonEventHandler((_, e) =>
+        {
+            if (e.ChangedButton == MouseButton.Left && Keyboard.Modifiers == ModifierKeys.None &&
+                Mouse.Captured == editor.TextArea)
+                MoveCaretBelowDocument(e.GetPosition(editor.TextArea.TextView).Y);
+        }), true);
+    }
+
+    internal bool MoveCaretBelowDocument(double viewY)
+    {
+        var view = editor.TextArea.TextView;
+        if (viewY < 0 || viewY >= view.ActualHeight || viewY + view.ScrollOffset.Y < view.DocumentHeight)
+            return false;
+        editor.TextArea.ClearSelection();
+        editor.CaretOffset = editor.Document.TextLength;
+        return true;
+    }
+
+    internal bool ZoomWithWheel(int delta, ModifierKeys modifiers)
+    {
+        if ((modifiers & ModifierKeys.Control) == 0 || delta == 0)
+            return false;
+        editor.FontSize = Math.Clamp(editor.FontSize + delta / 120d, 8d, 32d);
+        return true;
     }
 
     public string Text
@@ -25,13 +53,13 @@ internal sealed class FumenEditorAdapter
         set => editor.CaretOffset = NormalizedToRawOffset(value);
     }
 
-    public int CurrentLine => editor.Document.GetLineByOffset(CaretOffset).LineNumber;
+    public int CurrentLine => editor.Document.GetLineByOffset(editor.CaretOffset).LineNumber;
     public int CurrentColumn
     {
         get
         {
-            var line = editor.Document.GetLineByOffset(CaretOffset);
-            return CaretOffset - line.Offset;
+            var line = editor.Document.GetLineByOffset(editor.CaretOffset);
+            return editor.CaretOffset - line.Offset;
         }
     }
     public string SelectedText => editor.SelectedText;
@@ -94,7 +122,9 @@ internal sealed class FumenEditorAdapter
         line = Math.Clamp(line + 1, 1, editor.Document.LineCount);
         var documentLine = editor.Document.GetLineByNumber(line);
         var offset = documentLine.Offset + Math.Clamp(column, 0, documentLine.Length);
-        Select(offset, 0);
+        // DocumentLine.Offset includes CRLF; Select accepts normalized LF offsets.
+        // Converting only once prevents a growing drift on later chart lines.
+        Select(RawToNormalizedOffset(offset), 0);
     }
 
     public int FindNext(string text)
@@ -110,7 +140,7 @@ internal sealed class FumenEditorAdapter
         return found;
     }
 
-    private int RawToNormalizedOffset(int rawOffset)
+    internal int RawToNormalizedOffset(int rawOffset)
     {
         var raw = editor.Text;
         rawOffset = Math.Clamp(rawOffset, 0, raw.Length);
@@ -124,7 +154,7 @@ internal sealed class FumenEditorAdapter
         return normalized;
     }
 
-    private int NormalizedToRawOffset(int normalizedOffset)
+    internal int NormalizedToRawOffset(int normalizedOffset)
     {
         var raw = editor.Text;
         normalizedOffset = Math.Clamp(normalizedOffset, 0, Text.Length);

@@ -43,10 +43,13 @@ public class JsonDataLoader : MonoBehaviour
     float ignoreOffset = 0;
     bool previewOnly = false;
     bool includeActiveSustainsAtOffset = false;
+    bool restoringBeat;
+    float sustainRestoreTime;
     Coroutine noteParserTask = null;
     private int runtimeBindingReadyFrame = -1;
     private int reloadGeneration;
     public bool RuntimeBindingsReady => runtimeBindingReadyFrame < 0;
+    public string LoadError { get; private set; }
 
     /// <summary>
     /// A beat the view could not build. Validation runs on the chart text, but the
@@ -118,6 +121,7 @@ public class JsonDataLoader : MonoBehaviour
 
     private int slideLayer = -1;
     private int noteSortOrder = 0;
+    private int guideStarOrder = 0;
 
     private static readonly Dictionary<SimaiNoteType, int> NOTE_LAYER_COUNT = new Dictionary<SimaiNoteType, int>()
     {
@@ -556,17 +560,16 @@ public class JsonDataLoader : MonoBehaviour
                     if (titleText != null) titleText.text = loadedData.title;
                     if (artistText != null) artistText.text = loadedData.artist;
                     if (designText != null) designText.text = loadedData.designer;
-                    if (songDetailTemplate != null && cardImage != null &&
-                        songDetailTemplate.IsMasterTemplate(loadedData) &&
-                        songDetailTemplate.ApplyMaster(loadedData, cardImage, songDetailJacket,
-                            diffText, levelText, titleText, artistText, designText))
+                    try
                     {
+                        ApplySongDetail();
                     }
-                    else
+                    catch (Exception exception)
                     {
-                        songDetailTemplate?.ResetOriginal();
-                        if (cardImage != null)
-                            cardImage.color = diffColors[Mathf.Clamp(loadedData.diffNum, 0, diffColors.Length - 1)];
+                        LoadError = exception.Message;
+                        UnityEngine.Debug.LogError(LoadError);
+                        CompleteEmptyLoad();
+                        return;
                     }
 
                     CountNoteSum(loadedData);
@@ -606,6 +609,21 @@ public class JsonDataLoader : MonoBehaviour
 
     }
 
+    private void ApplySongDetail()
+    {
+        if (loadedData.songDetailStyle == 1)
+        {
+            if (songDetailTemplate == null || cardImage == null)
+                throw new InvalidOperationException("仿官封面组件未加载。");
+            songDetailTemplate.ApplyMaster(loadedData, cardImage, songDetailJacket,
+                diffText, levelText, titleText, artistText, designText);
+            return;
+        }
+        songDetailTemplate?.ResetOriginal();
+        if (cardImage != null)
+            cardImage.color = diffColors[Mathf.Clamp(loadedData.diffNum, 0, diffColors.Length - 1)];
+    }
+
     private void CompleteEmptyLoad()
     {
         noteParserTask = null;
@@ -615,15 +633,27 @@ public class JsonDataLoader : MonoBehaviour
 
     private void LateUpdate()
     {
+        StarDisplayOrder.Flush();
         // Notes created during HttpHandler.Update bind their input in Start() on the
         // following frame. Publish readiness only after that frame's Start/Update pass.
         if (runtimeBindingReadyFrame >= 0 && Time.frameCount >= runtimeBindingReadyFrame)
+        {
+            // Start() has now initialized all sensors/queues. Pending notes cannot
+            // judge before this commit, even if the audio clock is already running.
+            foreach (var note in notes.GetComponentsInChildren<NoteDrop>(true))
+                if (note.timelineRestorePending) note.RestoreTimelineState(sustainRestoreTime);
             runtimeBindingReadyFrame = -1;
+        }
     }
     IEnumerator LoadNotes(IEnumerable<SimaiTimingPoint> timingList, float ignoreOffset, double lastNoteTime)
     {
         if (timeProvider == null)
             timeProvider = FindAnyObjectByType<AudioTimeProvider>();
+        var noise = GetComponent<NoiseZoneController>() ?? gameObject.AddComponent<NoiseZoneController>();
+        noise.Configure(timingList, notes.transform, timeProvider, timing =>
+            SvController.GetTouchWarningLead(timing.time,
+                touchSpeed * GetHSpeedAt("blockarea", timing.time, timing.HSpeed, false, false, timing.streamIndex),
+                SvController.MakeCurveKey(timing.streamIndex, "blockarea")), ResolveNoiseVisual, ResolveNoiseWarningProgress);
 
         if (!previewOnly)
             noteManager.Refresh();
@@ -671,22 +701,34 @@ public class JsonDataLoader : MonoBehaviour
             {
                 var beatNotes = timing.noteList;
                 var restoringActiveSustain = false;
+                restoringBeat = false;
                 if (timing.time < ignoreOffset)
                 {
-                    CountNoteCount(timing.noteList);
                     if (!includeActiveSustainsAtOffset)
+                    {
+                        CountNoteCount(timing.noteList);
                         continue;
+                    }
+                    CountNoteCount(timing.noteList.FindAll(note => !RemainsVisibleAt(note, timing.time, ignoreOffset)));
 
                     beatNotes = timing.noteList.FindAll(note =>
                         RemainsVisibleAt(note, timing.time, ignoreOffset));
                     if (beatNotes.Count == 0)
                         continue;
-                    restoringActiveSustain = true;
+                    restoringActiveSustain = restoringBeat = true;
+                    foreach (var sustain in beatNotes)
+                        if (sustain.noteType == SimaiNoteType.Slide && !sustain.isTrajectoryOnly && !sustain.isSlideNoHead && !sustain.isFakeHead)
+                        {
+                            if (sustain.isBreak) ObjectCounter.breakCount++;
+                            else if (sustain.isTouchSlide && sustain.touchArea != 'K') ObjectCounter.touchCount++;
+                            else ObjectCounter.tapCount++;
+                        }
                 }
                 List<TouchDrop> members = new();
                 for (var i = 0; i < beatNotes.Count; i++)
                 {
                     var note = beatNotes[i];
+                    if (note.noteType == SimaiNoteType.NoiseZone) continue;
                     NormalizeBorrowedTrajectory(timing, note);
                     if (note.noteType is SimaiNoteType.Tap or SimaiNoteType.Hold or SimaiNoteType.Slide &&
                         (note.startPosition < 1 || note.startPosition > 8))
@@ -1157,7 +1199,7 @@ public class JsonDataLoader : MonoBehaviour
         EachRule.IsEach(
             timing.isEach,
             timing.noteList.Count(
-                note => EachRule.CountsTowardEach(note.isSlideNoHead)));
+                note => note.noteType != SimaiNoteType.NoiseZone && EachRule.CountsTowardEach(note.isSlideNoHead)));
 
     /// <summary>
     /// Whether this beat's slide trails are drawn yellow, which is a different question
@@ -1195,6 +1237,7 @@ public class JsonDataLoader : MonoBehaviour
         // Fake notes disable judgement, but they are still live-chart objects and
         // must expire normally. Only timeline/standby previews are reversible.
         component.previewOnly = previewOnly;
+        component.timelineRestorePending = restoringBeat && !previewOnly;
         if (isFake)
             AttachFakeLifetime(noteObject);
         if (component is StarDrop star)
@@ -1264,6 +1307,7 @@ public class JsonDataLoader : MonoBehaviour
         bool previewOnly = false,
         bool preserveTintCache = false)
     {
+        LoadError = null;
         runtimeBindingReadyFrame = previewOnly ? -1 : int.MaxValue;
         droppedBeats.Clear();
         if (!preserveTintCache)
@@ -1272,7 +1316,8 @@ public class JsonDataLoader : MonoBehaviour
         State = NoteLoaderStatus.LodingJson;
         this.ignoreOffset = ignoreOffset;
         this.previewOnly = previewOnly;
-        includeActiveSustainsAtOffset = false;
+        includeActiveSustainsAtOffset = !previewOnly && ignoreOffset > 0f;
+        sustainRestoreTime = ignoreOffset;
     }
 
     public void LoadJsonImmediate(
@@ -1282,6 +1327,7 @@ public class JsonDataLoader : MonoBehaviour
         bool preserveTintCache = false,
         bool includeActiveSustains = false)
     {
+        LoadError = null;
         runtimeBindingReadyFrame = -1;
         droppedBeats.Clear();
         if (!preserveTintCache)
@@ -1289,7 +1335,8 @@ public class JsonDataLoader : MonoBehaviour
         loadedData = JsonConvert.DeserializeObject<Majson>(json);
         this.ignoreOffset = ignoreOffset;
         this.previewOnly = previewOnly;
-        includeActiveSustainsAtOffset = includeActiveSustains;
+        includeActiveSustainsAtOffset = includeActiveSustains || !previewOnly && ignoreOffset > 0f;
+        sustainRestoreTime = ignoreOffset;
         if (loadedData == null || loadedData.timingList.Count == 0)
         {
             State = NoteLoaderStatus.Finished;
@@ -1304,18 +1351,7 @@ public class JsonDataLoader : MonoBehaviour
             if (titleText != null) titleText.text = loadedData.title;
             if (artistText != null) artistText.text = loadedData.artist;
             if (designText != null) designText.text = loadedData.designer;
-            if (songDetailTemplate != null && cardImage != null &&
-                songDetailTemplate.IsMasterTemplate(loadedData) &&
-                songDetailTemplate.ApplyMaster(loadedData, cardImage, songDetailJacket,
-                    diffText, levelText, titleText, artistText, designText))
-            {
-            }
-            else
-            {
-                songDetailTemplate?.ResetOriginal();
-                if (cardImage != null)
-                    cardImage.color = diffColors[Mathf.Clamp(loadedData.diffNum, 0, diffColors.Length - 1)];
-            }
+            ApplySongDetail();
 
             CountNoteSum(loadedData);
             ObjectCounter.CompleteChartInitialization();
@@ -1343,6 +1379,7 @@ public class JsonDataLoader : MonoBehaviour
     public void ClearLoadedNotes(bool immediate = false)
     {
         PreviewReplacementInProgress = false;
+        GetComponent<NoiseZoneController>()?.Clear();
         UnityEngine.Debug.Log($"[MajdataView] ClearLoadedNotes(immediate={immediate}): clearing input bindings and judge queues.");
         if (noteParserTask != null)
         {
@@ -1375,6 +1412,7 @@ public class JsonDataLoader : MonoBehaviour
         GameObject.Find("MultTouchHandler")?.GetComponent<MultTouchHandler>()?.clearSlots();
         slideLayer = -1;
         noteSortOrder = 0;
+        guideStarOrder = 0;
         State = NoteLoaderStatus.Idle;
         runtimeBindingReadyFrame = -1;
         StartCoroutine(ResetReloadFlagNextFrame(generation));
@@ -1416,6 +1454,7 @@ public class JsonDataLoader : MonoBehaviour
 
     public GameObject[] BeginPreviewReplacement()
     {
+        GetComponent<NoiseZoneController>()?.Clear();
         CancelPendingLoad();
         HttpHandler.IsReloding = true;
         reloadGeneration++;
@@ -1446,6 +1485,7 @@ public class JsonDataLoader : MonoBehaviour
         GameObject.Find("MultTouchHandler")?.GetComponent<MultTouchHandler>()?.clearSlots();
         slideLayer = -1;
         noteSortOrder = 0;
+        guideStarOrder = 0;
         return previous.ToArray();
     }
 
@@ -1490,6 +1530,8 @@ public class JsonDataLoader : MonoBehaviour
         foreach (var timing in json.timingList)
             foreach (var note in timing.noteList)
             {
+                if (note.isTrajectoryOnly)
+                    continue;
                 if (note.isFake && note.noteType != SimaiNoteType.Slide)
                     continue;
                 if (note.isTouchSlide)
@@ -1550,6 +1592,8 @@ public class JsonDataLoader : MonoBehaviour
     {
         foreach (var note in timing)
         {
+            if (note.isTrajectoryOnly)
+                continue;
             if (note.isFake && note.noteType != SimaiNoteType.Slide)
                 continue;
             if (note.isTouchSlide)
@@ -1945,6 +1989,7 @@ public class JsonDataLoader : MonoBehaviour
         slideObject.AddComponent<TouchSlideDrop>();
         var component = PrepareNote<TouchSlideDrop>(
             slideObject, note, note.isFakeSlide);
+        component.customSkin = parsedSegments[parsedSegments.Count - 1].end.skin;
         component.isEachInStream = stateIsEach;
         component.timeStart = (float)timing.time;
         component.time = (float)note.slideStartTime;
@@ -1955,6 +2000,7 @@ public class JsonDataLoader : MonoBehaviour
             "slide", note.isSlideBreak, stateIsEach, timing.streamIndex,
             note.isMineSlide);
         component.starSpeed = note.suppressSlideGuideStarFade ? 1f : starSpeed;
+        component.smoothSlideAnime = smoothSlideAnime;
         component.startArea = note.touchArea;
         component.endArea = note.touchEndArea;
         component.startPosition = note.startPosition;
@@ -1987,6 +2033,7 @@ public class JsonDataLoader : MonoBehaviour
         component.barScale = slideSize;
 
         component.star = Instantiate(star_slidePrefab, notes.transform);
+        StarDisplayOrder.Register(component.star, guideStarOrder--);
         var starRenderer = component.star.GetComponent<SpriteRenderer>();
         starRenderer.sprite = note.isMineSlide
             ? customSkin.Star
@@ -2005,7 +2052,7 @@ public class JsonDataLoader : MonoBehaviour
         slideLayer -= 24;
         component.Initialize();
 
-        if (note.isSlideNoHead)
+        if (note.isSlideNoHead || restoringBeat)
             return;
         if (note.touchArea == 'K')
         {
@@ -2163,7 +2210,8 @@ public class JsonDataLoader : MonoBehaviour
         var GOnote = Instantiate(starPrefab, notes.transform);
         var NDCompo = PrepareNote<StarDrop>(GOnote, note, note.isFakeHead);
         NDCompo.isEachInStream = stateIsEach;
-        AddJudgeNote(GOnote, note, note.isFakeHead);
+        if (!note.isSlideNoHead && !restoringBeat)
+            AddJudgeNote(GOnote, note, note.isFakeHead);
 
 
         // Note layer order
@@ -2204,6 +2252,7 @@ public class JsonDataLoader : MonoBehaviour
         slideWifi.SetActive(false);
         NDCompo.slide = slideWifi;
         var WifiCompo = PrepareNote<WifiDrop>(slideWifi, note, note.isFakeSlide);
+        WifiCompo.customSkin = wifiSegment.end.skin;
         WifiCompo.isEachInStream = stateIsEach;
 
         WifiCompo.normalStar = customSkin.Star;
@@ -2252,7 +2301,7 @@ public class JsonDataLoader : MonoBehaviour
             note.isBreak, stateIsEach, timing.time,
             note.isMineHead, timing.streamIndex);
 
-        NDCompo.isNoHead = note.isSlideNoHead;
+        NDCompo.isNoHead = note.isSlideNoHead || restoringBeat;
         NDCompo.time = (float)timing.time;
         NDCompo.startPosition = note.startPosition;
         NDCompo.speed = noteSpeed * GetHSpeedAt(
@@ -2302,6 +2351,7 @@ public class JsonDataLoader : MonoBehaviour
         WifiCompo.time = (float)note.slideStartTime;
         WifiCompo.LastFor = (float)note.slideTime;
         WifiCompo.sortIndex = slideLayer;
+        WifiCompo.guideStarSortOrder = guideStarOrder--;
         slideLayer -= SLIDE_AREA_STEP_MAP["wifi"].Last();
         //slideLayer += 5;
 
@@ -2315,7 +2365,7 @@ public class JsonDataLoader : MonoBehaviour
         var GOnote = Instantiate(starPrefab, notes.transform);
         var NDCompo = PrepareNote<StarDrop>(GOnote, note, note.isFakeHead);
         NDCompo.isEachInStream = stateIsEach;
-        if(!note.isSlideNoHead)
+        if(!note.isSlideNoHead && !restoringBeat)
             AddJudgeNote(GOnote, note, note.isFakeHead);
         // Note layer order
         NDCompo.noteSortOrder = noteSortOrder;
@@ -2352,6 +2402,7 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.isDZone = note.isDZone;
 
         var parsedSegment = ResolveSlidePath(note, info.IsGroupPart)[0];
+        NDCompo.isDZone = parsedSegment.startIsDZone;
         var slideShape = DetectShape(parsedSegment);
         var isMirror = false;
         var isReverse = false;
@@ -2369,6 +2420,7 @@ public class JsonDataLoader : MonoBehaviour
 
         var slide = Instantiate(slidePrefab[slideIndex], notes.transform);
         var slide_star = Instantiate(star_slidePrefab, notes.transform);
+        StarDisplayOrder.Register(slide_star, guideStarOrder--);
         var slideStarRenderer = slide_star.GetComponent<SpriteRenderer>();
         slideStarRenderer.sprite = customSkin.Star;
         slide_star.SetActive(false);
@@ -2377,9 +2429,10 @@ public class JsonDataLoader : MonoBehaviour
         slide.AddComponent<SlideDrop>();
         var SliCompo = PrepareNote<SlideDrop>(
             slide, note, note.isFakeSlide);
+        SliCompo.customSkin = parsedSegment.end.skin;
         SliCompo.isEachInStream = stateIsEach;
-        SliCompo.isDZone = note.isDZone;
-        SliCompo.isDZoneEnd = note.isDZoneEnd;
+        SliCompo.isDZone = parsedSegment.startIsDZone;
+        SliCompo.isDZoneEnd = parsedSegment.endIsDZone;
 
         SliCompo.slideType = slideShape;
         SliCompo.pathExpression = note.pathExpression;
@@ -2416,7 +2469,7 @@ public class JsonDataLoader : MonoBehaviour
             slideStarRenderer.sprite = customSkin.Star;
         else if (note.isSlideBreak)
             slideStarRenderer.sprite = customSkin.Star_Break;
-        NDCompo.isNoHead = note.isSlideNoHead;
+        NDCompo.isNoHead = note.isSlideNoHead || restoringBeat;
         NDCompo.time = (float)timing.time;
         NDCompo.startPosition = note.startPosition;
         NDCompo.speed = noteSpeed * GetHSpeedAt(
@@ -2723,6 +2776,25 @@ public class JsonDataLoader : MonoBehaviour
 
     /// Returns the hex color string active for <paramref name="noteType"/> at <paramref name="time"/>,
     /// or null if no override is defined yet.
+    private NoiseZoneVisual ResolveNoiseVisual(SimaiTimingPoint timing, double liveTime)
+    {
+        var hex = GetColorAt("blockarea", timing.time, timing.streamIndex, liveTime: liveTime);
+        var color = Color.red;
+        if (!string.IsNullOrEmpty(hex)) ColorUtility.TryParseHtmlString("#" + hex.TrimStart('#'), out color);
+        color.a *= ResolveAlphaAt("blockarea", timing.time, timing.streamIndex, liveTime: liveTime) ?? 1f;
+        var size = ResolveSizeAt("blockarea", timing.time, streamIndex: timing.streamIndex, liveTime: liveTime) ?? Vector2.one;
+        return new NoiseZoneVisual(color, size, !string.IsNullOrEmpty(hex));
+    }
+
+    private float ResolveNoiseWarningProgress(SimaiTimingPoint timing, double liveTime)
+    {
+        var speed = touchSpeed * GetHSpeedAt("blockarea", timing.time, timing.HSpeed, false, false, timing.streamIndex);
+        if (liveTime >= timing.time) return -1f;
+        var key = SvController.MakeCurveKey(timing.streamIndex, "blockarea");
+        return AlphaVisualTiming.GetTouchWarningProgress(SvController.GetCumulativeScroll(timing.time, key),
+            SvController.GetCumulativeScroll(liveTime, key), speed);
+    }
+
     private string GetColorAt(
         string noteType,
         double noteTime,
@@ -2765,6 +2837,7 @@ public class JsonDataLoader : MonoBehaviour
 
         string ResolveGlobal(bool live, double time)
         {
+            if (string.Equals(noteType, "blockarea", StringComparison.OrdinalIgnoreCase)) return null;
             var value = Lookup(string.Empty, live, time);
             return value == null || string.Equals(value.color, "NULL", StringComparison.OrdinalIgnoreCase)
                 ? null
@@ -2856,7 +2929,8 @@ public class JsonDataLoader : MonoBehaviour
             return value;
 
         // Global SIZE deliberately excludes Slide paths; SIZE*slide is explicit.
-        if (string.Equals(noteType, "slide", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(noteType, "slide", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(noteType, "blockarea", StringComparison.OrdinalIgnoreCase))
             return null;
 
         return (liveTime.HasValue ? Lookup(string.Empty, true, liveTime.Value) : null) ??
@@ -3263,12 +3337,12 @@ public class JsonDataLoader : MonoBehaviour
         if (liveOnly)
             return liveTime.HasValue
                 ? ResolveTyped(true, liveTime.Value) ??
-                  Lookup(string.Empty, true, liveTime.Value)
+                  (noteType == "blockarea" ? null : Lookup(string.Empty, true, liveTime.Value))
                 : null;
         return (liveTime.HasValue ? ResolveTyped(true, liveTime.Value) : null) ??
                ResolveTyped(false, noteTime) ??
-               (liveTime.HasValue ? Lookup(string.Empty, true, liveTime.Value) : null) ??
-               Lookup(string.Empty, false, noteTime);
+               (noteType != "blockarea" && liveTime.HasValue ? Lookup(string.Empty, true, liveTime.Value) : null) ??
+               (noteType == "blockarea" ? null : Lookup(string.Empty, false, noteTime));
     }
 
     private float GetAlphaAt(

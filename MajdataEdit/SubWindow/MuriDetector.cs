@@ -97,6 +97,7 @@ internal sealed class MuriSlideTimeTable
     }
 
     private readonly Dictionary<string, Dictionary<string, List<MuriPassArea>>> shapes;
+    public static MuriSlideTimeTable Empty { get; } = new(new());
 
     private MuriSlideTimeTable(
         Dictionary<string, Dictionary<string, List<MuriPassArea>>> shapes)
@@ -160,11 +161,13 @@ internal sealed class MuriDetector
     private readonly List<SimaiTimingPoint> notelist;
     private readonly MuriSlideTimeTable slideTime;
     private readonly List<MuriWarning> warnings = new();
+    private readonly bool allowPartial;
 
-    public MuriDetector(List<SimaiTimingPoint> notelist, MuriSlideTimeTable slideTime)
+    public MuriDetector(List<SimaiTimingPoint> notelist, MuriSlideTimeTable slideTime, bool allowPartial = false)
     {
         this.notelist = notelist;
         this.slideTime = slideTime;
+        this.allowPartial = allowPartial;
     }
 
     public IReadOnlyList<MuriWarning> Warnings => warnings;
@@ -258,6 +261,8 @@ internal sealed class MuriDetector
             var positionY = noteGroup.rawTextPositionY;
 
             foreach (var note in noteGroup.getNotes())
+            {
+                if ((note.isMineHead || note.isFake) && note.noteType != SimaiNoteType.Slide) continue;
                 if (note.noteType == SimaiNoteType.Tap)
                 {
                     opSequence.Add(new MaimaiOperationMultNote(
@@ -275,16 +280,18 @@ internal sealed class MuriDetector
                 {
                     if (note.isTouchSlide)
                         continue;
-                    opSequence.Add(new MaimaiOperationMultNote(
-                        Math.Round(baseTime, TIME_EPS),
-                        Math.Round(baseTime, TIME_EPS),
-                        note.startPosition,
-                        note.startPosition,
-                        1,
-                        note.noteContent!,
-                        positionX,
-                        positionY
-                    ));
+                    if (!note.isSlideNoHead && !note.isMineHead && !note.isFakeHead)
+                        opSequence.Add(new MaimaiOperationMultNote(
+                            Math.Round(baseTime, TIME_EPS),
+                            Math.Round(baseTime, TIME_EPS),
+                            note.startPosition,
+                            note.startPosition,
+                            1,
+                            note.noteContent!,
+                            positionX,
+                            positionY
+                        ));
+                    if (note.isMineSlide || note.isFakeSlide) continue;
                     if (note.slidePath.Count == 0)
                     {
                         AddWarning(string.Format(
@@ -326,9 +333,9 @@ internal sealed class MuriDetector
                 }
                 else
                 {
-                    // TODO: Support DX charts.
-                    return null;
+                    if (!allowPartial) return null;
                 }
+            }
         }
 
         return opSequence;
@@ -418,6 +425,9 @@ internal sealed class MuriDetector
                 if (note.noteType == SimaiNoteType.Tap ||
                     note.noteType == SimaiNoteType.Hold)
                 {
+                    // Mines and fake heads never occupy a hand, including in
+                    // the legacy checker (which uses allowPartial=false).
+                    if (note.isFake || note.isMineHead) continue;
                     opSequence.Add(new MaimaiOperationSlide(
                         baseTime,
                         note.startPosition,
@@ -432,23 +442,24 @@ internal sealed class MuriDetector
                     if (note.isTouchSlide)
                         continue;
                     // Add the star head to the queue.
-                    opSequence.Add(new MaimaiOperationSlide(
-                        baseTime,
-                        note.startPosition,
-                        0,
-                        note.noteContent!,
-                        positionX,
-                        positionY
-                    ));
+                    if (!note.isSlideNoHead && !note.isFakeHead && !note.isMineHead)
+                        opSequence.Add(new MaimaiOperationSlide(
+                            baseTime,
+                            note.startPosition,
+                            0,
+                            note.noteContent!,
+                            positionX,
+                            positionY
+                        ));
 
+                    if (note.isFakeSlide || note.isMineSlide) continue;
                     foreach (var window in ResolveSegmentWindows(noteGroup, note))
                         AddSegmentPassAreas(
                             note, window, positionX, positionY, opSequence);
                 }
                 else
                 {
-                    // TODO: Support DX charts.
-                    return null;
+                    if (!allowPartial) return null;
                 }
         }
 
@@ -505,6 +516,34 @@ internal sealed class MuriDetector
         return errorCnt;
     }
 
+    public int DetectStatic()
+    {
+        // Simultaneous hands are a static impossibility too. The sidebar used
+        // to run only slide/overlap checks, so 2/3/4 silently disappeared.
+        DetectMultNote();
+        DetectSlide(.2);
+        // MaiMuriDX's static overlap threshold is two 60-Hz frames.
+        var occupied = new Dictionary<string, (double End, string Text, SimaiTimingPoint Timing, bool Star)>();
+        foreach (var timing in notelist.OrderBy(t => t.time))
+        foreach (var note in timing.getNotes())
+        {
+            if (note.noteType == SimaiNoteType.NoiseZone || note.isFake || note.isMineHead) continue;
+            var star = note.noteType == SimaiNoteType.Slide;
+            if (star && (note.isSlideNoHead || note.isFakeHead || note.isTouchSlide)) continue;
+            var area = note.noteType is SimaiNoteType.Touch or SimaiNoteType.TouchHold ? note.touchArea : note.isDZone ? 'D' : 'A';
+            var key = area + (area == 'C' ? "" : note.startPosition.ToString());
+            var end = timing.time + (note.noteType is SimaiNoteType.Hold or SimaiNoteType.TouchHold ? note.holdTime : 0);
+            var hasPrevious = occupied.TryGetValue(key, out var previous);
+            // Branches belonging to one star share a head. Separate timing
+            // points (including @ streams) still represent separate heads.
+            if (hasPrevious && star && previous.Star && ReferenceEquals(previous.Timing, timing)) continue;
+            if (hasPrevious && timing.time - previous.End < 2d / 60d)
+                AddWarning($"叠键：{previous.Text} / {note.noteContent}", timing.rawTextPositionX, timing.rawTextPositionY);
+            occupied[key] = (hasPrevious ? Math.Max(end, previous.End) : end, note.noteContent ?? "", timing, star);
+        }
+        return warnings.Count;
+    }
+
     private void AddSegmentPassAreas(
         SimaiNote note,
         SlideSegmentWindow window,
@@ -551,6 +590,7 @@ internal sealed class MuriDetector
 
         if (!slideTime.TryGetPassAreas(shape, offsetKey, out var passAreas))
         {
+            if (allowPartial) return;
             // The shape itself is valid; there is simply no measurement for it,
             // so this Slide cannot take part in the check.
             AddWarning(string.Format(

@@ -107,7 +107,7 @@ internal static class ThemeManager
         editor.Background = background;
         editor.TextArea.Background = background;
         editor.Foreground = BrushFrom(theme.editorForeground);
-        editor.TextArea.SelectionBrush = BrushFrom(theme.editorSelection);
+        Editor.GlyphSelectionRenderer.Apply(editor, BrushFrom(theme.editorSelection));
         // Keep the scrollbar corner consistent with the editor surface.
         editor.Resources[SystemColors.ControlBrushKey] = background;
     }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 namespace MajdataCore
 {
@@ -44,7 +45,8 @@ namespace MajdataCore
         Scale,
         Text,
         MediaPath,
-        ComboMode
+        ComboMode,
+        JudgeLineStyle
     }
 
     // Which argument list a positional command was written in. The first argument
@@ -106,6 +108,8 @@ namespace MajdataCore
 
             switch (kind)
             {
+                case AlphaValueKind.JudgeLineStyle:
+                    return JudgeLineStyles.TryParse(text, out _);
                 case AlphaValueKind.Number:
                     return TryNumber(text, out _);
                 case AlphaValueKind.Duration:
@@ -195,6 +199,8 @@ namespace MajdataCore
         {
             switch (kind)
             {
+                case AlphaValueKind.JudgeLineStyle:
+                    return chinese ? "判定线样式编号（0 或 False 关闭，1–65535）" : "A JUDGE LINE STYLE ID (0 OR FALSE TO HIDE, 1–65535)";
                 case AlphaValueKind.Number:
                     return DescribeRange(chinese);
                 case AlphaValueKind.Duration:
@@ -330,6 +336,11 @@ namespace MajdataCore
 
         // Only offered where NULL is valid on its own, so the completion popup
         // never writes text the parser would reject.
+        public bool SupportsDefaultReset => kind == AlphaCommandKind.Display &&
+            (Canonical == "JudgeLineStyle" || Canonical == "ComboDisplay" ||
+             Canonical == "InnerBrightness" || Canonical == "OuterBrightness" ||
+             Canonical == "ShowJudgeText" || Canonical == "ShowJudgeInfo" || Canonical == "ShowComboInfo");
+
         public bool SupportsNullReset
         {
             get
@@ -348,6 +359,7 @@ namespace MajdataCore
 
         public bool HasTarget(string key)
         {
+            key = AlphaCommandGrammar.NormalizeTarget(key);
             for (var index = 0; index < targets.Length; index++)
                 if (string.Equals(targets[index], key, StringComparison.OrdinalIgnoreCase))
                     return true;
@@ -442,6 +454,12 @@ namespace MajdataCore
     // to offer the same names and defaults the parser accepts.
     public static class AlphaCommandGrammar
     {
+        public static string NormalizeTarget(string value)
+        {
+            var key = value.Trim().ToLowerInvariant();
+            return key == "noise" ? "blockarea" : key;
+        }
+
         // "mine" is a target of its own rather than a variant of the note it sits on,
         // the way "break" and "each" are, and it is read before either of those: a
         // mine is the thing the player must not touch, so a chart that colours or
@@ -456,12 +474,16 @@ namespace MajdataCore
         private static readonly string[] HsNoteTypes =
         {
             "tap", "each", "hold", "slide", "star", "break", "mine", "touch",
-            "touchhold"
+            "touchhold", "blockarea"
+        };
+        private static readonly string[] ScrollNoteTypes =
+        {
+            "tap", "each", "hold", "slide", "star", "break", "mine", "touch", "touchhold", "blockarea"
         };
         private static readonly string[] VisualNoteTypes =
         {
             "tap", "each", "hold", "slide", "star", "break", "mine", "touch",
-            "touchhold", "slidestar"
+            "touchhold", "slidestar", "blockarea"
         };
         // Only ring notes travel, so only they have a spawn or destroy radius.
         private static readonly string[] RingNoteTypes =
@@ -882,8 +904,33 @@ namespace MajdataCore
                 return false;
             }
 
-            var kind = ClassifyForm(values[0]);
+            if (descriptor.SupportsDefaultReset && string.Equals(values[0], "Default", StringComparison.OrdinalIgnoreCase))
+            {
+                if (values.Count <= 2 && (values.Count == 1 || Duration().Matches(values[1], bpm))) return true;
+                error = Diagnose(descriptor.name + " 的 Default 后只能附加一个有效的过渡时间",
+                    descriptor.name + " DEFAULT ACCEPTS ONLY ONE OPTIONAL VALID TRANSITION DURATION", token);
+                return false;
+            }
+            var kind = descriptor.Canonical == "JudgeLineStyle" ? AlphaArgumentFormKind.Plain : ClassifyForm(values[0]);
+            var expandDurationIndex = kind == AlphaArgumentFormKind.StateOn ? 1 : 0;
+            if (descriptor.Canonical == "JudgeLineExpand" && kind != AlphaArgumentFormKind.StateOff &&
+                values.Count > expandDurationIndex && values[expandDurationIndex].TrimStart().StartsWith("-", StringComparison.Ordinal))
+            {
+                error = "JUDGELINEEXPAND duration must be non-negative";
+                return false;
+            }
             var form = descriptor.FormFor(kind, values.Count);
+            if (descriptor.Canonical == "Vignette" && values.Count == 3 &&
+                kind == AlphaArgumentFormKind.StateOn && bool.TryParse(values[2], out _))
+                foreach (var candidate in descriptor.forms)
+                    if (candidate.kind == kind && candidate.slots.Length == 3 &&
+                        candidate.slots[2].kind == AlphaValueKind.Boolean)
+                        form = candidate;
+            if (descriptor.Canonical == "Rotate" && values.Count > 1 && bool.TryParse(values[values.Count - 1], out _))
+                foreach (var candidate in descriptor.forms)
+                    if (candidate.kind == kind && candidate.slots.Length == values.Count &&
+                        candidate.slots[candidate.slots.Length - 1].kind == AlphaValueKind.Boolean)
+                        form = candidate;
             if (form == null)
             {
                 error = ArityError(descriptor, kind, values.Count, token);
@@ -1193,7 +1240,7 @@ namespace MajdataCore
                 {
                     name = "SV",
                     kind = AlphaCommandKind.Sv,
-                    targets = StateNoteTypes,
+                    targets = ScrollNoteTypes,
                     scalar = Number(defaultText: "1"),
                     typedValue = Number(allowsNull: true)
                 },
@@ -1210,7 +1257,7 @@ namespace MajdataCore
                     name = "SPAWN",
                     kind = AlphaCommandKind.Spawn,
                     targets = RingNoteTypes,
-                    scalar = Number(-4.8f, 4.8f, allowsNull: true, defaultText: "1.225")
+                    scalar = Number(allowsNull: true, defaultText: "1.225")
                 },
                 new AlphaCommandDescriptor
                 {
@@ -1239,7 +1286,7 @@ namespace MajdataCore
                     name = "DESTROY",
                     kind = AlphaCommandKind.Destroy,
                     targets = RingNoteTypes,
-                    scalar = Number(-20f, 20f, allowsNull: true, defaultText: "4.8")
+                    scalar = Number(allowsNull: true, defaultText: "4.8")
                 },
                 new AlphaCommandDescriptor
                 {
@@ -1367,10 +1414,32 @@ namespace MajdataCore
                 }
             };
 
+            commands.Add(new AlphaCommandDescriptor
+            {
+                name = "JUDGELINE", canonical = "JudgeLineStyle",
+                kind = AlphaCommandKind.Display, category = AlphaCommandCategory.Display,
+                forms = new[] { Form(AlphaArgumentFormKind.Plain,
+                    new AlphaValueSpec { kind = AlphaValueKind.JudgeLineStyle, defaultText = "1" },
+                    Duration(optional: true)) }
+            });
+            commands.Add(new AlphaCommandDescriptor
+            {
+                name = "JUDGELINEEXPAND", canonical = "JudgeLineExpand",
+                kind = AlphaCommandKind.Display, category = AlphaCommandCategory.Display,
+                requiresParentheses = true,
+                forms = new[] {
+                    Form(AlphaArgumentFormKind.StateOn,
+                        Boolean(), Duration(optional: true, defaultText: "0"),
+                        new AlphaValueSpec { kind = AlphaValueKind.Keyword, optional = true,
+                            keywords = new[] { "1", "-1", "CW", "CCW" }, defaultText = "1" }),
+                    Form(AlphaArgumentFormKind.StateOff, Boolean(defaultText: "False")),
+                    Form(AlphaArgumentFormKind.Plain,
+                        Duration(optional: false),
+                        new AlphaValueSpec { kind = AlphaValueKind.Keyword,
+                            keywords = new[] { "1", "-1", "CW", "CCW" }, defaultText = "1" }) }
+            });
             var toggles = new[]
             {
-                new[] { "SHOWJUDGELINE", "ShowJudgeLine" },
-                new[] { "SHOWJUDGEAREA", "ShowJudgeArea" },
                 new[] { "SHOWJUDGEINFO", "ShowJudgeInfo" },
                 new[] { "SHOWCOMBOINFO", "ShowComboInfo" },
                 new[] { "SHOWJUDGETEXT", "ShowJudgeText" }
@@ -1522,6 +1591,11 @@ namespace MajdataCore
                     new[] { Number(defaultText: entry[2]) },
                     null));
 
+            foreach (var filter in AlphaExtraFilters.All)
+                effects.Add(BuildScreenEffect(filter.Name, filter.Canonical, false,
+                    new[] { filter.Canonical == "Kaleidoscope" ? Number(defaultText: "45") : filter.Canonical == "LensDistort" ? Number(-1, 1, defaultText: "0.5") :
+                        Number(0, filter.Canonical == "Bloom" ? 4 : 1, defaultText: "0.5") }, null));
+
             // FADE drives the same filter as FLASH, aimed at black.
             effects.Add(BuildScreenEffect(
                 "FADE",
@@ -1613,13 +1687,43 @@ namespace MajdataCore
                 Duration(optional: true)));
 
             // The two older forms: (duration,strength) and the four-part envelope.
-            forms.Add(Form(AlphaArgumentFormKind.Plain, Duration(), Number()));
+            forms.Add(Form(AlphaArgumentFormKind.Plain, Duration(),
+                AlphaExtraFilters.Find(name) != null ? Clone(arguments[0], false) : Number()));
             var envelope = new List<AlphaValueSpec> { Duration(), Duration(), Duration() };
             var tail = envelopeArguments ?? arguments;
             for (var index = 0; index < tail.Length; index++)
                 envelope.Add(Clone(tail[index], index > 0));
             forms.Add(Form(AlphaArgumentFormKind.Plain, envelope.ToArray()));
 
+            if (canonical == "Vignette")
+            {
+                // A trailing boolean selects the edge; omitted/empty means a soft edge.
+                foreach (var form in forms.ToArray())
+                {
+                    if (form.kind == AlphaArgumentFormKind.StateOff) continue;
+                    var soft = new List<AlphaValueSpec>();
+                    foreach (var slot in form.slots) soft.Add(Clone(slot, false));
+                    var gradient = Boolean(defaultText: "True");
+                    gradient.allowsEmpty = true;
+                    soft.Add(gradient);
+                    forms.Add(Form(form.kind, soft.ToArray()));
+                }
+                forms.Add(Form(AlphaArgumentFormKind.StateOn,
+                    Boolean(), Number(), Boolean(defaultText: "True")));
+            }
+
+            if (canonical == "Rotate")
+            {
+                // Append a PV flag to every existing form, including forms
+                // whose optional transition is omitted before the flag.
+                foreach (var original in forms.ToArray())
+                    for (var count = original.MinimumCount; count <= original.MaximumCount; count++)
+                    {
+                        var extended = original.slots.Take(count).ToList();
+                        extended.Add(Boolean(defaultText: "False"));
+                        forms.Add(Form(original.kind, extended.ToArray()));
+                    }
+            }
             return new AlphaCommandDescriptor
             {
                 name = name,

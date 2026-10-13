@@ -88,6 +88,16 @@ public sealed class TrajectoryCarrierDrop : NoteDrop
             return;
 
         var now = timeProvider.AudioTime;
+        // Running playback retires visual carriers without any judgement/count
+        // callback. Preview objects remain available when scrubbing backward.
+        if (!previewOnly && timeProvider.isStart && !timeProvider.IsPaused &&
+            now > moveStart + duration)
+        {
+            if (guideLine != null) guideLine.SetActive(false);
+            carrier.forceRenderingOff = true;
+            Destroy(gameObject);
+            return;
+        }
         // A standalone caret preview starts at the carrier's reveal time. A paused
         // timeline preview must remain reversible, including hiding before reveal
         // when the user drags backward.
@@ -356,6 +366,14 @@ internal static class TrajectoryPathGeometry
                 AppendLine(result, startPoint, endPoint, first,
                     SamplesPerSegment);
             }
+            return;
+        }
+
+        if ((start.Area != 'K' || end.Area != 'K') &&
+            (segment.shape.StartsWith("<", StringComparison.Ordinal) ||
+             segment.shape.StartsWith(">", StringComparison.Ordinal)))
+        {
+            AppendArc(result, startPoint, endPoint, segment.shape, start.Position, first);
             return;
         }
 

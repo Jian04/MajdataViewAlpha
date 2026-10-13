@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.IO.Pipes;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
@@ -15,6 +14,7 @@ public class ScreenRecorder : MonoBehaviour
     public int FrameRate = 30;
     // Per-pass output and temporary layer masking are restored after capture.
     public string OutputFileName = "out.mp4";
+    public string RecordBatch = "";
     public bool RevealOutput = true;
     public bool ShowSongDetail = true;
     public ScreenEffectController ScreenEffects;
@@ -58,9 +58,6 @@ public class ScreenRecorder : MonoBehaviour
             if (loader == null)
                 return;
 
-            if (loader.State is not (NoteLoaderStatus.Idle or NoteLoaderStatus.Finished))
-                return;
-
             // Once AP is revealed, its animation-relative deadline is authoritative.
             // Otherwise use the chart-relative cutoff supplied with the Record request.
             var stopAt = scheduledStopAt > 0f ? scheduledStopAt : CutoffTime;
@@ -71,6 +68,8 @@ public class ScreenRecorder : MonoBehaviour
 
     public bool PrepareRecording()
     {
+        AlphaInstanceBadge.Recording = true;
+        AlphaInstanceBadge.RecordingGeneration++;
         if (isStarting || isRecording || captureActive)
             return false;
         isStarting = true;
@@ -118,7 +117,7 @@ public class ScreenRecorder : MonoBehaviour
     /// <summary>Stops after the recording clock advances by seconds, used after the AP presentation.</summary>
     public void StopAfter(float seconds)
     {
-        if (isRecording && timeProvider != null)
+        if (isRecording && timeProvider != null && scheduledStopAt < 0f)
             scheduledStopAt = timeProvider.AudioTime + seconds;
     }
 
@@ -146,34 +145,46 @@ public class ScreenRecorder : MonoBehaviour
         WarnIfHighCaptureLoad(Screen.width, Screen.height);
 
         var outputName = string.IsNullOrWhiteSpace(OutputFileName) ? "out.mp4" : OutputFileName;
+        var audioPath = MajdataCore.AlphaSession.ChartWorkFile(maidata_path, "out.wav");
+        if (System.Guid.TryParseExact(RecordBatch, "N", out _))
+        {
+            maidata_path = Path.Combine(MajdataCore.AlphaSession.Root, "RecordBatches", RecordBatch);
+            Directory.CreateDirectory(maidata_path);
+        }
+        else
+        {
+            maidata_path = Path.Combine(maidata_path, "outputs");
+            Directory.CreateDirectory(maidata_path);
+        }
         var captureRect = default(Rect);
         Texture2D texture = null;
         byte[] data = null;
-        NamedPipeServerStream pipeServer;
+        Stream pipeServer;
         ProcessStartInfo startinfo;
         string arguments;
         try
         {
-            const string wavpath = "out.wav";
+            var wavpath = audioPath;
             var outputfile = outputName;
-            if (File.Exists(maidata_path + "\\" + outputName))
-                File.Delete(maidata_path + "\\" + outputName);
+            if (File.Exists(Path.Combine(maidata_path, outputName)))
+                File.Delete(Path.Combine(maidata_path, outputName));
             var audioTempoFilter = BuildAudioTempoFilter(timeProvider?.CurrentSpeed ?? 1f);
             arguments = string.Format(
                 CultureInfo.InvariantCulture,
-                File.ReadAllText(Application.streamingAssetsPath + "\\ffarguments.txt").Trim(),
+                File.ReadAllText(Path.Combine(Application.streamingAssetsPath, "ffarguments.txt")).Trim().Replace("majdataRec", MajdataCore.AlphaSession.PipeName),
                 Screen.width, Screen.height,
                 wavpath, outputfile,
                 int.MaxValue,
                 FrameRate,
                 audioTempoFilter
             );
-            startinfo = new ProcessStartInfo(Application.streamingAssetsPath + "\\ffmpeg.exe", arguments);
+            arguments = RecordingEncoder.UseStandardInput(arguments);
+            startinfo = new ProcessStartInfo(RecordingEncoder.ResolveExecutable(), arguments);
             startinfo.UseShellExecute = false;
             startinfo.CreateNoWindow = true;
+            startinfo.RedirectStandardInput = true;
             startinfo.WorkingDirectory = maidata_path;
-            startinfo.EnvironmentVariables.Add("FFREPORT", "file=out.log:level=24");
-            pipeServer = new NamedPipeServerStream("majdataRec", PipeDirection.Out);
+            // ffmpeg diagnostics are captured by this process; no extra report in the song folder.
         }
         catch (System.Exception ex)
         {
@@ -182,7 +193,6 @@ public class ScreenRecorder : MonoBehaviour
             yield break;
         }
 
-        using (pipeServer)
         {
             print(arguments);
             Process p;
@@ -204,33 +214,7 @@ public class ScreenRecorder : MonoBehaviour
                 yield break;
             }
             encoderProcess = p;
-
-            Task waitForConnection = pipeServer.WaitForConnectionAsync();
-            while (!waitForConnection.IsCompleted)
-            {
-                if (!isStarting)
-                {
-                    TryTerminateEncoder(p);
-                    CleanupRecordingState();
-                    yield break;
-                }
-                if (p.HasExited)
-                {
-                    AppendError(ViewLocalization.Text("FfmpegPipeExit", p.ExitCode));
-                    CleanupRecordingState();
-                    yield break;
-                }
-
-                yield return null;
-            }
-
-            if (waitForConnection.IsFaulted)
-            {
-                AppendError(ViewLocalization.Text("NamedPipeFailed"));
-                TryTerminateEncoder(p);
-                CleanupRecordingState();
-                yield break;
-            }
+            pipeServer = p.StandardInput.BaseStream;
 
             if (!isStarting)
             {
@@ -315,6 +299,24 @@ public class ScreenRecorder : MonoBehaviour
             // bandwidth by 25% compared with the previous unused alpha channel.
             texture = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
             data = new byte[Screen.width * Screen.height * 3];
+            if (System.Guid.TryParseExact(RecordBatch, "N", out _))
+            {
+                var ready = Path.Combine(maidata_path, OutputFileName + ".ready");
+                var gate = Path.Combine(maidata_path, OutputFileName + ".start");
+                File.WriteAllText(ready, "ready");
+                var deadline = Time.realtimeSinceStartup + 180f;
+                long startTicks = 0;
+                while (isStarting && Time.realtimeSinceStartup < deadline)
+                {
+                    if (File.Exists(gate) && long.TryParse(File.ReadAllText(gate), out startTicks) &&
+                        System.DateTime.UtcNow.Ticks >= startTicks) break;
+                    yield return null;
+                }
+                if (!isStarting || startTicks == 0 || Time.realtimeSinceStartup >= deadline)
+                {
+                    TryTerminateEncoder(p); CleanupRecordingState(); yield break;
+                }
+            }
             timeProvider?.BeginRecordingCapture(ShowSongDetail ? 5f : 0f);
             MediaTimeline?.SetPlaybackActive(true);
             if (ShowSongDetail)
@@ -323,11 +325,23 @@ public class ScreenRecorder : MonoBehaviour
                 bgManager?.HideSongDetail();
             isStarting = false;
             isRecording = true;
-            using (var bw = new BinaryWriter(pipeServer))
+            long capturedFrames = 0;
+            var maxCaptureFrames = CutoffTime > 0f
+                ? (long)System.Math.Ceiling((CutoffTime + (ShowSongDetail ? 5f : 0f) + 1f) * FrameRate)
+                : long.MaxValue;
+            var writer = new MajdataCore.RecordingFrameWriter(pipeServer, data.Length);
+            using (pipeServer)
+            using (writer)
             {
                 do
                 {
                     yield return WaitForFrameEnd;
+                    // Check the recording clock in the capture loop as well. A chart
+                    // whose note loader never reaches Finished must still finalize.
+                    var deadline = scheduledStopAt > 0f ? scheduledStopAt : CutoffTime;
+                    if (deadline > 0f && timeProvider != null && timeProvider.AudioTime >= deadline)
+                        isRecording = false;
+                    if (!isRecording) break;
                     // A window resize changes frame byte count from ffmpeg's expected value and
                     // breaks the pipe. Stop cleanly with a readable reason as soon as it changes.
                     if (Screen.width != (int)captureRect.width || Screen.height != (int)captureRect.height)
@@ -347,7 +361,8 @@ public class ScreenRecorder : MonoBehaviour
                         texture.ReadPixels(captureRect, 0, 0, false);
                         texture.GetRawTextureData<byte>().CopyTo(data);
 
-                        bw.Write(data, 0, data.Length);
+                        writer.Enqueue(data);
+                        if (++capturedFrames >= maxCaptureFrames) isRecording = false;
                     }
                     catch (System.Exception ex)
                     {
@@ -369,11 +384,17 @@ public class ScreenRecorder : MonoBehaviour
                         }
                     }
                 } while (
-                    pipeServer.IsConnected &&
                     isRecording &&
                     !p.HasExited
                 );
             }
+            if (writer.Failure != null && string.IsNullOrEmpty(recordFailureMessage))
+            {
+                recordFailureMessage = ViewLocalization.Text("RecordingFailedAt",
+                    timeProvider?.AudioTime ?? 0f, writer.Failure.GetType().Name, writer.Failure.Message);
+                AppendError(recordFailureMessage);
+            }
+            UnityEngine.Debug.Log($"[Recorder] {writer.WrittenFrames} frames at {FrameRate} fps; video duration {(double)writer.WrittenFrames / FrameRate:F6}s.");
 
             var finalizeDeadline = Time.realtimeSinceStartup + 15f;
             while (!p.HasExited &&
@@ -399,12 +420,16 @@ public class ScreenRecorder : MonoBehaviour
                      File.Exists(maidata_path + "/" + outputName) &&
                      p.ExitCode == 0)
             {
+                // A unique batch filename makes this an unambiguous completion
+                // receipt, published only after ffmpeg has written the MP4 footer.
+                if (!RevealOutput)
+                    File.WriteAllText(Path.Combine(maidata_path, outputName + ".done"), "complete");
                 AppendStatus(ViewLocalization.Text(
                     "RecordingSuccess",
                     maidata_path + "\\" + outputName,
                     p.ExitCode));
                 if (RevealOutput)
-                    Process.Start("explorer", "/select,\"" + maidata_path + "\\" + outputName + "\"");
+                    RevealRecording(Path.Combine(maidata_path, outputName));
             }
             else
             {
@@ -429,12 +454,22 @@ public class ScreenRecorder : MonoBehaviour
                Mathf.Min(width, height) <= maxShortSide;
     }
 
+    private static void RevealRecording(string path)
+    {
+        if (Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor)
+            Process.Start(new ProcessStartInfo("explorer", "/select,\"" + path + "\"") { UseShellExecute = false });
+        else if (Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor)
+            Process.Start(new ProcessStartInfo("open", "-R \"" + path + "\"") { UseShellExecute = false });
+        else
+            Process.Start(new ProcessStartInfo("xdg-open", "\"" + Path.GetDirectoryName(path) + "\"") { UseShellExecute = false });
+    }
+
     public void WarnIfHighCaptureLoad(int width, int height)
     {
         if (highLoadWarningShown || IsCaptureLoadSafe(width, height, FrameRate))
             return;
         highLoadWarningShown = true;
-        AppendStatus(ViewLocalization.Text(
+        UnityEngine.Debug.LogWarning(ViewLocalization.Text(
             "RecordingResolutionHighWarning", width, height, FrameRate));
     }
 
@@ -504,6 +539,7 @@ public class ScreenRecorder : MonoBehaviour
 
     private void CleanupRecordingState()
     {
+        AlphaInstanceBadge.Recording = false;
         isStarting = false;
         isRecording = false;
         captureActive = false;

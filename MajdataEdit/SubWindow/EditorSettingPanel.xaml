@@ -1,28 +1,16 @@
-<Window x:Class="MajdataEdit.EditorSettingPanel"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:lex="http://wpflocalizeextension.codeplex.com"
-        lex:LocalizeDictionary.DesignCulture="zh-CN"
-        lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit"
-        lex:ResxLocalizationProvider.DefaultDictionary="Langs"
-        mc:Ignorable="d"
-        Background="{DynamicResource WindowBackground}"
-        Title="{lex:Loc Key=EditorSetting}" Width="500" SizeToContent="Height" ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
-        Topmost="True"
-        Loaded="Window_Loaded" Closing="Window_Closing" Height="Auto">
+<?xml version="1.0" encoding="utf-8"?><Window x:Class="MajdataEdit.EditorSettingPanel" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:MajdataEdit" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:lex="http://wpflocalizeextension.codeplex.com" lex:LocalizeDictionary.DesignCulture="zh-CN" lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit" lex:ResxLocalizationProvider.DefaultDictionary="Langs" mc:Ignorable="d" Background="{DynamicResource WindowBackground}" Title="{lex:Loc Key=EditorSetting}" Width="500" SizeToContent="Height" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" Topmost="True" Loaded="Window_Loaded" Closing="Window_Closing" Height="Auto">
     <Window.Resources>
 
     </Window.Resources>
 
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                  MaxHeight="720" Padding="0,0,4,0">
-    <Grid Margin="5,5,5,5">
+    <Grid>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0">
+    <Grid x:Name="SettingsFields" Margin="5,5,5,5">
         <Grid.Resources>
             <Style TargetType="{x:Type Label}">
                 <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Margin" Value="0,0,0,5" />
                 <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
             </Style>
             <Style TargetType="{x:Type ComboBox}">
@@ -53,13 +41,18 @@
                 <Setter Property="Background" Value="{DynamicResource ButtonsBackground}" />
             </Style>
             <Style TargetType="{x:Type CheckBox}">
+                <Setter Property="ContentTemplate">
+                    <Setter.Value><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" /></DataTemplate></Setter.Value>
+                </Setter>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
-                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="VerticalAlignment" Value="Top" />
                 <Setter Property="Margin" Value="0,4,14,4" />
             </Style>
         </Grid.Resources>
 
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -91,123 +84,77 @@
             <ColumnDefinition Width="100*" />
         </Grid.ColumnDefinitions>
 
-        <Label Grid.Row="0" Grid.Column="0"
-               Content="{lex:Loc Key=EditorLanguage}" />
-        <ComboBox x:Name="LanguageComboBox"
-                  Grid.Row="0" Grid.Column="1"
-                  SelectionChanged="LanguageComboBox_SelectionChanged">
+        <Label Grid.Row="0" Grid.Column="0" Content="{lex:Loc Key=EditorLanguage}" />
+        <ComboBox x:Name="LanguageComboBox" Grid.Row="0" Grid.Column="1" SelectionChanged="LanguageComboBox_SelectionChanged">
             <ComboBoxItem>中文</ComboBoxItem>
             <ComboBoxItem>English</ComboBoxItem>
             <ComboBoxItem>日本語</ComboBoxItem>
         </ComboBox>
 
-        <Label Grid.Row="1" Grid.Column="0"
-               Content="{lex:Loc Key=RenderMode}" />
-        <ComboBox x:Name="RenderModeComboBox"
-                  Grid.Row="1" Grid.Column="1"
-                  SelectionChanged="RenderModeComboBox_OnSelectionChanged">
+        <Label Grid.Row="1" Grid.Column="0" Content="{lex:Loc Key=RenderMode}" />
+        <ComboBox x:Name="RenderModeComboBox" Grid.Row="1" Grid.Column="1" SelectionChanged="RenderModeComboBox_OnSelectionChanged">
             <ComboBoxItem Content="{lex:Loc Key=RenderModeHW}" />
             <ComboBoxItem Content="{lex:Loc Key=RenderModeSW}" />
         </ComboBox>
 
-        <Label Grid.Row="2" Grid.Column="0"
-               Content="{lex:Loc Key=AssetsSection}" />
-        <Border Grid.Row="2" Grid.Column="1" Margin="0,0,0,6" Padding="7"
-                CornerRadius="5" BorderThickness="1" BorderBrush="{DynamicResource ButtonsBackground}"
-                Background="{DynamicResource EditorBackground}">
+        <Border Grid.Row="2" Grid.ColumnSpan="2" Margin="0,4,0,6" Padding="7" CornerRadius="5" BorderThickness="1" BorderBrush="{DynamicResource ButtonsBackground}" Background="{DynamicResource EditorBackground}">
             <StackPanel>
                 <Grid Margin="0,0,0,6">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="{lex:Loc Key=DefaultFolder}" Margin="0,0,8,0" VerticalAlignment="Center"
-                               Foreground="{DynamicResource ButtonForeground}" />
-                    <ComboBox x:Name="SkinComboBox" Grid.Column="1" Margin="0"
-                              SelectionChanged="SkinComboBox_SelectionChanged" />
+                    <TextBlock Text="{lex:Loc Key=DefaultFolder}" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{DynamicResource ButtonForeground}" />
+                    <ComboBox x:Name="SkinComboBox" Grid.Column="1" Margin="0" SelectionChanged="SkinComboBox_SelectionChanged" />
                 </Grid>
                 <StackPanel x:Name="SkinGroupList" />
             </StackPanel>
         </Border>
 
-        <Label Grid.Row="3" Grid.Column="0"
-               Content="{lex:Loc Key=ChartRefreshDelay}" />
-        <TextBox x:Name="ChartRefreshDelay"
-                 Grid.Row="3" Grid.Column="1"
-                 Text="1000" />
+        <Label Grid.Row="6" Grid.Column="0" Content="{lex:Loc Key=ChartRefreshDelay}" />
+        <TextBox x:Name="ChartRefreshDelay" Grid.Row="6" Grid.Column="1" Text="1000" />
 
-        <Label Grid.Row="4" Grid.Column="0"
-               Content="{lex:Loc Key=InnerBrightness}" />
-        <TextBox x:Name="InnerViewerCover"
-                 Grid.Row="4" Grid.Column="1"
-                 Height="26" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
-                 Text="0.6" />
+        <Label Grid.Row="7" Grid.Column="0" Content="{lex:Loc Key=InnerBrightness}" />
+        <TextBox x:Name="InnerViewerCover" Grid.Row="7" Grid.Column="1" Height="26" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Text="0.6" />
 
-        <Label Grid.Row="5" Grid.Column="0"
-               Content="{lex:Loc Key=OuterBrightness}" />
-        <TextBox x:Name="OuterViewerCover"
-                 Grid.Row="5" Grid.Column="1"
-                 Text="0.6" />
+        <Label Grid.Row="8" Grid.Column="0" Content="{lex:Loc Key=OuterBrightness}" />
+        <TextBox x:Name="OuterViewerCover" Grid.Row="8" Grid.Column="1" Text="0.6" />
 
-        <Label Grid.Row="6" Grid.Column="0"
-               Content="{lex:Loc Key=NoteSpeed}" />
-        <TextBox x:Name="ViewerSpeed"
-                 Grid.Row="6" Grid.Column="1"
-                 Text="7.5"
-                 LostKeyboardFocus="SpeedTextBox_LostKeyboardFocus" />
+        <Label Grid.Row="9" Grid.Column="0" Content="{lex:Loc Key=NoteSpeed}" />
+        <TextBox x:Name="ViewerSpeed" Grid.Row="9" Grid.Column="1" Text="7.5" LostKeyboardFocus="SpeedTextBox_LostKeyboardFocus" />
 
-        <Label Grid.Row="7" Grid.Column="0"
-               Content="{lex:Loc Key=TouchSpeed}" />
-        <TextBox x:Name="ViewerTouchSpeed"
-                 Grid.Row="7" Grid.Column="1"
-                 Text="7.5"
-                 LostKeyboardFocus="SpeedTextBox_LostKeyboardFocus" />
+        <Label Grid.Row="10" Grid.Column="0" Content="{lex:Loc Key=TouchSpeed}" />
+        <TextBox x:Name="ViewerTouchSpeed" Grid.Row="10" Grid.Column="1" Text="7.5" LostKeyboardFocus="SpeedTextBox_LostKeyboardFocus" />
 
-        <Label Grid.Row="8" Grid.Column="0"
-               Content="{lex:Loc Key=StarSpeed}" />
-        <TextBox x:Name="StarSpeed"
-                 Grid.Row="8" Grid.Column="1"
-                 Text="0.0"
-                 LostKeyboardFocus="SpeedTextBox_LostKeyboardFocus" />
+        <Label Grid.Row="11" Grid.Column="0" Content="{lex:Loc Key=StarSpeed}" />
+        <TextBox x:Name="StarSpeed" Grid.Row="11" Grid.Column="1" Text="0.0" LostKeyboardFocus="SpeedTextBox_LostKeyboardFocus" />
 
-        <Label Grid.Row="9" Grid.Column="0"
-               Content="{lex:Loc Key=BackgroundFitMode}" />
-        <ComboBox x:Name="BackgroundFitMode"
-                  Grid.Row="9" Grid.Column="1">
+        <Label Grid.Row="12" Grid.Column="0" Content="{lex:Loc Key=StarDisplayMode}" />
+        <ComboBox x:Name="StarDisplayMode" Grid.Row="12" Grid.Column="1">
+            <ComboBoxItem Content="{lex:Loc Key=StarDisplayModeLegacy}" />
+            <ComboBoxItem Content="{lex:Loc Key=StarDisplayModeModern}" />
+        </ComboBox>
+
+        <Label Grid.Row="13" Grid.Column="0" Content="{lex:Loc Key=BackgroundFitMode}" />
+        <ComboBox x:Name="BackgroundFitMode" Grid.Row="13" Grid.Column="1">
             <ComboBoxItem Content="{lex:Loc Key=BackgroundFitHeight}" />
             <ComboBoxItem Content="{lex:Loc Key=BackgroundFitWidth}" />
         </ComboBox>
 
-        <Label Grid.Row="10" Grid.Column="0"
-               Content="{lex:Loc Key=OverallTheme}" />
-        <ComboBox x:Name="ThemeComboBox"
-                  Grid.Row="10" Grid.Column="1"
-                  DisplayMemberPath="displayName"
-                  SelectionChanged="ThemeComboBox_SelectionChanged" />
+        <Label Grid.Row="14" Grid.Column="0" Content="{lex:Loc Key=OverallTheme}" />
+        <ComboBox x:Name="ThemeComboBox" Grid.Row="14" Grid.Column="1" DisplayMemberPath="displayName" SelectionChanged="ThemeComboBox_SelectionChanged" />
 
-        <Label Grid.Row="11" Grid.Column="0"
-               Content="{lex:Loc Key=WindowBackground}" />
-        <ComboBox x:Name="EditorBackgroundStyle"
-                  Grid.Row="11" Grid.Column="1"
-                  SelectionChanged="EditorBackgroundStyle_SelectionChanged">
-            <ComboBoxItem Content="{lex:Loc Key=DefaultOption}" />
-            <ComboBoxItem Content="CiRCLE PLUS" />
-            <ComboBoxItem Content="CiRCLE" />
-        </ComboBox>
+        <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Margin="0,4,0,6">
+            <Label Content="{lex:Loc Key=WindowBackground}" />
+            <local:VisualStylePicker x:Name="EditorBackgroundStyle" SelectionChanged="EditorBackgroundStyle_SelectionChanged" />
+        </StackPanel>
+        <StackPanel Grid.Row="4" Grid.ColumnSpan="2" Margin="0,0,0,6">
+            <Label Content="{lex:Loc Key=IntroBackground}" />
+            <local:VisualStylePicker x:Name="ViewIntroStyle" Kind="ViewBackground" SelectionChanged="ViewIntroStyle_SelectionChanged" />
+        </StackPanel>
 
-        <Label Grid.Row="12" Grid.Column="0"
-               Content="{lex:Loc Key=IntroBackground}" />
-        <ComboBox x:Name="ViewIntroStyle"
-                  Grid.Row="12" Grid.Column="1">
-            <ComboBoxItem Content="{lex:Loc Key=DefaultOption}" />
-            <ComboBoxItem Content="CiRCLE PLUS" />
-            <ComboBoxItem Content="CiRCLE" />
-        </ComboBox>
-
-        <Label Grid.Row="13" Grid.Column="0"
-               Content="{lex:Loc Key=EditorFont}" />
-        <ComboBox x:Name="EditorFontPreset"
-                  Grid.Row="13" Grid.Column="1">
+        <Label Grid.Row="15" Grid.Column="0" Content="{lex:Loc Key=EditorFont}" />
+        <ComboBox x:Name="EditorFontPreset" Grid.Row="15" Grid.Column="1">
             <ComboBoxItem Content="{lex:Loc Key=OriginalStyle}" />
             <ComboBoxItem Content="Cascadia Mono / JetBrains Mono" />
             <ComboBoxItem Content="Cascadia Code" />
@@ -221,16 +168,11 @@
             <ComboBoxItem Content="Allerta" />
         </ComboBox>
 
-        <Label Grid.Row="14" Grid.Column="0"
-               Content="{lex:Loc Key=EditorFontSize}" />
-        <TextBox x:Name="EditorFontSize"
-                 Grid.Row="14" Grid.Column="1"
-                 Text="12"
-                 LostKeyboardFocus="FontSizeTextBox_LostKeyboardFocus" />
+        <Label Grid.Row="16" Grid.Column="0" Content="{lex:Loc Key=EditorFontSize}" />
+        <TextBox x:Name="EditorFontSize" Grid.Row="16" Grid.Column="1" Text="12" LostKeyboardFocus="FontSizeTextBox_LostKeyboardFocus" />
 
-        <Label Grid.Row="15" Grid.Column="0"
-               Content="{lex:Loc Key=ViewDisplayFont}" />
-        <ComboBox x:Name="ViewDisplayFont" Grid.Row="15" Grid.Column="1">
+        <Label Grid.Row="17" Grid.Column="0" Content="{lex:Loc Key=ViewDisplayFont}" />
+        <ComboBox x:Name="ViewDisplayFont" Grid.Row="17" Grid.Column="1">
             <ComboBoxItem Content="{lex:Loc Key=OriginalStyle}" />
             <ComboBoxItem Content="Cascadia Mono / JetBrains Mono" />
             <ComboBoxItem Content="Cascadia Code" />
@@ -244,23 +186,21 @@
             <ComboBoxItem Content="Allerta" />
         </ComboBox>
 
-        <Label Grid.Row="16" Grid.Column="0"
-               Content="{lex:Loc Key=SongInfoCard}" />
-        <ComboBox x:Name="SongDetailStyle"
-                  Grid.Row="16" Grid.Column="1">
+        <Label Grid.Row="18" Grid.Column="0" Content="{lex:Loc Key=SongInfoCard}" VerticalAlignment="Top" Height="26" />
+        <StackPanel Grid.Row="18" Grid.Column="1">
+        <ComboBox x:Name="SongDetailStyle">
             <ComboBoxItem Content="{lex:Loc Key=OriginalStyle}" />
             <ComboBoxItem Content="{lex:Loc Key=OfficialStyleCover}" />
         </ComboBox>
+        </StackPanel>
 
-        <StackPanel Grid.Row="16" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Visibility="Collapsed">
+        <StackPanel Grid.Row="18" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Visibility="Collapsed">
             <CheckBox x:Name="EditorLightTheme" VerticalAlignment="Center" />
             <Label Content="{lex:Loc Key=EditorLightMode}" />
         </StackPanel>
 
-        <Label Grid.Row="17" Grid.Column="0"
-               Content="{lex:Loc Key=ComboDisplay}" />
-        <ComboBox x:Name="ComboDisplay"
-                  Grid.Row="17" Grid.Column="1">
+        <Label Grid.Row="19" Grid.Column="0" Content="{lex:Loc Key=ComboDisplay}" />
+        <ComboBox x:Name="ComboDisplay" Grid.Row="19" Grid.Column="1">
             <ComboBoxItem Content="{lex:Loc Key=ComboDisplayNone}" />
             <ComboBoxItem Content="{lex:Loc Key=ComboDisplayCombo}" />
             <ComboBoxItem Content="{lex:Loc Key=ComboDisplayScoreClassic}" />
@@ -273,21 +213,16 @@
             <ComboBoxItem Content="{lex:Loc Key=ComboDisplayCScoreDownDedeluxe}" />
         </ComboBox>
 
-        <Label Grid.Row="18" Grid.Column="0"
-               Content="{lex:Loc Key=PlayMethod}" />
-        <ComboBox x:Name="PlayMethod"
-                  Grid.Row="18" Grid.Column="1">
+        <Label Grid.Row="20" Grid.Column="0" Content="{lex:Loc Key=PlayMethod}" />
+        <ComboBox x:Name="PlayMethod" Grid.Row="20" Grid.Column="1">
             <ComboBoxItem Content="{lex:Loc Key=PlayMethodClassic}" />
             <ComboBoxItem Content="{lex:Loc Key=PlayMethodDJAuto}" />
             <ComboBoxItem Content="{lex:Loc Key=PlayMethodRandom}" />
             <ComboBoxItem Content="{lex:Loc Key=PlayMethodDisabled}" />
         </ComboBox>
 
-        <Label Grid.Row="18" Grid.Column="0"
-            Content="{lex:Loc Key=SyntaxDisplay}" VerticalAlignment="Top" Visibility="Collapsed" />
-        <ComboBox x:Name="SyntaxCheckLevel"
-            Grid.Row="18" VerticalAlignment="Top" Grid.ColumnSpan="2" Margin="114,1,0,0" SelectedIndex="1"
-            Visibility="Collapsed">
+        <Label Grid.Row="20" Grid.Column="0" Content="{lex:Loc Key=SyntaxDisplay}" VerticalAlignment="Top" Visibility="Collapsed" />
+        <ComboBox x:Name="SyntaxCheckLevel" Grid.Row="20" VerticalAlignment="Top" Grid.ColumnSpan="2" Margin="114,1,0,0" SelectedIndex="1" Visibility="Collapsed">
             <ComboBoxItem Content="{lex:Loc Key=SyntaxCheckLevel1}" />
             <ComboBoxItem Content="{lex:Loc Key=SyntaxCheckLevel2}" />
             <ComboBoxItem Content="{lex:Loc Key=SyntaxCheckLevel3}" />
@@ -297,14 +232,11 @@
         <!-- One column of boxes per topic, so every box lines up under the one
              above it. As four horizontal rows these had the window as wide as
              three long labels laid end to end. -->
-        <Label Grid.Row="19" Grid.Column="0" VerticalAlignment="Top" Margin="0,8,0,0"
-               Content="{lex:Loc Key=DisplaySection}" />
-        <Border Grid.Row="19" Grid.RowSpan="4" Grid.Column="1" Margin="0,0,0,6" Padding="7"
-                CornerRadius="5" BorderThickness="1" BorderBrush="{DynamicResource ButtonsBackground}"
-                Background="{DynamicResource EditorBackground}">
+        <Label Grid.Row="21" Grid.Column="0" Grid.ColumnSpan="2" VerticalAlignment="Top" Margin="0,0,0,0" Content="{lex:Loc Key=DisplaySection}" />
+        <Border Grid.Row="21" Grid.RowSpan="4" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,30,0,6" Padding="7" CornerRadius="5" BorderThickness="1" BorderBrush="{DynamicResource ButtonsBackground}" Background="{DynamicResource EditorBackground}">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="120" />
+                    <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
@@ -314,10 +246,9 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <CheckBox Grid.Row="0" Grid.Column="0" x:Name="ShowJudgeLine" Content="{lex:Loc Key=ShowJudgeLine}"
-                          Checked="ShowJudgeLine_Toggled" Unchecked="ShowJudgeLine_Toggled" />
-                <CheckBox Grid.Row="0" Grid.Column="1" x:Name="ShowJudgeArea" Content="{lex:Loc Key=ShowJudgeArea}" />
+
                 <CheckBox Grid.Row="1" Grid.Column="0" x:Name="ShowJudgeText" Content="{lex:Loc Key=ShowJudgeText}" />
                 <CheckBox Grid.Row="1" Grid.Column="1" x:Name="ShowMineHitFeedback" Content="{lex:Loc Key=ShowMineHitFeedback}" />
                 <CheckBox Grid.Row="2" Grid.Column="0" x:Name="ShowJudgeInfo" Content="{lex:Loc Key=ShowJudgeInfo}" />
@@ -326,12 +257,33 @@
                 <CheckBox Grid.Row="3" Grid.Column="1" x:Name="ShowAllPerfect" Content="{lex:Loc Key=ShowAllPerfect}" />
                 <CheckBox Grid.Row="4" Grid.Column="0" x:Name="ClipBackgroundToRing" Content="{lex:Loc Key=ClipBackgroundToRing}" />
                 <CheckBox Grid.Row="4" Grid.Column="1" x:Name="ShowGeneratedMark" Content="{lex:Loc Key=ShowGeneratedMark}" />
-                <CheckBox Grid.Row="5" Grid.Column="0" x:Name="SmoothSlideAnime" Content="{lex:Loc Key=EnableSmoothSlideAnime}"
-                          ToolTip="{lex:Loc Key=SmoothSlideAnimeTooltip}" />
+                <CheckBox Grid.Row="5" Grid.Column="0" x:Name="SmoothSlideAnime" Content="{lex:Loc Key=EnableSmoothSlideAnime}" ToolTip="{lex:Loc Key=SmoothSlideAnimeTooltip}" />
+                <CheckBox Grid.Row="5" Grid.Column="1" x:Name="DisableAutomaticSongDetailRefresh" Content="{lex:Loc Key=DisableAutomaticSongDetailRefresh}">
+                    <CheckBox.Style>
+                        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+                            <Setter Property="IsEnabled" Value="False" />
+                            <Setter Property="Opacity" Value="0.45" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedIndex, ElementName=SongDetailStyle}" Value="1">
+                                    <Setter Property="IsEnabled" Value="True" />
+                                    <Setter Property="Opacity" Value="1" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </CheckBox.Style>
+                </CheckBox>
             </Grid>
         </Border>
 
+        <StackPanel Grid.Row="5" Grid.ColumnSpan="2">
+            <Label Content="{lex:Loc Key=JudgeLineStyle}" />
+            <local:VisualStylePicker x:Name="JudgeLineStylePicker" Kind="JudgeLine" />
+        </StackPanel>
+        <Label x:Name="PetSelectorLabel" Grid.Row="25" Grid.Column="0" Content="默认桌宠" />
+        <ComboBox x:Name="PetComboBox" Grid.Row="25" Grid.Column="1"
+                  SelectionChanged="PetComboBox_SelectionChanged" />
     </Grid>
     </ScrollViewer>
+    </Grid>
 
 </Window>

@@ -1,0 +1,26 @@
+using MajdataEdit;
+var root = Path.GetFullPath(args[0]); Directory.CreateDirectory(root);
+Environment.SetEnvironmentVariable("CHART_LIST_TEST_FILE", Path.Combine(root,"list.json"));
+var song = Path.Combine(root,"song");Directory.CreateDirectory(song);
+File.WriteAllText(Path.Combine(song,"track.mp3"), "fixture");
+File.WriteAllText(Path.Combine(song,"maidata.txt"), "&title=Title\n&artist=Artist\n&des=Shared\n&des_5=Master author\n&lv_4=12\n&lv_5=14+\n&inote_4=(120){4}1,E\n&inote_5=(120){4}2,E\n&inote_6=\n");
+int checks=0;
+void Check(bool condition,string reason){checks++;if(!condition)throw new Exception(reason);}
+ChartListStore.Update(x=>x.Clear());
+var entries=ChartListStore.InspectAll(song);
+Check(entries.Count==2,"Only nonempty difficulties imported");
+Check(entries[0].Difficulty==3 && entries[1].Difficulty==4,"Difficulty order");
+Check(entries[0].Designer=="Shared" && entries[1].Designer=="Master author","Difficulty-specific designer");
+Check(entries[1].Level=="14+" && entries[1].Artist=="Artist","Metadata");
+ChartListStore.Add(entries);
+ChartListStore.Add(new[]{ChartListStore.Inspect(song,3)});
+Check(ChartListStore.Read().Count==2,"Adding one difficulty must not replace another or duplicate itself");
+ChartListStore.Update(list=>list.Reverse());
+Check(ChartListStore.Read()[0].Difficulty==4,"Order persists");
+ChartListStore.Update(list=>list.RemoveAll(x=>ChartListStore.Same(x,entries[0])));
+Check(ChartListStore.Read().Count==1 && ChartListStore.Read()[0].Difficulty==4,"Removal is per difficulty");
+ChartListStore.Update(list=>list.Clear());Check(ChartListStore.Read().Count==0,"Clear persists");
+ChartListStore.Add(entries);
+File.Delete(Path.Combine(song,"maidata.txt"));
+Check(ChartListStore.Read().Count==0,"Deleted source chart must disappear from the list");
+Console.WriteLine($"PASS: {checks} chart-list assertions");

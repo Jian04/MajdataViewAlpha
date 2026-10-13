@@ -352,7 +352,17 @@ namespace MajdataCore
 
         public static float GetTouchMotionDuration(float speed) =>
             3.209385682f *
-            (float)Math.Pow(Math.Max(Math.Abs(speed), 0.0001f), -0.9549621752f);
+              (float)Math.Pow(Math.Max(Math.Abs(speed), 0.0001f), -0.9549621752f);
+
+        // Before the judgement time Touch shows on either side of a scroll
+        // reversal. Noise uses this same distance and duration, not wall time.
+        public static float GetTouchWarningProgress(double noteScroll, double currentScroll, float speed)
+        {
+            if (Math.Abs(speed) <= Epsilon) return 1f;
+            var distance = Math.Abs(currentScroll - noteScroll);
+            var duration = GetTouchMotionDuration(speed);
+            return distance >= duration ? -1f : (float)(1 - distance / duration);
+        }
 
         public static float GetTouchVisualTiming(
             double noteScroll,

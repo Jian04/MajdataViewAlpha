@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -32,10 +32,36 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        if (IsBatchWorker)
+        {
+            ShowInTaskbar = false;
+            ShowActivated = false;
+            WindowStyle = WindowStyle.ToolWindow;
+            WindowState = WindowState.Minimized;
+            Left = Top = -32000;
+            Opacity = 0;
+            Loaded += (_, _) => Hide();
+        }
+        StartMuriDiagnostics();
+        ApplyInstanceIdentity();
+        Loaded += (_, _) => StartRoomHandoff();
+        Loaded += (_, _) => StartGroupControl();
+        Closed += (_, _) => { roomHandoffStop.Cancel(); chartRoom?.Close(); };
         MediaTimelinePanel.ProjectChanged += MediaTimelinePanel_ProjectChanged;
         MediaTimelinePanel.MarkerRequested += MediaTimelinePanel_MarkerRequested;
         MediaTimelinePanel.PlayheadChanged += MediaTimelinePanel_PlayheadChanged;
+        MediaTimelinePanel.SelectedClipChanged += (_, _) =>
+        {
+            if (MediaTimelinePanel.Visibility != Visibility.Visible) return;
+            if (MediaTimelinePanel.SelectedClip == null)
+            {
+                if (toolTabs.TryGetValue(typeof(MediaClipInfoWindow), out var selectedInfo)) selectedInfo.Window.Close();
+            }
+            else if (!FocusTool<MediaClipInfoWindow>())
+                ShowTool(new MediaClipInfoWindow(MediaTimelinePanel), "音视频信息");
+        };
         fumenEditor = new FumenEditorAdapter(FumenContent);
+        FumenContent.PreviewMouseWheel += FumenContent_PreviewMouseWheel;
         FumenContent.TextArea.TextView.BackgroundRenderers.Add(
             new ColorSectionBackgroundRenderer(FumenContent));
         basicParseErrorRenderer = new BasicParseErrorRenderer(FumenContent);
@@ -51,9 +77,9 @@ public partial class MainWindow : Window
         {
             petTypingTimer.Stop();
             if (basicParseErrorRenderer.HasErrors)
-                PetStatusClient.Notify("error", "Chart has syntax errors");
+                PetStatusClient.Notify("syntax-error", "Chart has syntax errors");
             else
-                PetStatusClient.Notify("idle", "Ready");
+                PetStatusClient.Notify("syntax-ok", "Ready");
         };
         if (Environment.GetCommandLineArgs().Contains("--ForceSoftwareRender"))
         {
@@ -157,7 +183,7 @@ public partial class MainWindow : Window
         TraceStartup("DiscordRPC queued");
 
         var handle = new WindowInteropHelper(this).Handle;
-        Bass.BASS_Init(-1, 44100, BASSInit.BASS_DEVICE_CPSPEAKERS, handle);
+        InitializeEditorAudio(handle);
         TraceStartup("Bass init done");
         InitWave();
         TraceStartup("InitWave done");
@@ -166,6 +192,8 @@ public partial class MainWindow : Window
         TraceStartup("ReadSoundEffect done");
         ReadEditorSetting();
         VisualChartEditorCheck.IsChecked = editorSetting?.EnableVisualChartEditor ?? true;
+        FollowPlayCheck.IsChecked = editorSetting?.TextFollow ?? true;
+        DragPreviewCheck.IsChecked = editorSetting?.DragPreview ?? true;
         TraceStartup("ReadEditorSetting done");
 
         chartChangeTimer.Elapsed += ChartChangeTimer_Elapsed;
@@ -189,7 +217,7 @@ public partial class MainWindow : Window
         // Clear the previous run marker before opening a chart. initFromFile then
         // creates the marker for this run, preserving crash recovery.
         SafeTerminationDetector.Of().RecordProgramClose();
-        if (!previousTerminationWasSafe)
+        if (!previousTerminationWasSafe && !IsBatchWorker)
         {
             TraceStartup("recovery MessageBox shown");
             // Offer to open the recovery window after an abnormal exit.
@@ -211,7 +239,7 @@ public partial class MainWindow : Window
                 Menu_AutosaveRecover_Click(new object(), new RoutedEventArgs());
             }
         }
-        else
+        else if (!IsBatchWorker)
         {
             TryOpenLastChart();
         }
@@ -219,42 +247,89 @@ public partial class MainWindow : Window
         #endregion
 
         TraceStartup("Loaded end");
-        ContentRendered += (_, _) => TraceStartup("ContentRendered");
+        // Loaded may await I/O past the first ContentRendered event. Scheduling
+        // readiness here cannot miss that event and runs after pending rendering.
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            editorUiReady = true;
+            PetStatusClient.Notify("editing", "Charting...");
+        }));
     }
 
 
-    //start the view and wait for boot, then set window pos
-    private void SetWindowPosTimer_Elapsed(object? sender, ElapsedEventArgs e)
-    {
-        var setWindowPosTimer = (Timer)sender!;
-        Dispatcher.Invoke(() => { InternalSwitchWindow(); });
-        setWindowPosTimer.Stop();
-        setWindowPosTimer.Dispose();
-    }
-
+    private System.Windows.Threading.DispatcherTimer? viewAlignmentTimer;
+    private int viewAlignmentAttempts;
+    private int viewAlignmentStablePasses;
+    // One UI-thread alignment transaction per Edit. View can create its native
+    // window after its port opens, so retry until the paired HWND is available.
     private void ScheduleViewWindowAlignment(double delayMilliseconds)
     {
-        var setWindowPosTimer = new Timer(delayMilliseconds)
+        viewAlignmentTimer?.Stop();
+        viewAlignmentAttempts = 0;
+        viewAlignmentStablePasses = 0;
+        startupViewAligned = false;
+        viewAlignmentTimer ??= new System.Windows.Threading.DispatcherTimer();
+        viewAlignmentTimer.Interval = TimeSpan.FromMilliseconds(delayMilliseconds);
+        viewAlignmentTimer.Tick -= AlignViewWindow;
+        viewAlignmentTimer.Tick += AlignViewWindow;
+        viewAlignmentTimer.Start();
+    }
+
+    private void AlignViewWindow(object? sender, EventArgs e)
+    {
+        if (++viewAlignmentAttempts > 200 || !IsLoaded)
         {
-            AutoReset = false
-        };
-        setWindowPosTimer.Elapsed += SetWindowPosTimer_Elapsed;
-        setWindowPosTimer.Start();
+            viewAlignmentTimer?.Stop();
+            return;
+        }
+        if (!editorUiReady || GetPairedViewWindow() == IntPtr.Zero)
+        {
+            viewAlignmentStablePasses = 0;
+            viewAlignmentTimer!.Interval = TimeSpan.FromMilliseconds(150);
+            return;
+        }
+        // Unity may change its native window rect again after its HWND first
+        // appears. Position it over several ticks and only then allow the pet
+        // to begin its return flight to the toolbar.
+        InternalMoveWindow();
+        if (++viewAlignmentStablePasses >= 5)
+        {
+            viewAlignmentTimer?.Stop();
+            startupViewAligned = true;
+        }
+        else viewAlignmentTimer!.Interval = TimeSpan.FromMilliseconds(150);
     }
 
     //Window events
-    private void Window_Closing(object? sender, CancelEventArgs e)
+    private bool awaitingRoomExit, closingAfterRoomDelivery;
+    private async void Window_Closing(object? sender, CancelEventArgs e)
     {
-        if (!isSaved)
+        if (closingAfterRoomDelivery) return;
+        if (awaitingRoomExit) { e.Cancel = true; return; }
+        if (chartQueueStop != null)
+        {
+            e.Cancel = true; closeAfterQueue = true; StopChartList(); return;
+        }
+        if (activeChartExport != null)
+        {
+            e.Cancel = true;
+            closeAfterChartExport = true;
+            activeChartExport.Cancel();
+            return;
+        }
+        if (!isSaved && !batchWorkerClosing)
             if (!AskSave())
             {
                 e.Cancel = true;
                 return;
             }
 
-        var viewProcesses = Process.GetProcessesByName("MajdataView");
-        var closeView = false;
-        if (viewProcesses.Length > 0)
+        var paired = MajdataCore.AlphaSession.Current?.GetProcess(true);
+        var viewProcesses = MajdataCore.AlphaSession.Current == null
+            ? Process.GetProcessesByName("MajdataView").Where(p => !MajdataCore.AlphaSession.List().Any(s => s.ViewPid == p.Id && MajdataCore.AlphaSession.IsProcess(s.ViewPid, s.ViewStart))).ToArray()
+            : paired == null ? Array.Empty<Process>() : new[] { paired };
+        var closeView = batchWorkerClosing;
+        if (viewProcesses.Length > 0 && !batchWorkerClosing)
         {
             var result = MessageBox.Show(
                 GetLocalizedString("AskCloseView"),
@@ -268,9 +343,10 @@ public partial class MainWindow : Window
             closeView = result == MessageBoxResult.Yes;
         }
 
-        var petProcesses = Process.GetProcessesByName("MajdataLauncher");
+        var petProcesses = Process.GetProcessesByName("MajdataEdit").Any(p => p.Id != Environment.ProcessId && !p.HasExited)
+            ? Array.Empty<Process>() : Process.GetProcessesByName("MajdataLauncher");
         var closePet = false;
-        if (petProcesses.Length > 0)
+        if (petProcesses.Length > 0 && !batchWorkerClosing)
         {
             var result = MessageBox.Show(
                 GetLocalizedString("AskExitPet"),
@@ -288,6 +364,16 @@ public partial class MainWindow : Window
         // otherwise a preview tick fires into a closed port and the user sees a
         // "connection refused" box on the way out.
         WebControl.IsShuttingDown = true;
+        if (chartRoom != null)
+        {
+            // Keep the process alive until the room's closure/leave packet is
+            // delivered. Closed alone starts a fire-and-forget task too late.
+            e.Cancel = true;
+            awaitingRoomExit = true;
+            await chartRoom.DisconnectAndWaitAsync();
+        }
+        StopChartList();
+        guestChartPendingSave = false; // The normal close/save prompt has already handled this draft.
         currentTimeRefreshTimer.Stop();
         StopVisualEditBridge();
         notePreviewTimer.Stop();
@@ -295,12 +381,12 @@ public partial class MainWindow : Window
 
         if (closeView)
             foreach (var view in viewProcesses)
-                view.Kill();
+                view.CloseMainWindow();
         if (closePet)
             foreach (var pet in petProcesses)
                 pet.Kill();
 
-        soundSetting.Close();
+        soundSetting?.Close();
         //if (bpmtap != null) { bpmtap.Close(); }
         //if (muriCheck != null) { muriCheck.Close(); }
         SaveSetting();
@@ -320,6 +406,12 @@ public partial class MainWindow : Window
 
         // Normal exit
         SafeTerminationDetector.Of().RecordProgramClose();
+        if (awaitingRoomExit) {
+            closingAfterRoomDelivery = true;
+            // A disconnected room completes synchronously; defer Close until
+            // this Closing event returns to avoid reentering WPF's close path.
+            Dispatcher.BeginInvoke(new Action(Close));
+        }
     }
 
     //Window grid events
@@ -371,22 +463,8 @@ public partial class MainWindow : Window
 
     #region MENU BARS
 
-    private void Menu_New_Click(object sender, RoutedEventArgs e)
-    {
-        if (!isSaved)
-            if (!AskSave())
-                return;
-        var openFileDialog = new OpenFileDialog
-        {
-            Filter = "track.mp3, track.ogg|track.mp3;track.ogg"
-        };
-        if ((bool)openFileDialog.ShowDialog()!)
-        {
-            var fileInfo = new FileInfo(openFileDialog.FileName);
-            CreateNewFumen(fileInfo.DirectoryName!);
-            initFromFile(fileInfo.DirectoryName!);
-        }
-    }
+    private async void Menu_New_Click(object sender, RoutedEventArgs e) => await NewChartFromMediaAsync(false);
+    private async void Menu_NewVideo_Click(object sender, RoutedEventArgs e) => await NewChartFromMediaAsync(true);
 
     private void Menu_Open_Click(object sender, RoutedEventArgs e)
     {
@@ -421,9 +499,9 @@ public partial class MainWindow : Window
 
     private void Menu_ExportRender_Click(object sender, RoutedEventArgs e)
     {
-        if (recordVideoWindow is { IsLoaded: true })
+        if (recordVideoWindow != null)
         {
-            recordVideoWindow.Activate();
+            ShowTool(recordVideoWindow, "录制");
             return;
         }
         var window = new RecordVideoWindow(this) { Owner = this };
@@ -435,7 +513,7 @@ public partial class MainWindow : Window
         };
         // Do not disable the Edit owner: a modal owner transition makes some
         // transparent topmost desktop-pet windows flash black under DWM.
-        window.Show();
+        ShowTool(window, "录制");
     }
 
     private void MirrorLeftRight_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -465,15 +543,15 @@ public partial class MainWindow : Window
 
     private void BPMtap_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
-        var tap = new BPMtap();
+        var tap = new BPMtap(GetCurrentTrackPath);
         tap.Owner = this;
-        tap.Show();
+        ShowTool(tap, "BPM");
     }
 
     private void ChartAssistant_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
         var window = new ChartLibraryWindow { Owner = this };
-        window.ShowDialog();
+        ShowTool(window, "谱面库");
     }
 
     private void NoteDensity_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -523,7 +601,27 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        window.Show();
+        ShowTool(window, "密度分析");
+    }
+
+    private void ModifierBrush_Click(object sender, RoutedEventArgs e)
+    {
+        if (!fumenEditor.HasSelection || sender is not MenuItem { Tag: string modifier }) return;
+        var original = fumenEditor.SelectedText;
+        var changed = NoteModifierBrush.Transform(original, modifier[0]);
+        if (!string.Equals(original, changed, StringComparison.Ordinal))
+            fumenEditor.ReplaceSelection(changed);
+    }
+
+    private void DurationBrush_Click(object sender, RoutedEventArgs e)
+    {
+        if (!fumenEditor.HasSelection || sender is not MenuItem { Tag: string mode }) return;
+        var selection = fumenEditor.Selection;
+        var original = fumenEditor.SelectedText;
+        var transformed = NoteDurationBrush.Transform(original, mode,
+            NoteDurationBrush.BpmBefore(fumenEditor.Text, selection.Start));
+        if (!string.Equals(original, transformed, StringComparison.Ordinal))
+            fumenEditor.ReplaceSelection(transformed);
     }
 
     private void FormatBrushAuto_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -554,7 +652,7 @@ public partial class MainWindow : Window
         {
             var wholeChart = BeatFormatBrush.Transform(text, targetBeat);
             if (!string.Equals(text, wholeChart, StringComparison.Ordinal))
-                fumenEditor.Text = wholeChart;
+                fumenEditor.ReplaceAll(wholeChart);
             return;
         }
 
@@ -585,7 +683,7 @@ public partial class MainWindow : Window
         if (string.Equals(organized, text, StringComparison.Ordinal))
             return;
 
-        fumenEditor.Text = organized;
+        fumenEditor.ReplaceAll(organized);
     }
 
     private void SearchSelectedChartPattern_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -595,22 +693,32 @@ public partial class MainWindow : Window
             return;
 
         var window = new ChartLibraryWindow(query) { Owner = this };
-        window.Show();
+        ShowTool(window, "谱面库");
     }
 
     private void FumenContextMenu_Opened(object? sender, RoutedEventArgs e)
     {
-        MergeNoteStreamsMenuItem.Visibility = NoteStreamMerger.CanMerge(
-            fumenEditor.Text, FumenContent.CaretOffset)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        MergeNoteStreamsMenuItem.IsEnabled = TryGetMergeStreamCaret(out _);
+    }
+    private void ToolsMenu_Opened(object sender,RoutedEventArgs e)
+    {
+        if(e.Source!=sender) return;
+        MergeNoteStreamsToolsMenuItem.IsEnabled = TryGetMergeStreamCaret(out _);
+    }
+
+    private bool TryGetMergeStreamCaret(out int caret)
+    {
+        var selection = fumenEditor.Selection;
+        return NoteStreamMerger.TryGetMergeCaret(fumenEditor.Text, fumenEditor.CaretOffset,
+            selection.Start, selection.Length, out caret);
     }
 
     private void MergeNoteStreams_MenuItem_Click(object? sender, RoutedEventArgs e)
     {
+        if (!TryGetMergeStreamCaret(out var caret)) return;
         if (!NoteStreamMerger.TryBuildMerge(
                 fumenEditor.Text,
-                FumenContent.CaretOffset,
+                caret,
                 out var start,
                 out var length,
                 out var replacement,
@@ -623,14 +731,26 @@ public partial class MainWindow : Window
         FumenContent.Document.BeginUpdate();
         try
         {
-            FumenContent.Document.Replace(start, length, replacement);
-            FumenContent.CaretOffset = start + replacement.Length;
+            var rawStart = fumenEditor.NormalizedToRawOffset(start);
+            var rawEnd = fumenEditor.NormalizedToRawOffset(start + length);
+            FumenContent.Document.Replace(rawStart, rawEnd - rawStart, replacement);
+            FumenContent.CaretOffset = rawStart + replacement.Length;
         }
         finally
         {
             FumenContent.Document.EndUpdate();
         }
         FumenContent.Focus();
+    }
+
+    private void FumenContent_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var previousSize = FumenContent.FontSize;
+        if (!fumenEditor.ZoomWithWheel(e.Delta, Keyboard.Modifiers)) return;
+        e.Handled = true;
+        if (FumenContent.FontSize == previousSize) return;
+        editorSetting.FontSize = (float)FumenContent.FontSize;
+        SaveEditorSetting();
     }
 
     private async void MuriCheck_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -658,8 +778,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var tempChart = Path.Combine(Path.GetTempPath(), "majedit_muri_chart.txt");
-        var tempReport = Path.Combine(Path.GetTempPath(), "majedit_muri_report.txt");
+        var tempChart = Path.Combine(Path.GetTempPath(), MajdataCore.AlphaSession.FileName("majedit_muri_chart.txt"));
+        var tempReport = Path.Combine(Path.GetTempPath(), MajdataCore.AlphaSession.FileName("majedit_muri_report.txt"));
         try
         {
             // cli.py reads UTF-8 and writes UTF-8 without BOM. The first offset shifts only absolute time, not muri relationships, so pass zero.
@@ -724,14 +844,14 @@ public partial class MainWindow : Window
             FontFamily = new FontFamily("Cascadia Mono, Consolas"),
             Padding = new Thickness(8),
         };
-        new Window
+        ShowTool(new Window
         {
             Title = GetLocalizedString("MuriResultTitle"),
             Width = 760,
             Height = 580,
             Owner = this,
             Content = box,
-        }.Show();
+        }, "无理检查结果");
     }
 
     private async void AudioConvert44100_MenuItem_Click(object? sender, RoutedEventArgs e)
@@ -861,6 +981,8 @@ public partial class MainWindow : Window
             SimaiProcess.mediaTrimStart,
             SimaiProcess.mediaTrimEnd);
         MediaTimelinePanel.Visibility = Visibility.Visible;
+        if (MediaTimelinePanel.SelectedClip != null && !FocusTool<MediaClipInfoWindow>())
+            ShowTool(new MediaClipInfoWindow(MediaTimelinePanel), "音视频信息");
         TimelineStopButton.Visibility = Visibility.Visible;
         TimelinePlayAndPauseButton.Visibility = Visibility.Visible;
         MediaTimelinePanel.Focus();
@@ -871,6 +993,7 @@ public partial class MainWindow : Window
     private void MediaTimelinePanel_CloseRequested(object? sender, EventArgs e)
     {
         MediaTimelinePanel.Visibility = Visibility.Collapsed;
+        if (toolTabs.TryGetValue(typeof(MediaClipInfoWindow), out var info)) info.Window.Close();
         TimelineStopButton.Visibility = Visibility.Collapsed;
         TimelinePlayAndPauseButton.Visibility = Visibility.Collapsed;
         FumenContent.Focus();
@@ -888,28 +1011,45 @@ public partial class MainWindow : Window
 
     private void AlphaSyntaxHelp_MenuItem_Click(object sender, RoutedEventArgs e)
     {
-        new AlphaSyntaxHelp { Owner = this }.ShowDialog();
+        if (alphaHelpWindow != null) { ShowTool(alphaHelpWindow, "语法帮助"); return; }
+        alphaHelpWindow = new AlphaSyntaxHelp { Owner = this };
+        alphaHelpWindow.Closed += (_, _) => alphaHelpWindow = null;
+        ShowTool(alphaHelpWindow, "语法帮助");
+    }
+    private AlphaSyntaxHelp? alphaHelpWindow;
+    private void ShortcutSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (FocusTool<ShortcutSettingsPanel>()) return;
+        ShowTool(new ShortcutSettingsPanel(this), "快捷键设置");
     }
 
     private void MenuItem_InfomationEdit_Click(object? sender, RoutedEventArgs e)
     {
-        var before = BuildSongDetailInfoFingerprint();
+        if (FocusTool<Infomation>()) return;
         var infoWindow = new Infomation();
-        SetSavedState(false);
-        infoWindow.ShowDialog();
-        TheWindow.Title = GetWindowsTitleString(SimaiProcess.title!);
-        var after = BuildSongDetailInfoFingerprint();
-        if (!string.Equals(before, after, StringComparison.Ordinal))
+        infoWindow.InformationChanged += () =>
         {
+            TheWindow.Title = GetWindowsTitleString(SimaiProcess.title!);
+            SetSavedState(false);
             InvalidateSongDetailCache();
-            SchedulePreBakeSongDetail(); // Re-bake the current difficulty cover after metadata changes.
-        }
+            // Generate the cover lazily before playback. Guests keep the shared
+            // draft in memory and retain their normal optional-save workflow.
+            if (!guestChartPendingSave && chartRoom?.IsGuest != true &&
+                !string.IsNullOrEmpty(maidataDir) && selectedDifficulty >= 0 &&
+                File.Exists(Path.Combine(maidataDir, "maidata.txt")))
+                SaveFumen(true);
+        };
+        ShowTool(infoWindow, "歌曲信息");
     }
 
     private void MenuItem_Majnet_Click(object? sender, RoutedEventArgs e)
     {
-        Process.Start(new ProcessStartInfo() { FileName = "https://majdata.net", UseShellExecute = true });
-        // Chart format in maidata.txt
+        if (!FocusTool<MajnetPanel>()) ShowTool(new MajnetPanel((folder, addToList) =>
+        {
+            if (addToList) { AddFolderToChartList(folder); return; }
+            if (!isSaved && !AskSave()) return;
+            initFromFile(folder);
+        }));
     }
 
     private void MenuItem_GitHub_Click(object? sender, RoutedEventArgs e)
@@ -919,60 +1059,43 @@ public partial class MainWindow : Window
 
     private void MenuItem_SoundSetting_Click(object? sender, RoutedEventArgs e)
     {
+        if (FocusTool<SoundSetting>()) return;
         soundSetting = new SoundSetting
         {
             Owner = this
         };
-        soundSetting.ShowDialog();
-        SaveSetting(); // Save current BASS channel volumes to majSetting.json when the volume window closes.
+        soundSetting.Closed += (_, _) => SaveSetting();
+        ShowTool(soundSetting, "音量");
     }
 
     private void MuriCheck_Click_1(object? sender, RoutedEventArgs e)
     {
+        if (FocusTool<MuriCheck>()) return;
         var muriCheck = new MuriCheck
         {
             Owner = this
         };
-        muriCheck.Show();
+        ShowTool(muriCheck, "无理检查");
     }
     private void SyntaxCheckButton_Click(object sender, RoutedEventArgs e)
     {
         ShowErrorWindow();
     }
-    void ShowErrorWindow()
-    {
-        var mcrWindow = new MuriCheckResult
-        {
-            Owner = this
-        };
-        // The same list the squiggles come from, so the window cannot show a chart
-        // as clean while the editor is underlining it. Positions are already
-        // zero-based, which is what SelectLineColumn expects.
-        foreach (var error in latestParseErrors)
-        {
-            mcrWindow.errorPosition.Add(new ErrorInfo(error.PositionX, error.PositionY));
-            var eRow = new ListBoxItem
-            {
-                Content = error.Message,
-                Name = "rr" + mcrWindow.CheckResult_Listbox.Items.Count
-            };
-            eRow.AddHandler(PreviewMouseDoubleClickEvent,
-                new MouseButtonEventHandler(mcrWindow.ListBoxItem_PreviewMouseDoubleClick));
-            mcrWindow.CheckResult_Listbox.Items.Add(eRow);
-        }
-        mcrWindow.Show();
-    }
+    void ShowErrorWindow() => ShowDiagnostics(0);
     private void SyntaxCheckButton_Click(object sender, MouseButtonEventArgs e)
     {
         ShowErrorWindow();
     }
     private void MenuItem_EditorSetting_Click(object? sender, RoutedEventArgs e)
     {
-        var esp = new EditorSettingPanel
-        {
-            Owner = this
-        };
-        esp.ShowDialog();
+        if (FocusTool<EditSettingsPanel>()) return;
+        ShowTool(new EditSettingsPanel(), "Edit 设置");
+    }
+
+    private void MenuItem_ViewSetting_Click(object? sender, RoutedEventArgs e)
+    {
+        if (FocusTool<ViewSettingsPanel>()) return;
+        ShowTool(new ViewSettingsPanel(), "View 设置");
     }
 
     private void Menu_ResetViewWindow(object? sender, RoutedEventArgs e)
@@ -1005,7 +1128,7 @@ public partial class MainWindow : Window
         {
             Owner = this
         };
-        asr.ShowDialog();
+        ShowTool(asr, "自动保存恢复");
     }
 
     #endregion
@@ -1135,6 +1258,13 @@ public partial class MainWindow : Window
         var i = LevelSelector.SelectedIndex;
         if (i < 0)
             return;
+        if (!isLoading && i == selectedDifficulty)
+            return;
+        if (!isLoading && selectedDifficulty >= 0 && i != selectedDifficulty && !ConfirmDifficultySwitch())
+        {
+            LevelSelector.SelectedIndex = selectedDifficulty;
+            return;
+        }
         selectedDifficulty = i;
         if (isLoading)
         {
@@ -1171,6 +1301,28 @@ public partial class MainWindow : Window
         // reload or View would keep showing the difficulty we just left.
         QueueNotePreview(chartChanged: true);
         SchedulePreBakeSongDetail(); // Pre-bake the selected difficulty cover after switching difficulty.
+    }
+
+    private bool ConfirmDifficultySwitch()
+    {
+        if (isSaved) return true;
+        var choice = MessageBox.Show(GetLocalizedString("AskSave"), GetLocalizedString("Warning"),
+            MessageBoxButton.YesNoCancel);
+        if (choice == MessageBoxResult.Cancel) return false;
+        if (choice == MessageBoxResult.Yes)
+        {
+            SaveFumen(true);
+            return isSaved;
+        }
+        MediaTimelinePanel.DiscardPendingChanges();
+        if (string.IsNullOrEmpty(maidataDir)) return false;
+        SimaiProcess.ClearData();
+        if (!SimaiProcess.ReadData(Path.Combine(maidataDir, "maidata.txt"))) return false;
+        var wasLoading = isLoading;
+        isLoading = true;
+        try { OffsetTextBox.Text = SimaiProcess.first.ToString(CultureInfo.InvariantCulture); }
+        finally { isLoading = wasLoading; }
+        return true;
     }
 
     private void LevelTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -1216,6 +1368,7 @@ public partial class MainWindow : Window
 
     private void FollowPlayCheck_Click(object sender, RoutedEventArgs e)
     {
+        if (editorSetting != null) { editorSetting.TextFollow = FollowPlayCheck.IsChecked == true; SaveEditorSetting(); }
         FumenContent.Focus();
     }
 
@@ -1237,10 +1390,7 @@ public partial class MainWindow : Window
 
     private void SettingLabel_MouseUp(object sender, MouseButtonEventArgs e)
     {
-        // A single click on Settings also opens the settings page.
-        var esp = new EditorSettingPanel();
-        esp.Owner = this;
-        esp.ShowDialog();
+        MenuItem_EditorSetting_Click(sender, new RoutedEventArgs());
     }
 
     #endregion
@@ -1249,14 +1399,13 @@ public partial class MainWindow : Window
 
     private void FumenContent_SelectionChanged(object? sender, EventArgs e)
     {
-        if (chartParsePending)
+        if (isLoading || chartParsePending)
             return;
         RefreshSyntaxValidationSlot();
         if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING && (bool)FollowPlayCheck.IsChecked!)
             return;
         var time = GetCaretTimingTime();
-        NoteNowText.Content = (Math.Abs(time) - Math.Floor(Math.Abs(time)))
-            .ToString(".0000", System.Globalization.CultureInfo.InvariantCulture);
+        var timelineMoved = false;
 
         // Change progress only for Ctrl plus left-click or an arrow key; other Ctrl combinations do not affect it.
         if (Keyboard.Modifiers == ModifierKeys.Control && (
@@ -1270,13 +1419,14 @@ public partial class MainWindow : Window
             if (Bass.BASS_ChannelIsActive(bgmStream) == BASSActive.BASS_ACTIVE_PLAYING)
                 TogglePause();
             SetBgmPosition(time);
+            timelineMoved = true;
         }
 
         //Console.WriteLine("SelectionChanged");
         SimaiProcess.ClearNoteListPlayedState();
         var ghostChanged = Math.Abs(ghostCusorPositionTime - time) > 0.0001d;
         ghostCusorPositionTime = (float)time;
-        if (!isPlaying && ghostChanged)
+        if (!isPlaying && (ghostChanged || timelineMoved))
             DrawWave();
         // Drag-selection is an editor operation, not a View preview request. Sending
         // the selected slide here renders a stray blue path while the mouse is down.
@@ -1307,11 +1457,12 @@ public partial class MainWindow : Window
 
     private void FumenContent_OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (Keyboard.Modifiers == ModifierKeys.Control &&
-            e.Key is Key.Up or Key.Down)
+        var moveUp = ShortcutMatches(e, editorSetting?.MoveCaretUpKey);
+        var moveDown = ShortcutMatches(e, editorSetting?.MoveCaretDownKey);
+        if (moveUp || moveDown)
         {
             var current = FumenContent.Document.GetLineByOffset(FumenContent.CaretOffset);
-            var targetNumber = current.LineNumber + (e.Key == Key.Up ? -1 : 1);
+            var targetNumber = current.LineNumber + (moveUp ? -1 : 1);
             if (targetNumber >= 1 && targetNumber <= FumenContent.Document.LineCount)
             {
                 var target = FumenContent.Document.GetLineByNumber(targetNumber);
@@ -1325,7 +1476,7 @@ public partial class MainWindow : Window
         }
 
         // Toggle overwrite mode when Insert is pressed without modifiers.
-        if (e.Key == Key.Insert && Keyboard.Modifiers == ModifierKeys.None)
+        if (ShortcutMatches(e, editorSetting?.OverwriteKey))
         {
             SwitchFumenOverwriteMode();
             e.Handled = true;
@@ -1359,8 +1510,7 @@ public partial class MainWindow : Window
 
     private void MusicWave_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (isPlaying)
-            TogglePause();
+        PrepareTimelineDrag();
         waveScrubActive = true;
         MusicWave.CaptureMouse();
         lastMousePointX = e.GetPosition(MusicWave).X;
@@ -1371,10 +1521,10 @@ public partial class MainWindow : Window
         waveScrubActive = false;
         MusicWave.ReleaseMouseCapture();
         MediaTimelinePanel.SyncPlayhead(GetTimelinePosition());
-        if (GetTimelinePosition() >= 0d && GetTimelinePosition() <= songLength)
+        if (FollowPlayCheck.IsChecked == true &&
+            GetTimelinePosition() >= 0d && GetTimelinePosition() <= songLength)
         {
-            if (FollowPlayCheck.IsChecked == true)
-                fumenEditor.Focus();
+            fumenEditor.Focus();
             SeekTextFromTime();
         }
     }

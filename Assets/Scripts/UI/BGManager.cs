@@ -22,6 +22,8 @@ public class BGManager : MonoBehaviour
     private SpriteRenderer spriteRender;
     private Sprite originalBackgroundSprite;
     private Sprite loadedStandbySprite;
+    private SpriteRenderer pausedJudgeRegions;
+    private Sprite pausedJudgeRegionsSprite;
     private Vector3 originalBackgroundScale;
     private Sprite videoSurfaceSprite;
     private int standbyLoadVersion;
@@ -247,6 +249,7 @@ public class BGManager : MonoBehaviour
 
     private void Update()
     {
+        RefreshPausedJudgeRegions();
         if (chartBackgroundActive)
             RefreshChartBackgroundVisibility();
 
@@ -855,8 +858,47 @@ public class BGManager : MonoBehaviour
         SetBackgroundVisible(backgroundMediaReady && introFinished);
     }
 
+    // Editing aid only: frozen playback/scrubbing, never standby or recording.
+    // Match the standby background's world size, independent of PV aspect ratio.
+    private void RefreshPausedJudgeRegions()
+    {
+        var visible = provider != null && provider.IsPaused && !provider.IsScheduled && !provider.isRecord;
+        if (visible && pausedJudgeRegions == null)
+        {
+            var path = Path.Combine(Application.streamingAssetsPath, "Background", "PausedJudgeRegions.png");
+            if (!File.Exists(path)) return;
+            pausedJudgeRegionsSprite = SpriteLoader.LoadSpriteFromFile(path);
+            if (pausedJudgeRegionsSprite == null || pausedJudgeRegionsSprite.bounds.size.y <= 0f) return;
+            var overlay = new GameObject("PausedJudgeRegions");
+            overlay.transform.SetParent(transform.parent, false);
+            pausedJudgeRegions = overlay.AddComponent<SpriteRenderer>();
+            pausedJudgeRegions.sprite = pausedJudgeRegionsSprite;
+            // Default lies above BG covers and below lines, Slide and Notes.
+            pausedJudgeRegions.sortingLayerName = "Default";
+            pausedJudgeRegions.sortingOrder = 0;
+        }
+        if (pausedJudgeRegions == null) return;
+        pausedJudgeRegions.enabled = visible;
+        if (!visible) return;
+        var reference = loadedStandbySprite != null ? loadedStandbySprite : originalBackgroundSprite;
+        if (reference == null) return;
+        var size = reference.bounds.size;
+        var overlaySize = pausedJudgeRegionsSprite.bounds.size;
+        pausedJudgeRegions.transform.localPosition = transform.localPosition;
+        pausedJudgeRegions.transform.localRotation = transform.localRotation;
+        pausedJudgeRegions.transform.localScale = new Vector3(
+            size.x * originalBackgroundScale.x / overlaySize.x,
+            size.y * originalBackgroundScale.y / overlaySize.y, originalBackgroundScale.z);
+    }
+
     private void OnDestroy()
     {
+        if (pausedJudgeRegions != null) Destroy(pausedJudgeRegions.gameObject);
+        if (pausedJudgeRegionsSprite != null)
+        {
+            if (pausedJudgeRegionsSprite.texture != null) Destroy(pausedJudgeRegionsSprite.texture);
+            Destroy(pausedJudgeRegionsSprite);
+        }
         if (videoSurfaceSprite != null)
             Destroy(videoSurfaceSprite);
         if (loadedStandbySprite != null)

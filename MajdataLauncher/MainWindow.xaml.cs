@@ -16,8 +16,9 @@ public partial class MainWindow : Window
     private const int WsExToolWindow = 0x00000080;
     private readonly LauncherService launcher = new();
     private readonly DispatcherTimer idleTimer = new() { Interval = TimeSpan.FromSeconds(8) };
-    private readonly DispatcherTimer externalStateTimer = new();
     private readonly DispatcherTimer speechTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private readonly DispatcherTimer expressionTimer = new();
+    private readonly DispatcherTimer modeTimer = new();
     private readonly Random random = new();
     private static readonly string[] IdleMessages =
     {
@@ -32,10 +33,12 @@ public partial class MainWindow : Window
     private PetControlServer? petControlServer;
     private CancellationTokenSource? launchCancellation;
     private bool launching;
-    private bool externalStateActive;
-    private int externalStatePriority;
-    private DateTime externalStateLockUntil;
-    private PetControlRequest? deferredPetRequest;
+    private bool editorActive;
+    private bool syntaxErrors;
+    private bool previewActive;
+    private PetMode displayedMode = (PetMode)(-1);
+    private enum PetMode { Initial, Editing, SyntaxError, Preview }
+    private readonly DateTime[] nextModeGesture = new DateTime[4];
     private string currentStatus = string.Empty;
     private string currentSpeech = string.Empty;
     private DateTime lastSpeechAt;
@@ -43,12 +46,21 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible) Dispatcher.BeginInvoke(new Action(KeepPetTopmost), DispatcherPriority.Loaded);
+        };
         LaunchMenuItem.Header = L("LaunchEditor");
         OpenFolderMenuItem.Header = L("OpenLauncherFolder");
         ExitMenuItem.Header = L("ExitPet");
         UpdateStatusLayout(L("Ready"));
         idleTimer.Tick += IdleTimer_Tick;
-        externalStateTimer.Tick += ExternalStateTimer_Tick;
+        expressionTimer.Tick += (_, _) => {
+            expressionTimer.Stop();
+            if (animator?.IsGesturePlaying == true) { expressionTimer.Interval = TimeSpan.FromSeconds(1); expressionTimer.Start(); }
+            else PlayModeGesture();
+        };
+        modeTimer.Tick += (_, _) => { modeTimer.Stop(); ApplyPetMode(); };
         speechTimer.Tick += (_, _) =>
         {
             speechTimer.Stop();
@@ -64,13 +76,24 @@ public partial class MainWindow : Window
         PositionAboveTaskbar();
     }
 
+    private void KeepPetTopmost()
+    {
+        if (!IsVisible) return;
+        var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero) return;
+        // Establish the native topmost band without activating or moving the pet.
+        if (!SetWindowPos(handle, new IntPtr(-1), 0, 0, 0, 0, 0x0013))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    }
+
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
         animator = new PetAnimator(PetPreviousImage, PetImage);
         var petReady = LoadPet();
-        if (petReady)
-            animator.Play(PetAnimation.Jumping, false, () => animator.Play(PetAnimation.Idle, true));
+        if (petReady) PlayStartupAppearance();
         StartPetControlServer();
+        StartSessionDiscovery();
+        StartDockListener();
         if (petReady)
             Present(L("Ready"), L("LaunchHint"));
         idleTimer.Start();
@@ -79,6 +102,7 @@ public partial class MainWindow : Window
     private bool LoadPet()
     {
         var petRoot = Path.Combine(AppContext.BaseDirectory, "Pets", launcher.Settings.Pet);
+        LoadPetMotion(petRoot);
         var manifestPath = Path.Combine(petRoot, "pet.json");
         var manifest = File.Exists(manifestPath)
             ? JsonSerializer.Deserialize<PetManifest>(File.ReadAllText(manifestPath),
@@ -94,23 +118,40 @@ public partial class MainWindow : Window
         return false;
     }
 
+    private void SwitchPet(string petId)
+    {
+        if (string.IsNullOrWhiteSpace(petId) ||
+            !string.Equals(petId, Path.GetFileName(petId), StringComparison.Ordinal) ||
+            petId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            return;
+        var previousPet = launcher.Settings.Pet;
+        if (string.Equals(previousPet, petId, StringComparison.OrdinalIgnoreCase))
+            return;
+        launcher.Settings.Pet = petId;
+        if (!LoadPet())
+        {
+            launcher.Settings.Pet = previousPet;
+            LoadPet();
+        }
+        displayedMode = (PetMode)(-1);
+        ApplyPetMode(true);
+    }
+
     private async void Launch_Click(object sender, RoutedEventArgs e)
     {
         if (launching)
             return;
         launching = true;
         launchCancellation = new CancellationTokenSource();
-        animator?.Play(PetAnimation.Running, true);
         try
         {
-            var progress = new Progress<string>(status => PresentStatus(status));
+            var progress = new Progress<string>(_ => { });
             await launcher.LaunchAsync(progress, launchCancellation.Token);
-            PresentStatus(L("Ready"));
-            animator?.Play(PetAnimation.Waving, false, () => animator.Play(PetAnimation.Idle, true));
+            ApplyPetMode(true);
         }
         catch (OperationCanceledException)
         {
-            PresentStatus(L("Ready"));
+            ApplyPetMode(true);
         }
         catch (Exception exception)
         {
@@ -127,8 +168,19 @@ public partial class MainWindow : Window
     {
         if (e.ChangedButton != MouseButton.Left || animator?.HasAtlas != true)
             return;
-        animator.Play(PetAnimation.Waving, false, () => animator.Play(PetAnimation.Idle, true));
-        Present(L("Ready"), random.Next(3) switch
+        if (petDragStartScreen is Point start && GetCursorPos(out var released))
+            petDragMoved |= Math.Abs(released.X - start.X) + Math.Abs(released.Y - start.Y) > 12;
+        petDragStartScreen = null;
+        if (docking || startupAppearancePlaying || petDragMoved)
+            return;
+        PulsePetPress();
+        if (DateTime.UtcNow - lastClickExpression < TimeSpan.FromSeconds(petMotion.ClickExpressionCooldownSeconds))
+            return;
+        lastClickExpression = DateTime.UtcNow;
+        expressionTimer.Stop();
+        animator.Play(PetAnimation.Waving, false, ResumeAmbientAnimation);
+        if (SpeechBubbleHost.Visibility != Visibility.Visible)
+            Present(CurrentPetStatus(), random.Next(3) switch
         {
             0 => L("ReadyToChart"),
             1 => L("RememberSave"),
@@ -158,94 +210,128 @@ public partial class MainWindow : Window
 
     private void HandlePetControlRequest(PetControlRequest request)
     {
-        if (animator?.HasAtlas != true)
-            return;
-
         var action = request.Action.Trim().ToLowerInvariant();
-        var priority = GetPetStatePriority(action);
-        if (DateTime.UtcNow < externalStateLockUntil && priority < externalStatePriority)
+        if (action == "skin")
         {
-            deferredPetRequest = request;
-            ScheduleDeferredPetState();
+            SwitchPet(request.Message);
             return;
         }
-
-        deferredPetRequest = null;
-        externalStatePriority = priority;
-        externalStateLockUntil = action switch
-        {
-            // The failed row needs about 1.9 s to reach its seated frame. Keep that
-            // final frame visible for another four seconds before accepting a lower
-            // priority state.
-            "failed" or "error" => DateTime.UtcNow.AddMilliseconds(5500),
-            "running" or "working" or "chart-agent" => DateTime.UtcNow.AddMilliseconds(900),
-            "review" or "organize" or "star-combo" => DateTime.UtcNow.AddMilliseconds(500),
-            _ => DateTime.UtcNow
-        };
-
-        var message = LocalizeStatusMessage(request.Message);
-        externalStateActive = action is not ("idle" or "wave" or "success" or "jump" or "launch");
-
         switch (action)
         {
-            case "idle":
-                PresentStatus(L("Ready"));
-                animator.Play(PetAnimation.Idle, true);
-                break;
+            case "editing":
             case "running":
             case "working":
             case "chart-agent":
-                var runningMessage = string.IsNullOrWhiteSpace(message) ? L("OrganizingIdeas") : message;
-                var sourceMessage = request.Message ?? string.Empty;
-                var runningStatus = sourceMessage.Contains("Recording", StringComparison.OrdinalIgnoreCase) ||
-                                    sourceMessage.Contains("录制", StringComparison.Ordinal)
-                    ? L("Recording")
-                    : sourceMessage.Contains("Playing", StringComparison.OrdinalIgnoreCase) ||
-                      sourceMessage.Contains("播放", StringComparison.Ordinal)
-                        ? L("Playing")
-                        : L("Charting");
-                PresentStatus(runningStatus);
-                animator.Play(PetAnimation.Running, true);
+                editorActive = true;
                 break;
-            case "review":
-            case "organize":
-                PresentStatus(L("Reviewing"));
-                animator.Play(PetAnimation.Review, true);
-                break;
-            case "waiting":
-            case "ask":
-                PresentStatus(L("Waiting"));
-                animator.Play(PetAnimation.Waiting, true);
-                break;
-            case "failed":
+            case "syntax-error":
             case "error":
-                Present(L("SyntaxError"), string.IsNullOrWhiteSpace(message) ? L("NeedsAttention") : message);
-                animator.Play(PetAnimation.Failed, false, () => animator.Play(PetAnimation.Idle, true));
+                editorActive = true;
+                syntaxErrors = true;
                 break;
-            case "wave":
-            case "success":
-                Present(L("Completed"), string.IsNullOrWhiteSpace(message) ? L("Complete") : message);
-                animator.Play(PetAnimation.Waving, false, () => animator.Play(PetAnimation.Idle, true));
+            case "syntax-ok":
+                editorActive = true;
+                syntaxErrors = false;
                 break;
-            case "jump":
-            case "launch":
-                animator.Play(PetAnimation.Jumping, false, () => animator.Play(PetAnimation.Idle, true));
+            case "preview":
+                editorActive = true;
+                previewActive = true;
                 break;
-            case "left":
-                animator.Play(PetAnimation.RunningLeft, false, () => animator.Play(PetAnimation.Idle, true));
+            case "idle":
+            case "stop":
+            case "waiting":
+                editorActive = true;
+                previewActive = false;
                 break;
-            case "right":
-                animator.Play(PetAnimation.RunningRight, false, () => animator.Play(PetAnimation.Idle, true));
+        }
+        // Report errors immediately; debounce correction so a parser error/ok/error
+        // burst does not restart the same error expression.
+        modeTimer.Stop();
+        if (DesiredPetMode() == displayedMode) return;
+        if (DesiredPetMode() == PetMode.SyntaxError)
+        {
+            ApplyPetMode();
+            return;
+        }
+        modeTimer.Interval = TimeSpan.FromMilliseconds(action == "syntax-ok" ? 650 : 250);
+        modeTimer.Start();
+    }
+
+    private PetMode DesiredPetMode() => previewActive ? PetMode.Preview : syntaxErrors ? PetMode.SyntaxError :
+        editorActive ? PetMode.Editing : PetMode.Initial;
+
+    private void ApplyPetMode(bool force = false)
+    {
+        if (docking || startupAppearancePlaying || petDragActive || animator?.HasAtlas != true)
+            return;
+        var mode = DesiredPetMode();
+        if (!force && displayedMode == mode)
+            return;
+        bool modeChanged = displayedMode != mode;
+        displayedMode = mode;
+        if (modeChanged) PresentStatus(CurrentPetStatus());
+        else Present(CurrentPetStatus());
+        expressionTimer.Stop();
+        switch (mode)
+        {
+            case PetMode.Initial:
+                if (!animator.IsGesturePlaying) animator.Play(PetAnimation.Idle, true);
                 break;
-            case "look":
-                animator.ShowLookDirection(request.Angle ?? 0, 900, () => animator.Play(PetAnimation.Idle, true));
+            case PetMode.Editing:
+                PlayModeGesture();
                 break;
-            case "star-combo":
-                Present(L("Reviewing"), string.IsNullOrWhiteSpace(message) ? L("CheckingStarCombo") : message);
-                animator.Play(PetAnimation.Review, true);
+            case PetMode.SyntaxError:
+                // An error is feedback for this edit, not an ambient idle action.
+                if (modeChanged)
+                    animator.Play(PetAnimation.Failed, false, ResumeAmbientAnimation);
+                break;
+            case PetMode.Preview:
+                PlayModeGesture();
                 break;
         }
     }
+
+    private void PlayModeGesture()
+    {
+        if(docking || startupAppearancePlaying || petDragActive || animator?.HasAtlas!=true) return;
+        var mode=displayedMode;
+        if(mode==PetMode.Initial || mode==PetMode.SyntaxError || (int)mode<0) return;
+        if (animator.IsGesturePlaying || DateTime.UtcNow < nextModeGesture[(int)mode]) {
+            ScheduleModeGesture();
+            return;
+        }
+        var animation=mode==PetMode.SyntaxError ? PetAnimation.Failed :
+            mode==PetMode.Preview ? PetAnimation.Review : PetAnimation.Running;
+        // Reserve the cooldown immediately too: a dock/drag can deliberately
+        // replace this clip, but must not make its next status event replay it.
+        nextModeGesture[(int)mode] = DateTime.UtcNow.AddSeconds(GestureCooldown(mode));
+        animator.Play(animation,false,() => {
+            nextModeGesture[(int)mode] = DateTime.UtcNow.AddSeconds(GestureCooldown(mode));
+            if(docking || startupAppearancePlaying || petDragActive) return;
+            animator.Play(PetAnimation.Idle,true);
+            ScheduleModeGesture();
+        });
+    }
+
+    private void ResumeAmbientAnimation()
+    {
+        if (docking || startupAppearancePlaying || petDragActive || animator?.HasAtlas != true) return;
+        if (animator?.IsGesturePlaying == true) { ScheduleModeGesture(); return; }
+        animator.Play(PetAnimation.Idle, true);
+        ScheduleModeGesture();
+    }
+
+    private void ScheduleModeGesture()
+    {
+        expressionTimer.Stop();
+        if (displayedMode == PetMode.Initial || displayedMode == PetMode.SyntaxError || (int)displayedMode < 0) return;
+        var remaining = nextModeGesture[(int)displayedMode] - DateTime.UtcNow;
+        expressionTimer.Interval = animator?.IsGesturePlaying == true
+            ? TimeSpan.FromSeconds(1) : remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1);
+        expressionTimer.Start();
+    }
+
+    private int GestureCooldown(PetMode mode) => mode == PetMode.Preview ? random.Next(18, 30) : random.Next(20, 36);
 
     private void Present(string status, string? speech = null)
     {
@@ -292,34 +378,13 @@ public partial class MainWindow : Window
         Present(status);
     }
 
-    private static int GetPetStatePriority(string action) => action switch
+    private string CurrentPetStatus() => displayedMode switch
     {
-        "failed" or "error" => 100,
-        "running" or "working" or "chart-agent" => 60,
-        "review" or "organize" or "star-combo" => 50,
-        "waiting" or "ask" => 40,
-        "left" or "right" or "look" => 30,
-        _ => 0
+        PetMode.Editing => L("Charting"),
+        PetMode.SyntaxError => L("SyntaxError"),
+        PetMode.Preview => L("Previewing"),
+        _ => L("Ready")
     };
-
-    private void ScheduleDeferredPetState()
-    {
-        var remaining = externalStateLockUntil - DateTime.UtcNow;
-        externalStateTimer.Stop();
-        externalStateTimer.Interval = remaining > TimeSpan.FromMilliseconds(50)
-            ? remaining
-            : TimeSpan.FromMilliseconds(50);
-        externalStateTimer.Start();
-    }
-
-    private void ExternalStateTimer_Tick(object? sender, EventArgs e)
-    {
-        externalStateTimer.Stop();
-        var request = deferredPetRequest;
-        deferredPetRequest = null;
-        if (request != null)
-            HandlePetControlRequest(request);
-    }
 
     private static string L(string key, params object[] args) => LauncherLocalization.Text(key, args);
 
@@ -342,10 +407,11 @@ public partial class MainWindow : Window
 
     private void IdleTimer_Tick(object? sender, EventArgs e)
     {
-        if (launching || externalStateActive || animator?.HasAtlas != true)
+        if (launching || docking || startupAppearancePlaying || petDragActive ||
+            displayedMode != PetMode.Initial || animator?.HasAtlas != true || animator.IsGesturePlaying)
             return;
         if (random.Next(3) == 0)
-            Present(L("Ready"), IdleMessages[random.Next(IdleMessages.Length)]);
+            Present(CurrentPetStatus(), IdleMessages[random.Next(IdleMessages.Length)]);
         switch (random.Next(10))
         {
             case 0:
@@ -356,6 +422,10 @@ public partial class MainWindow : Window
                 break;
             case 2:
                 animator.Play(PetAnimation.Review, false, () => animator.Play(PetAnimation.Idle, true));
+                break;
+            case 3:
+            case 4:
+                animator.ShowLookDirection(random.Next(16)*22.5,random.Next(700,1400));
                 break;
             default:
                 animator.Play(PetAnimation.Idle, true);
@@ -374,12 +444,7 @@ public partial class MainWindow : Window
     {
         if (e.ChangedButton != MouseButton.Left)
             return;
-        if (e.ClickCount >= 2)
-        {
-            Launch_Click(this, new RoutedEventArgs());
-            return;
-        }
-        DragMove();
+        BeginPetDrag(false);
     }
 
     private void OpenFolder_Click(object sender, RoutedEventArgs e)
@@ -395,10 +460,14 @@ public partial class MainWindow : Window
 
     private void Window_Closed(object? sender, EventArgs e)
     {
+        StopSessionDiscovery();
         launchCancellation?.Cancel();
         launchCancellation?.Dispose();
         idleTimer.Stop();
-        externalStateTimer.Stop();
+        expressionTimer.Stop();
+        modeTimer.Stop();
+        motionTimer.Stop();
+        StopPetDrag();
         speechTimer.Stop();
         petControlServer?.Dispose();
         animator?.Dispose();

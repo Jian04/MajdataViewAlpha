@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -24,6 +24,14 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // File dialogs and external launchers may supply an unrelated working directory.
+        Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+        MajdataCore.AlphaSession.EnsureEditorSession();
+        if (MajdataCore.AlphaSession.Current is { } session)
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            session.Register(false, process);
+        }
         base.OnStartup(e);
         ApplyThemeEarly();
     }

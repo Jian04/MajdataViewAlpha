@@ -8,6 +8,9 @@ using static NoteEffectManager;
 
 public class ObjectCounter : MonoBehaviour
 {
+    public Font DisplayFont => rate != null ? rate.font : defaultDisplayFont;
+    private readonly HashSet<NoteDrop> dynamicMuriNotes = new();
+    private readonly List<string> dynamicMuriDetails = new();
     public Color AchievementDudColor; // = new Color32(63, 127, 176, 255);
     public Color AchievementBronzeColor; // = new Color32(127, 48, 32, 255);
     public Color AchievementSilverColor; // = new Color32(160, 160, 160, 255);
@@ -71,6 +74,11 @@ public class ObjectCounter : MonoBehaviour
         "FiNALE  Rate:\n100.00   %\nDELUXE Rate:\n100.0000 % ";
 
     private EditorComboIndicator textMode = EditorComboIndicator.Combo;
+    private (int Tap, int Hold, int Slide, int Touch, int Break) displayedCounts;
+    private (int Tap, int Hold, int Slide, int Touch, int Break) displayedSums;
+    private AutoPlayMode displayedPlayMode;
+    private EditorComboIndicator displayedTextMode;
+    private long displayedJudgedCount = -1;
 
     InputManager inputManager;
     NoteManager notes;
@@ -549,11 +557,20 @@ public class ObjectCounter : MonoBehaviour
     private void Update()
     {
         UpdateState();
-        UpdateOutput();
+        var counts = (tapCount, holdCount, slideCount, touchCount, breakCount);
+        var sums = (tapSum, holdSum, slideSum, touchSum, breakSum);
+        var judgedCount = cPerfectCount + perfectCount + greatCount + goodCount + missCount;
+        if (counts != displayedCounts || sums != displayedSums || judgedCount != displayedJudgedCount ||
+            InputManager.Mode != displayedPlayMode || textMode != displayedTextMode)
+            UpdateOutput();
     }
 
     public void ResetForChart()
     {
+        dynamicMuriNotes.Clear();
+        dynamicMuriDetails.Clear();
+        AlphaInstanceBadge.DynamicMuriDetails = new string[0];
+        AlphaInstanceBadge.DynamicMuriCount = 0;
         tapCount = holdCount = slideCount = touchCount = breakCount = 0;
         tapSum = holdSum = slideSum = touchSum = breakSum = 0;
         cPerfectCount = perfectCount = greatCount = goodCount = missCount = 0;
@@ -587,6 +604,11 @@ public class ObjectCounter : MonoBehaviour
 
     private void UpdateOutput()
     {
+        displayedCounts = (tapCount, holdCount, slideCount, touchCount, breakCount);
+        displayedSums = (tapSum, holdSum, slideSum, touchSum, breakSum);
+        displayedJudgedCount = cPerfectCount + perfectCount + greatCount + goodCount + missCount;
+        displayedPlayMode = InputManager.Mode;
+        displayedTextMode = textMode;
         UpdateMainOutput();
         UpdateJudgeResult();
         if (FiSumScore() == 0) return;
@@ -758,6 +780,16 @@ public class ObjectCounter : MonoBehaviour
     }
     internal void ReportResult(NoteDrop note, JudgeType result,bool isBreak = false)
     {
+        // MaiMuriDX treats failure to achieve Critical Perfect with the normal
+        // simulated action as dynamic muri. Count actual judgements, never previews.
+        if (InputManager.Mode == AutoPlayMode.DJAuto && result != JudgeType.Perfect && dynamicMuriNotes.Add(note))
+        {
+            var message = $"{note.sourceContent} · {result} · {note.sourceTime:F3}s";
+            dynamicMuriDetails.Add(note.sourceLine + "\t" + note.sourceColumn + "\t" +
+                Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(message)));
+            AlphaInstanceBadge.DynamicMuriDetails = dynamicMuriDetails.ToArray();
+            AlphaInstanceBadge.DynamicMuriCount = dynamicMuriNotes.Count;
+        }
         var noteType = GetNoteType(note);
         switch(noteType)
         {
@@ -875,24 +907,10 @@ public class ObjectCounter : MonoBehaviour
     };
     private void UpdateMainOutput()
     {
-        //var comboValue = tapCount + holdCount + slideCount + touchCount + breakCount;
-        var scoreSSSValue = FiSumScore();
-        int[] scoreValues =
-        {
-            FiNowScore(), DeDxNowScore(), DeDxNowBreakScore()
-        };
-        float[] accValues =
-        {
-            scoreSSSValue > 0 ? (float)FiNowScore() / scoreSSSValue * 100 : 0,
-            scoreSSSValue > 0 ? (float)FiNowBreakScore() / scoreSSSValue * 100 : 0,
-            scoreSSSValue > 0 ? (float)DxNowScore() / DxSumScore() * 100 + BreakRate() : 0,
-            100f + BreakRate()
-        };
-
         switch (textMode)
         {
             case EditorComboIndicator.ScoreClassic: // Score (+) Classic
-                statusScore.text = string.Format("{0:#,##0}", scoreValues[0]);
+                statusScore.text = string.Format("{0:#,##0}", FiNowScore());
                 break;
             case EditorComboIndicator.AchievementClassic: // Achievement (+) Classic
                 UpdateAchievementColor(accRate[0]);
@@ -918,10 +936,10 @@ public class ObjectCounter : MonoBehaviour
                 statusDXScore.text = DxExNowScore().ToString();
                 break;
             case EditorComboIndicator.CScoreDedeluxe: // Score (+) DeDX
-                statusScore.text = string.Format("{0:#,##0}", scoreValues[1]);
+                statusScore.text = string.Format("{0:#,##0}", DeDxNowScore());
                 break;
             case EditorComboIndicator.CScoreDownDedeluxe: // Score (-) DeDX (from 100% rate)
-                statusScore.text = string.Format("{0:#,##0}", scoreValues[2]);
+                statusScore.text = string.Format("{0:#,##0}", DeDxNowBreakScore());
                 break;
             case EditorComboIndicator.Combo:
             default:
@@ -931,12 +949,14 @@ public class ObjectCounter : MonoBehaviour
     }
     void UpdateJudgeResult()
     {
-        var fast = totalJudgedCount.Where(x => x.Key > JudgeType.Perfect && x.Key != JudgeType.Miss)
-                                   .Select(x => x.Value)
-                                   .Sum();
-        var late = totalJudgedCount.Where(x => x.Key < JudgeType.Perfect && x.Key != JudgeType.Miss)
-                                   .Select(x => x.Value)
-                                   .Sum();
+        var fast = 0;
+        var late = 0;
+        foreach (var count in totalJudgedCount)
+        {
+            if (count.Key == JudgeType.Miss) continue;
+            if (count.Key > JudgeType.Perfect) fast += count.Value;
+            else if (count.Key < JudgeType.Perfect) late += count.Value;
+        }
         judgeResultCount.text = $"{cPerfectCount}\n{perfectCount}\n{greatCount}\n{goodCount}\n{missCount}\n\n{fast}\n{late}";
     }
 

@@ -73,7 +73,13 @@ namespace UnityEngine
         public readonly float x, y, z;
         public Vector3(float x, float y, float z = 0) { this.x = x; this.y = y; this.z = z; }
         public float sqrMagnitude => x * x + y * y + z * z;
+        public static Vector3 zero => new(0, 0, 0);
+        public static Vector3 right => new(1, 0, 0);
+        public static Vector3 operator +(Vector3 a, Vector3 b) => new(a.x + b.x, a.y + b.y, a.z + b.z);
+        public static Vector3 operator *(Vector3 a, float b) => new(a.x * b, a.y * b, a.z * b);
         public static Vector3 operator -(Vector3 a, Vector3 b) => new(a.x - b.x, a.y - b.y, a.z - b.z);
+        public static float Distance(Vector3 a, Vector3 b) => MathF.Sqrt((a - b).sqrMagnitude);
+        public static Vector3 Lerp(Vector3 a, Vector3 b, float t) => a + (b - a) * Mathf.Clamp01(t);
         public static implicit operator Vector3(Vector2 a) => new(a.x, a.y);
     }
 }
@@ -90,6 +96,7 @@ namespace MajdataEdit
 {
     internal static class MainWindow
     {
+        public static string maidataDir = "";
         public static string GetLocalizedString(string key) => key;
     }
 

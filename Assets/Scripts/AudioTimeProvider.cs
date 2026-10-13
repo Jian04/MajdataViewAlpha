@@ -13,6 +13,7 @@ public class AudioTimeProvider : MonoBehaviour
     private float speed;
     private bool previewFixedTime;
     private bool scheduledStart;
+    private long synchronizedStartUtcTicks;
 
     private float startTime;
     private long ticks;
@@ -20,10 +21,17 @@ public class AudioTimeProvider : MonoBehaviour
 
     public float CurrentSpeed => speed;
     public bool IsPreview => previewFixedTime;
+    public bool IsScheduled => scheduledStart;
     public bool IsPaused { get; private set; }
     public bool PlaybackStarted => isStart && (isRecord
         ? Time.time >= startTime
-        : Time.realtimeSinceStartup >= startTime);
+        : synchronizedStartUtcTicks != 0
+            ? DateTime.UtcNow.Ticks >= synchronizedStartUtcTicks
+            : Time.realtimeSinceStartup >= startTime);
+
+    private float PlaybackElapsed => synchronizedStartUtcTicks != 0
+        ? (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - synchronizedStartUtcTicks).TotalSeconds
+        : Time.realtimeSinceStartup - startTime;
 
     // Continuous timeline for visuals such as the intro background: negative during the cover
     // transition and smooth across zero. AudioTime is clamped to prevent reverse playback during
@@ -32,10 +40,11 @@ public class AudioTimeProvider : MonoBehaviour
         ? AudioTime
         : isRecord
             ? Time.time - startTime + offset
-            : (Time.realtimeSinceStartup - startTime) * speed + offset;
+        : PlaybackElapsed * speed + offset;
 
     private void Awake()
     {
+        gameObject.AddComponent<ViewFpsDisplay>();
         QualitySettings.vSyncCount = 0;
         Application.targetFrameRate = PlaybackFrameRate;
     }
@@ -47,7 +56,7 @@ public class AudioTimeProvider : MonoBehaviour
             return;
 
         if (scheduledStart &&
-            Time.realtimeSinceStartup >= startTime)
+            PlaybackElapsed >= 0f)
         {
             scheduledStart = false;
             isStart = true;
@@ -61,7 +70,7 @@ public class AudioTimeProvider : MonoBehaviour
             else
                 // When startAt is in the future for Edit's 0.2s preload, freeze at the start
                 // instead of playing backward. Preload time for requests and loading is not visible.
-                AudioTime = Mathf.Max(offset, (Time.realtimeSinceStartup - startTime) * speed + offset);
+                AudioTime = Mathf.Max(offset, PlaybackElapsed * speed + offset);
         }
     }
 
@@ -77,11 +86,14 @@ public class AudioTimeProvider : MonoBehaviour
         float _speed,
         bool _isRecord = false,
         int recordFrameRate = 30,
-        bool keepVisibleWhileScheduled = false)
+        bool keepVisibleWhileScheduled = false,
+        bool synchronizeToUtc = false)
     {
         previewFixedTime = false;
         IsPaused = false;
         ticks = _ticks;
+        synchronizedStartUtcTicks = !_isRecord && synchronizeToUtc
+            ? new DateTime(_ticks, DateTimeKind.Local).ToUniversalTime().Ticks : 0;
         offset = _offset;
         AudioTime = offset;
         var dateTime = new DateTime(ticks);
@@ -99,7 +111,7 @@ public class AudioTimeProvider : MonoBehaviour
         else
         {
             startTime = Time.realtimeSinceStartup + (float)seconds;
-            scheduledStart = Time.realtimeSinceStartup < startTime;
+            scheduledStart = PlaybackElapsed < 0f;
             Application.targetFrameRate = PlaybackFrameRate;
             Time.captureFramerate = 0;
         }
@@ -132,6 +144,7 @@ public class AudioTimeProvider : MonoBehaviour
         AudioTime = offset - introDuration;
         isStart = true;
         scheduledStart = false;
+        synchronizedStartUtcTicks = 0;
     }
 
     public void ResetStartTime()
@@ -141,6 +154,7 @@ public class AudioTimeProvider : MonoBehaviour
         offset = 0f;
         isStart = false;
         scheduledStart = false;
+        synchronizedStartUtcTicks = 0;
         RestoreFrameRate();
     }
 
@@ -152,6 +166,7 @@ public class AudioTimeProvider : MonoBehaviour
         isRecord = false;
         isStart = true;
         scheduledStart = false;
+        synchronizedStartUtcTicks = 0;
         offset = previewTime;
         AudioTime = previewTime;
         speed = 1f;
@@ -169,6 +184,7 @@ public class AudioTimeProvider : MonoBehaviour
     {
         isStart = false;
         scheduledStart = false;
+        synchronizedStartUtcTicks = 0;
         IsPaused = true;
     }
 
@@ -177,6 +193,8 @@ public class AudioTimeProvider : MonoBehaviour
         if (!isRecord)
             return;
         Application.targetFrameRate = PlaybackFrameRate;
+        Time.captureFramerate = 0;
+        Time.timeScale = 1f;
         isRecord = false;
     }
 }

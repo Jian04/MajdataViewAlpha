@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Linq;
+using MajdataCore;
 using UnityEngine;
 
 [DefaultExecutionOrder(-10000)]
@@ -24,6 +26,10 @@ public class ScreenEffectController : MonoBehaviour
     private EffectTrack moveEffects;
     private EffectTrack rotateEffects;
     private EffectTrack shakeEffects;
+    private EffectTrack kaleidoscopeVisibility;
+    private readonly List<EffectTrack> extraEffects = new();
+    private readonly float[] extraValues = new float[AlphaExtraFilters.All.Length];
+    private readonly EffectChange[] extraSources = new EffectChange[AlphaExtraFilters.All.Length];
     private readonly Dictionary<EffectChange, Color> tintColors = new();
     private readonly List<FrameTarget> frameTargets = new();
     private readonly List<Transform> backgroundTransforms = new();
@@ -42,6 +48,8 @@ public class ScreenEffectController : MonoBehaviour
     private bool materialIsDefault;
     private int trailSeedStage;
     private float gameplayRotationDegrees;
+    private EffectTrack pvRotateEffects;
+    public float RotationForPV(float time) => pvRotateEffects == null ? 0f : pvRotateEffects.Evaluate(time, out _);
     private Vector2 gameplayMove;
     private float gameplayScale = 1f;
     private int frameTargetRefreshFrame = -1;
@@ -90,7 +98,14 @@ public class ScreenEffectController : MonoBehaviour
         tintEffects = CreateTrack("Tint", true);
         moveEffects = CreateTrack("Move", true);
         rotateEffects = CreateTrack("Rotate", true);
+        pvRotateEffects = new EffectTrack(effects.Where(e => e.effect == "Rotate").Select(e => e.ForPV()).ToList(), true);
         shakeEffects = CreateTrack("Shake", true);
+        extraEffects.Clear();
+        foreach (var filter in AlphaExtraFilters.All) extraEffects.Add(CreateTrack(filter.Canonical, true));
+        kaleidoscopeVisibility = new EffectTrack(effects.Where(e => e.effect == "Kaleidoscope")
+            .Select(e => new EffectChange { time=e.time, intensity=1, duration=e.duration,
+                stateful=e.stateful, enabled=e.enabled, transition=e.transition,
+                attack=e.attack, holdTime=e.holdTime, release=e.release }).ToList(), true);
         tintColors.Clear();
         foreach (var item in effects)
         {
@@ -99,7 +114,7 @@ public class ScreenEffectController : MonoBehaviour
             if (ColorUtility.TryParseHtmlString("#" + item.color, out var parsed))
                 tintColors[item] = parsed;
         }
-        enabled = effects.Count > 0;
+        enabled = effects.Count > 0 || GetComponent<NoiseZoneImageEffect>()?.IsConfigured == true;
         if (!enabled)
         {
             hasTrailEvents = false;
@@ -152,7 +167,7 @@ public class ScreenEffectController : MonoBehaviour
         ApplyGameplayTransform(
             gameplayRotationDegrees, gameplayMove, gameplayScale, onCanvas: false);
         ApplyBackgroundTransform(
-            gameplayRotationDegrees, gameplayMove, gameplayScale);
+            RotationForPV(timeProvider != null ? timeProvider.AudioTime : 0f), gameplayMove, gameplayScale);
     }
 
     private void OnPostRender()
@@ -174,6 +189,18 @@ public class ScreenEffectController : MonoBehaviour
 
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
+        var noise = GetComponent<NoiseZoneImageEffect>();
+        if (noise == null || !noise.HasActive) { RenderFiltered(source, destination); return; }
+        var composed = RenderTexture.GetTemporary(source.descriptor);
+        try {
+            noise.Compose(source, composed);
+            RenderFiltered(composed, destination);
+        }
+        finally { RenderTexture.ReleaseTemporary(composed); }
+    }
+
+    private void RenderFiltered(RenderTexture source, RenderTexture destination)
+    {
         if (material == null || timeProvider == null)
         {
             trailWasActive = false;
@@ -193,6 +220,17 @@ public class ScreenEffectController : MonoBehaviour
         }
 
         var time = timeProvider.AudioTime;
+        var hasExtraEffect = false;
+        for (var i = 0; i < extraEffects.Count; i++)
+        {
+            var filter = AlphaExtraFilters.All[i];
+            var value = extraEffects[i].Evaluate(time, out extraSources[i]);
+            extraValues[i] = filter.Canonical == "Kaleidoscope" ? value : filter.Canonical == "LensDistort" ? Mathf.Clamp(value, -1f, 1f) :
+                Mathf.Clamp(value, 0f, filter.Canonical == "Bloom" ? 4f : 1f);
+            hasExtraEffect |= Mathf.Abs(extraValues[i]) > .0001f;
+        }
+        var kaleidoscopeAmount = Mathf.Clamp01(kaleidoscopeVisibility.Evaluate(time));
+        hasExtraEffect |= kaleidoscopeAmount > .0001f;
         var gaussian = gaussianEffects.Evaluate(time);
         var neon = neonEffects.Evaluate(time);
         var trail = Mathf.Clamp01(trailEffects.Evaluate(time));
@@ -201,7 +239,7 @@ public class ScreenEffectController : MonoBehaviour
         var saturation = Mathf.Clamp01(saturationEffects.Evaluate(time));
         var contrast = contrastEffects.Evaluate(time);
         var rainbow = Mathf.Clamp01(rainbowEffects.Evaluate(time));
-        var vignette = Mathf.Clamp01(vignetteEffects.Evaluate(time));
+        var vignette = Mathf.Clamp01(vignetteEffects.Evaluate(time, out var vignetteEvent));
         var glitch = Mathf.Clamp01(glitchEffects.Evaluate(time));
         var tvNoise = Mathf.Clamp01(tvNoiseEffects.Evaluate(time));
         var hue = rotationDegreesToRadians(hueEffects.Evaluate(time));
@@ -231,7 +269,7 @@ public class ScreenEffectController : MonoBehaviour
             }
         }
 
-        if (gaussian <= 0.001f && neon <= 0.001f && trail <= 0.001f && Mathf.Abs(flash) <= 0.001f &&
+        if (!hasExtraEffect && gaussian <= 0.001f && neon <= 0.001f && trail <= 0.001f && Mathf.Abs(flash) <= 0.001f &&
             brightness <= 0.001f && saturation <= 0.001f && contrast <= 0.001f &&
             rainbow <= 0.001f && vignette <= 0.001f &&
             glitch <= 0.001f && tvNoise <= 0.001f &&
@@ -260,6 +298,7 @@ public class ScreenEffectController : MonoBehaviour
         material.SetFloat("_EffectTime", time);
         material.SetFloat("_Flash", flash);
         material.SetFloat("_Vignette", vignette);
+        material.SetFloat("_VignetteGradient", vignetteEvent?.gradient == true ? 1f : 0f);
         material.SetFloat("_Zoom", 0f);
         material.SetFloat("_Glitch", glitch);
         material.SetFloat("_TVNoise", tvNoise);
@@ -269,6 +308,16 @@ public class ScreenEffectController : MonoBehaviour
         material.SetFloat("_OffsetX", offsetX);
         material.SetFloat("_OffsetY", offsetY);
         material.SetFloat("_Rotate", 0f);
+        for (var i = 0; i < extraValues.Length; i++)
+        {
+            var definition=AlphaExtraFilters.All[i];
+            material.SetFloat(definition.Uniform, definition.Canonical=="Kaleidoscope" ? kaleidoscopeAmount : extraValues[i]);
+            if(definition.Canonical=="Kaleidoscope") material.SetFloat("_KaleidoscopeAngle",extraValues[i]*Mathf.Deg2Rad);
+            if (AlphaExtraFilters.All[i].Canonical == "Ripple")
+                material.SetFloat("_RipplePhase", extraSources[i] == null ? 0f : (float)(time - extraSources[i].time));
+            if (AlphaExtraFilters.All[i].Canonical == "Shatter")
+                material.SetFloat("_ShatterPhase", extraSources[i] == null ? 0f : (float)(time - extraSources[i].time));
+        }
         materialIsDefault = false;
 
         if (trail > 0.001f)
@@ -320,6 +369,10 @@ public class ScreenEffectController : MonoBehaviour
         material.SetFloat("_EffectTime", 0f);
         material.SetFloat("_Flash", warmupValue);
         material.SetFloat("_Vignette", warmupValue);
+        material.SetFloat("_VignetteGradient", 1f);
+        foreach (var filter in AlphaExtraFilters.All) material.SetFloat(filter.Uniform, warmupValue);
+        material.SetFloat("_RipplePhase", .4f);
+        material.SetFloat("_ShatterPhase", .2f);
         material.SetFloat("_Zoom", warmupValue);
         material.SetFloat("_Glitch", warmupValue);
         material.SetFloat("_TVNoise", warmupValue);
@@ -353,6 +406,7 @@ public class ScreenEffectController : MonoBehaviour
 
     private void SetMaterialDefaults()
     {
+        material.SetFloat("_KaleidoscopeAngle",0);
         material.SetFloat("_Blur", 0f);
         material.SetFloat("_Neon", 0f);
         material.SetFloat("_Fade", 0f);
@@ -364,6 +418,7 @@ public class ScreenEffectController : MonoBehaviour
         material.SetFloat("_EffectTime", 0f);
         material.SetFloat("_Flash", 0f);
         material.SetFloat("_Vignette", 0f);
+        material.SetFloat("_VignetteGradient", 0f);
         material.SetFloat("_Zoom", 0f);
         material.SetFloat("_Glitch", 0f);
         material.SetFloat("_TVNoise", 0f);
@@ -373,6 +428,9 @@ public class ScreenEffectController : MonoBehaviour
         material.SetFloat("_OffsetY", 0f);
         material.SetFloat("_Rotate", 0f);
         material.SetTexture("_HistoryTex", Texture2D.blackTexture);
+        foreach (var filter in AlphaExtraFilters.All) material.SetFloat(filter.Uniform, 0f);
+        material.SetFloat("_RipplePhase", 0f);
+        material.SetFloat("_ShatterPhase", 0f);
         material.SetTexture("_HistoryTex2", Texture2D.blackTexture);
         material.SetTexture("_HistoryTex3", Texture2D.blackTexture);
     }
@@ -555,7 +613,7 @@ public class ScreenEffectController : MonoBehaviour
 
         var outline = GameObject.Find("Outline") ?? GameObject.Find("DebugOutline");
         AddFrameTarget(outline?.transform);
-        AddFrameTarget(GameObject.Find("JudgeAreaOverlay")?.transform);
+        AddFrameTarget(GameObject.Find("JudgeLineStyleLayer")?.transform);
         // The two cover layers frame the play area, so they follow its ZOOM/MOVE:
         // otherwise the aperture keeps its authored 1080 radius while the outline and
         // notes move inside it. Rotation is skipped because a rotated square aperture
@@ -760,31 +818,14 @@ public class ScreenEffectController : MonoBehaviour
                 var item = legacyEvents[i];
                 if (item.time > time)
                     break;
+                // Events are ordered by start, not end. An older long effect
+                // can keep the cursor before an already expired short effect.
+                if (time > item.time + item.duration)
+                    continue;
 
-                float envelope;
-                if (item.attack >= 0f)
-                {
-                    // Legacy effects use an attack, hold, and release envelope.
-                    var elapsed = time - (float)item.time;
-                    if (elapsed < item.attack)
-                        envelope = item.attack <= 0f ? 1f : elapsed / item.attack;
-                    else if (elapsed <= item.attack + item.holdTime)
-                        envelope = 1f;
-                    else if (item.release > 0f)
-                        envelope = Mathf.Clamp01(
-                            1f - (elapsed - item.attack - item.holdTime) / item.release);
-                    else
-                        envelope = 0f;
-                }
-                else
-                {
-                    var progress = item.duration <= 0f
-                        ? 1f
-                        : (time - (float)item.time) / item.duration;
-                    envelope = triangularEnvelope
-                        ? 1f - Mathf.Abs(progress * 2f - 1f)
-                        : Mathf.Clamp01(Mathf.Min(progress * 10f, (1f - progress) * 10f));
-                }
+                var envelope = MajdataCore.EffectEnvelope.Evaluate(
+                    time - (float)item.time, item.duration, item.attack,
+                    item.holdTime, item.release, triangularEnvelope);
                 var value = item.intensity * envelope;
                 if (Mathf.Abs(value) > Mathf.Abs(result))
                 {

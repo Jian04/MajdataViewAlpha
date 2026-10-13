@@ -137,6 +137,7 @@ public class InputManager : MonoBehaviour
     }
     public bool ClickSensor(SensorType target, bool autoPlayPulse = false)
     {
+        if (NoiseZoneInputGate.IsBlocked(target)) return false;
         var sensor = GetSensor(target);
         if (sensor is null)
             throw new Exception($"{target} Sensor not found.");

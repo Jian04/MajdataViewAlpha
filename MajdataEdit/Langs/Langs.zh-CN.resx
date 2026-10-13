@@ -150,11 +150,8 @@
   <data name="ShowJudgeLine" xml:space="preserve">
     <value>显示判定线</value>
   </data>
-  <data name="ShowJudgeArea" xml:space="preserve">
-    <value>显示判定区</value>
-  </data>
   <data name="ShowAllPerfect" xml:space="preserve">
-    <value>显示并播放 All Perfect</value>
+    <value>谱面结束后播放 All Perfect</value>
   </data>
   <data name="ShowMineHitFeedback" xml:space="preserve">
     <value>显示 Mine 打击特效与文字</value>
@@ -603,7 +600,7 @@
   <data name="OriginalStyle" xml:space="preserve"><value>原版</value></data>
   <data name="OfficialStyleCover" xml:space="preserve"><value>仿官风格封面</value></data>
   <data name="ShowSongIntro" xml:space="preserve"><value>播放开头歌曲封面展示</value></data>
-  <data name="ShowAllPerfectEnding" xml:space="preserve"><value>谱面结束后播放 All Perfect 演出</value></data>
+  <data name="ShowAllPerfectEnding" xml:space="preserve"><value>谱面结束后播放 All Perfect</value></data>
   <data name="ExportLayers" xml:space="preserve"><value>导出图层</value></data>
   <data name="BackgroundPvLayer" xml:space="preserve"><value>背景 / PV</value></data>
   <data name="NotesLayer" xml:space="preserve"><value>音符</value></data>
@@ -694,7 +691,7 @@ Alpha 语法帮助
 音符类型可用：tap、each、hold、slide、star、break、touch、touchhold。
 分类型值优先于全局值；使用 NULL 恢复。
 所有时长参数既可写秒数，也可写 8:1、16:1 等拍长；拍长使用当前位置之前最近的 BPM，换算规则与 Slide 时长一致。
-参数为空时按 Tab 会填入该参数的推荐默认值；参数已有内容时按 Tab 前进到下一个参数。
+同一参数内重复按 Tab 切换候选值；用逗号进入下一参数。
 
 拍号、背景与注释
 ----------------
@@ -746,10 +743,9 @@ Alpha 语法帮助
 <JLINE*(00FF00,8:1)> 用当前位置 BPM 的八分音符时长渐变
 <JLINE*NULL>         恢复皮肤默认颜色
 显示命令省略最后的过渡时间时会立即切换；过渡时间也可写成 8:1、16:1。
-<ShowJudgeLine*(False)>
-<ShowJudgeLine*(False,1)>
-<ShowJudgeLine*(False,8:1)>
-<ShowJudgeArea*(True,1)>
+<JUDGELINE*(False)>
+<JUDGELINE*(False,1)>
+<JUDGELINE*(False,8:1)>
 <ShowJudgeText*(False,1)>
 <ShowJudgeInfo*(False,1)>
 <ShowComboInfo*(False,1)>
@@ -928,8 +924,8 @@ Shake     <Shake*(True,强度,频率[,角度,过渡时间])> 画面抖动（Hz�
 - 命令必须写在本拍音符之前；写在音符后会报错且不会执行。
 - True / False 控制开关；NULL 用于清除支持重置的音符属性。
 - 时间参数可写秒数（0.5、2）或拍长（8:1、16:3）。拍长使用命令前最近一次 BPM。
-- 可分类型设置的键：tap、each、hold、slide、star、break、touch、touchhold。视觉类 COLOR / SIZE / ALPHA 还支持控制运动星的 slidestar。分类型值覆盖全局值。
-- 输入“<”可打开分类补全；参数为空时按 Tab 填推荐值，已有值时按 Tab 跳到下一参数。
+- 可分类型设置的键：tap、each、hold、slide、star、break、mine、touch、touchhold；SV/HS 和视觉类命令支持 noise，视觉类另支持运动星 slidestar。全局 SV/HS 默认控制 noise，不控制 Slide 轨迹。全局 COLOR/SIZE/ALPHA 及 V 版本默认不控制 noise，需显式 noise=。
+- 输入“<”可打开分类补全；在同一参数内重复按 Tab 切换候选值：True / False / Instant，或 8:1 / 16:1 / 2:1 等；使用逗号进入下一参数。
 ! 灰色斜体的参数表示可以省略，例如灰色斜体的 ,时间 表示最后的逗号和时间都可以不写。正常显示的方括号属于语法本身，例如 h[时长] 就要照着写。
 E (120){4}<SV*1.5>1,2,<TEXT*("副歌开始",2)>3,4,
 ## 2  编辑器扩展与注释
@@ -970,12 +966,6 @@ S @NULL
 S A/B/D/E 区键位 + h[时长]
 E B1h[4:1] / E3hf[8:1]
 - A、B、D、E 区均可写 TouchHold；区域字母后必须带 1–8 的位置编号。
-### Touch 自定义距离
-S 区域键位~[距离]
-E E1~[4.8] / B3~[1.5] / A5~[4.8]b
-- ~[距离] 让 Touch 保持所在区域的方向，只改变绘制距离；判定仍在该区域原来的感应区。
-- 距离与 SPAWN / DESTROY 使用同一单位：判定圈为 4.8，B 区默认 2.3，E 区默认 3.0，A/D 区默认 4.1，取值范围 0 到 10。
-- 目前只支持 Touch：C 区没有方向、TouchHold 的扇形与距离绑定、星星内部也不能写，都会报错。
 ### Break Touch / TouchHold
 S 区域键位 + b
 S 区域键位 + h + b[时长]
@@ -1028,7 +1018,7 @@ E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
 S 起点rp终点[时长] / 起点rq终点[时长]
 E 1rp3[8:1] / 1rq7[8:1]
 - rp / rq 分别沿 pp / qq 的相反方向绕行。
-### 继承星星轨迹 ~[]
+### 继承语法 — 星星轨迹
 S 音符~[完整的星星]
 E 1~[5-7[8:1]] / 1b~[5-7[8:1]] / 1$~[5-7[8:1]] / 1~[C1-A5[8:1]] / 1~[2P35[8:1]]
 - 音符不落在自己写的位置上，而是按方括号里那条星星的轨迹走：从那条星星自己的起点出发，用它自己的时长。
@@ -1036,6 +1026,38 @@ E 1~[5-7[8:1]] / 1b~[5-7[8:1]] / 1$~[5-7[8:1]] / 1~[C1-A5[8:1]] / 1~[2P35[8:1]]
 - 移动的是 ~[] 前面的音符本身：1~[...] 是 Tap 沿轨迹走；只有写 1$~[...] 才是星星沿轨迹走。
 - 方括号里要写一条完整的星星（含时长），键位星星和 Touch 星星都可以；Wifi 星星是三颗星，不能借。
 - 借来的轨迹后面不能再接 slide；修饰（b、h、$、f 等）写在 ~[] 前后都可以。
+### 继承语法 — Touch 距离
+S 区域键位~[距离]
+E E1~[4.8]
+E B3~[1.5]
+E A5~[4.8]b
+- 继承一个绘制距离，保留 Touch 的区域方向。只改变显示距离，原本的判定区域、物量、分数不变。
+- 距离：与 SPAWN / DESTROY 使用同一单位；判定圈为 4.8，B 区默认 2.3，E 区默认 3.0，A/D 区默认 4.1，范围 0–10。
+- 只支持带方向的 Touch；C 区、TouchHold 和星星轨迹内部不支持此写法。
+### 继承语法 — 图片换肤
+S 音符~[相对图片路径]
+E 1~[tap.png]
+E 1b~[break.png]
+E 1h[8:1]~[hold.png]
+E 1$~[star.png]
+E 1~[star.png]-5[8:1]
+E 1-5~[slide.png][8:1]
+E A1~[touch.png]
+- 继承一张图片，只替换对应音符的皮肤；判定、物量和分数不变。与轨迹继承不同，图片继承不会把音符变成不判定的移动音符。
+- 路径：相对歌曲文件夹，可用 PNG、JPG、JPEG；图片放在子文件夹时写子文件夹路径。
+- 对应皮肤：Tap 替换 tap，Break 替换 break，Hold 替换 hold，星形音符或 Slide 头替换 star，Touch 替换 touch。
+- Slide 起点后写图片替换星星头，终点后写图片替换轨迹；两者可分别设置。
+### X 噪域
+S XD1[8:1] / XC[4:1] / XA1 / XE1[4:1]/XC[4:1]/XE2[4:1]/XE3[4:1]/XE4[4:1]
+E (120){4}XD1[8:1],D1,XE1[1:1]/XC[1:1]/XE2[1:1],,
+- X 后写完整触控区：A1–A8、B1–B8、C、D1–D8、E1–E8。每个区各加 X，用 / 同拍连接。
+- 时长复用 Hold：120 BPM 时 [8:1] 为 0.25 秒，也支持 [#秒数] 等 Hold 时长；不写时长为短噪域，与 1h 一样按一个判定帧处理。
+- 根据 Touch 速度提前显示外框，按 HS/SV 调整出现时间，外框出现后即以白光闪烁预警；预警期不禁用输入。短噪域直接显示完整 Glitch，最短画面脉冲为 0.1 秒，不延长判定禁用。
+E <COLOR*noise=00BBFF> / <SIZE*noise=(0.8,1.2)> / <ALPHA*noise=0.5>
+- 全局 SV/HS 默认影响 noise 的预警时间；显式 noise= 可单独控制，SV=2 时提前量减半。全局 COLOR/SIZE/ALPHA 与 V 版本默认不影响噪域，需显式 noise=；噪域参与全部画面滤镜。缩放与隐藏仅改变显示，输入禁用仍按原触控区和时长。
+- 到本拍时间后覆盖红色 Glitch 区域，持续期间对应触控区不能判定，键位 A 区同时屏蔽对应外键。噪域本身不计物量、分数和占手。
+- 后出现的相邻活动区域从共享边长出；有相邻块存续时，结束前沿共享边缩回，到结束时完全消失。各块按各自结束时间退出，桥接块结束后恢复分块。仅合并真实相邻区，不覆盖空缺分区。活动效果参考 Phira-Pro 的溶解遮罩、外沿辉光及底图采样；预警仍为红框。同区重叠持续到最后一个事件结束，拖动预览可恢复。
+
 ## 4  音符类 Alpha 命令
 ### SV — 真实滚动速度
 S <SV*倍率>
@@ -1058,7 +1080,7 @@ S <SPAWN*类型=半径,类型=半径>
 S <SPAWN*NULL> / <SPAWN*类型=NULL>
 E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
 E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
-- 半径范围为 -4.8～4.8：1.225 是原始位置，0 是中心，4.8 是本侧判定线，-4.8 是对面判定线。
+- 半径支持任意有限数值：1.225 是原始位置，0 是中心，4.8 是本侧判定线，-4.8 是对面判定线；可写到判定圈外。
 - 改变半径会自动改变首次显示和移动开始时间，实际速度仍完全由 SV × HS 决定，最终判定键位不会改变；引导线保留最终判定键参考。
 - 作用于 Tap、Hold、Star 头、Each 与 Break 环形音符，不改变 Touch、TouchHold 和 Slide 轨迹本体。
 ### SPAWNMODE — SV 回退时的出生状态
@@ -1095,10 +1117,18 @@ S <COLOR*类型=颜色,类型=颜色>
 S <COLOR*NULL> / <COLOR*类型=NULL>
 E <COLOR*FF6699> / <COLOR*star=FF77AA,slidestar=FFFFFF,slide=66DDFF> / <COLOR*slidestar=NULL> / <COLOR*NULL>
 - 全局颜色影响后续音符；分类型颜色优先。star 控制星形音符和 Slide 头，slidestar 控制运动星，slide 控制轨迹。颜色必须为 6 位 RGB。
+E <COLOR*mine=00BBFF>
+E <COLOR*mine=NULL>
+- 全局颜色和 tap/hold 等普通类型颜色不控制地雷；仅 mine= 单独染色，mine=NULL 恢复灰色皮肤。全局颜色也不控制 blockarea，需单独指定。
+
 ### COLORV — 已加载音符颜色
 S <COLORV*RRGGBB> / <COLORV*类型=RRGGBB>
 E <COLORV*FFFFFF> / <COLORV*star=FF77AA,slidestar=FFFFFF,slide=66DDFF>
 - 立即作用于已经加载的音符；可分别指定普通类型及 star、slidestar、slide。
+E <COLORV*mine=00BBFF>
+E <COLORV*mine=NULL>
+- 全局颜色和 tap/hold 等普通类型颜色不控制地雷；仅 mine= 单独染色，mine=NULL 恢复灰色皮肤。全局颜色也不控制 blockarea，需单独指定。
+
 ### SIZE — 音符尺寸
 S <SIZE*倍率> / <SIZE*(X倍率,Y倍率)>
 S <SIZE*类型=倍率> / <SIZE*类型=(X倍率,Y倍率)>
@@ -1130,16 +1160,33 @@ E <TEXT*("副歌开始")> / <TEXT*("注意双押",2,index=1)> / <TEXT*("逐字�
 - 内容必须写在双引号内；不写持续时间时保持到同 index 的下一条 TEXT。index 可写 0～4，不同 index 可同时显示。
 - font 可选 Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta。Default 使用原始字幕字体，不跟随播放器字体。
 - style=Fade 时 transition 是渐入时间；style=Typewriter 时 transition 是逐字显示完成时间。时长均可写秒数或 8:1。
+### 附加判定线 — JudgeLineExpand
+S <JUDGELINEEXPAND*(True[,过渡时间][,方向])>
+S <JUDGELINEEXPAND*(False)>
+E <JUDGELINEEXPAND*(True,0.5,1)> / <JUDGELINEEXPAND*(True,8:1,-1)> / <JUDGELINEEXPAND*(False)>
+- 保留当前判定线，True 附加白色原版判定线旋转22.5°；False 立即移除附加白线，不影响原判定线。
+- True 后的过渡时间默认0秒，支持秒数或拍数；方向默认1/CW顺时针，-1/CCW逆时针。
+- 拖动预览恢复对应角度；再次触发从原位置展开；停止后移除。
+### 恢复显示设置 — Default
+S <INNERBRIGHTNESS*(Default[,过渡时间])>
+S <OUTERBRIGHTNESS*(Default[,过渡时间])>
+S <COMBODISPLAY*(Default[,过渡时间])>
+S <SHOWJUDGETEXT*(Default[,过渡时间])> / <SHOWJUDGEINFO*(Default[,过渡时间])> / <SHOWCOMBOINFO*(Default[,过渡时间])>
+S <JUDGELINE*(Default[,过渡时间])>
+E <INNERBRIGHTNESS*(0.8)> / <INNERBRIGHTNESS*(Default,0.5)>
+E <COMBODISPLAY*(None)> / <COMBODISPLAY*(Default)>
+- Default 恢复当前 View 设置中的值，不是固定恢复成全亮、显示或 Combo。不会修改设置配置。
+- 参数1是 Default，大小写不限；参数2是可选过渡时间，可写秒数或拍数，省略立即恢复。中央显示模式立即切换，判定线样式立即切换、透明度按过渡时间恢复。
+- 拖动预览到指令前后会恢复对应状态。
 ### 显示开关
-S <ShowJudgeLine*(True|False[,过渡时间])>
-S <ShowJudgeArea*(True|False[,过渡时间])>
+S <JUDGELINE*(0|1|2|3|4[,过渡时间])>
 S <ShowJudgeText*(True|False[,过渡时间])>
 S <ShowJudgeInfo*(True|False[,过渡时间])>
 S <ShowComboInfo*(True|False[,过渡时间])>
-E <ShowJudgeLine*(False,8:1)> / <ShowJudgeArea*(True,0.5)>
+E <JUDGELINE*(1)> / <JUDGELINE*(2)> / <JUDGELINE*3> / <JUDGELINE*(False,8:1)>
 E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
-- 省略过渡时间时立即切换。JudgeArea、JudgeText、JudgeInfo、ComboInfo 分别控制判定区、判定文字、左侧统计和右侧信息。
-- ShowJudgeArea 的实际透明度不会高于 ShowJudgeLine；隐藏判定线时，判定区也不可见。
+- 省略过渡时间时立即切换。JudgeText、JudgeInfo、ComboInfo 分别控制判定文字、左侧统计和右侧信息。
+- 判定线样式：1 默认；2 判定区；3 Magical；0 / False 关闭。4 及以后预留给新增样式，尚未实现的编号暂按样式 1 显示。
 ### ComboDisplay — 中央数据显示
 S <ComboDisplay*(模式[,过渡时间])>
 E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
@@ -1177,13 +1224,61 @@ S <Rainbow*(True,强度[,过渡时间])>
 E <Saturation*(True,1,1)> / <Contrast*(True,0.6)> / <Rainbow*(True,0.5,8:1)>
 - Saturation 的 0 为原色、1 接近黑白；Contrast 增强对比；Rainbow 动态混合彩虹色。
 ### Vignette / Zoom / Glitch / TVNoise
-S <Vignette*(True,强度[,过渡时间])>
+S <Vignette*(True,强度[,过渡时间][,渐变])>
+E <Vignette*(True,0.5,0.3,True)>
+- 渐变 True：从圆周向外逐渐变黑；省略或留空默认为 True；False 保留硬边。Instant 与旧包络形式也可在末尾添加此开关。
 S <Zoom*(True,倍率[,过渡时间])>
 S <Glitch*(True,强度[,过渡时间])>
 S <TVNoise*(True,强度[,过渡时间])>
 E <Vignette*(True,0.7,1)> / <Zoom*(True,1.5,8:1)>
 E <Glitch*(True,0.8,0.2)> / <TVNoise*(True,0.5)>
 - Vignette 收缩圆形可视区；Zoom 直接使用倍率（0.6=60%，1=原大小，1.5=150%，范围 0.1～8）；Glitch 横向分段错位；TVNoise 加入扫描线和噪声。
+### 新增画面滤镜
+- 开启并保持，False 关闭；Instant 保持指定时长，包络按进入、保持、退出时间变化。时间支持秒数或拍数，过渡时间可省略。这些滤镜只改变画面，不改变音符判定。
+
+### SHATTER
+S <SHATTER*(True,强度[,过渡时间])> / <SHATTER*(False[,过渡时间])> / <SHATTER*(Instant,强度,持续时间)>
+E <SHATTER*(True,0.5,8:1)> / <SHATTER*(False,8:1)>
+E <SHATTER*(Instant,0.6,8:1)>
+- 玻璃碎裂：中心冲击形成放射裂纹，分块仅轻微扰动，厚玻璃迅速向外震开，带立体厚边、层叠折射、反射和切面高光；强度 0～1，0 完全复原。
+### RADIALBLUR
+S <RADIALBLUR*(True,强度[,过渡时间])> / <RADIALBLUR*(False[,过渡时间])> / <RADIALBLUR*(Instant,强度,持续时间)>
+E <RADIALBLUR*(True,0.5,8:1)> / <RADIALBLUR*(False,8:1)>
+- 径向模糊：从中心向外拉出速度感；强度 0～1。
+### RIPPLE
+S <RIPPLE*(True,强度[,过渡时间])> / <RIPPLE*(False[,过渡时间])> / <RIPPLE*(Instant,强度,持续时间)>
+E <RIPPLE*(True,0.5,8:1)> / <RIPPLE*(False,8:1)>
+- 冲击波：圆环从中心反复向外扩散并折射画面；强度 0～1。
+### PIXELATE
+S <PIXELATE*(True,强度[,过渡时间])> / <PIXELATE*(False[,过渡时间])> / <PIXELATE*(Instant,强度,持续时间)>
+E <PIXELATE*(True,0.5,8:1)> / <PIXELATE*(False,8:1)>
+- 像素化：强度 0～1，越大像素块越大；0 原样。
+### LENSDISTORT
+S <LENSDISTORT*(True,强度[,过渡时间])> / <LENSDISTORT*(False[,过渡时间])> / <LENSDISTORT*(Instant,强度,持续时间)>
+E <LENSDISTORT*(True,0.5,8:1)> / <LENSDISTORT*(False,8:1)>
+- 镜头畸变：强度 -1～1，正数向外鼓起、负数向内收缩；0 原样。
+### SPLIT
+S <SPLIT*(True,强度[,过渡时间])> / <SPLIT*(False[,过渡时间])> / <SPLIT*(Instant,强度,持续时间)>
+E <SPLIT*(True,0.5,8:1)> / <SPLIT*(False,8:1)>
+- 分屏错位：横向条带交替左右错开；强度 0～1。
+### KALEIDOSCOPE
+S <KALEIDOSCOPE*(True,角度[,过渡时间])> / <KALEIDOSCOPE*(False[,过渡时间])> / <KALEIDOSCOPE*(Instant,角度,持续时间)>
+E <KALEIDOSCOPE*(True,45,8:1)> / <KALEIDOSCOPE*(False,8:1)>
+- 六个镜像扇区按角度旋转；第二参数单位为度，支持正负。过渡时逐渐转到目标角度，0 度仍开启，False 关闭。
+### BLOOM
+S <BLOOM*(True,强度[,过渡时间])> / <BLOOM*(False[,过渡时间])> / <BLOOM*(Instant,强度,持续时间)>
+E <BLOOM*(True,0.5,8:1)> / <BLOOM*(False,8:1)>
+- 高亮泛光：提取高亮并向周围扩散；强度 0～4，不附带 RGB 分离。
+### INVERT
+S <INVERT*(True,强度[,过渡时间])> / <INVERT*(False[,过渡时间])> / <INVERT*(Instant,强度,持续时间)>
+E <INVERT*(True,0.5,8:1)> / <INVERT*(False,8:1)>
+- 反色：强度 0～1，1 完全反转 RGB 颜色。
+### POSTERIZE
+S <POSTERIZE*(True,强度[,过渡时间])> / <POSTERIZE*(False[,过渡时间])> / <POSTERIZE*(Instant,强度,持续时间)>
+E <POSTERIZE*(True,0.5,8:1)> / <POSTERIZE*(False,8:1)>
+- 色阶压缩：强度 0～1，越大颜色层级越少。
+
+
 ### Hue / Tint
 S <Hue*(True,角度[,过渡时间])>
 S <Tint*(True,RRGGBB,强度[,过渡时间])>
@@ -1223,4 +1318,13 @@ E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
   <data name="UtageLabel" xml:space="preserve"><value>左上角文字</value></data>
   <data name="UtageCoop" xml:space="preserve"><value>协谱</value></data>
   <data name="RefreshPreview" xml:space="preserve"><value>刷新预览</value></data>
+<data name="JudgeLineStyle" xml:space="preserve"><value>判定线样式</value></data>
+<data name="JudgeLineOff" xml:space="preserve"><value>关闭</value></data>
+<data name="JudgeLineStyle1" xml:space="preserve"><value>默认</value></data>
+<data name="JudgeLineStyle2" xml:space="preserve"><value>判定区</value></data>
+<data name="JudgeLineStyle3" xml:space="preserve"><value>Magical</value></data>
+  <data name="StarDisplayMode" xml:space="preserve"><value>星星显示模式</value></data>
+  <data name="StarDisplayModeLegacy" xml:space="preserve"><value>旧版</value></data>
+  <data name="StarDisplayModeModern" xml:space="preserve"><value>新版</value></data>
+  <data name="DisableAutomaticSongDetailRefresh" xml:space="preserve"><value>关闭自动刷新封面</value></data>
 </root>

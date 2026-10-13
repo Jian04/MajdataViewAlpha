@@ -11,6 +11,11 @@ namespace MajdataEdit;
 internal static class WebControl
 {
     private const int ProtocolVersion = 1;
+    private static readonly string? borrowedViewId = Environment.GetCommandLineArgs().Contains("--batch-worker")
+        ? Environment.GetEnvironmentVariable("MAJDATA_PLAYBACK_VIEW_SESSION") : null;
+    internal static bool BorrowsView => !string.IsNullOrEmpty(borrowedViewId);
+    internal static MajdataCore.AlphaSession? ViewSession => BorrowsView
+        ? MajdataCore.AlphaSession.Read(borrowedViewId!) : MajdataCore.AlphaSession.Current;
     public static string? LastError { get; private set; }
 
     private sealed class ViewResponse
@@ -18,6 +23,7 @@ internal static class WebControl
         public bool ok;
         public int protocolVersion;
         public string? error;
+        public string? sessionId;
         public DroppedBeat[]? droppedBeats;
     }
 
@@ -76,15 +82,24 @@ internal static class WebControl
             return "ERROR";
         try
         {
+            var viewSession = ViewSession;
+            if (BorrowsView)
+                url = $"http://localhost:{viewSession!.ViewPort}/";
             using var webRequest = new HttpRequestMessage(HttpMethod.Post, url)
             {
                 Content = new StringContent(data, Encoding.UTF8)
             };
+            webRequest.Headers.Add("X-Majdata-Session", viewSession?.Id ?? "legacy");
 
             using var response = SharedClient.Send(webRequest);
             using var reader = new StreamReader(response.Content.ReadAsStream());
             var body = reader.ReadToEnd();
             var result = JsonConvert.DeserializeObject<ViewResponse>(body);
+            if (viewSession is { } session && result?.sessionId != session.Id)
+            {
+                LastError = "View does not belong to this Edit group. Rebuild and use the matching Alpha View.";
+                return "ERROR";
+            }
             LastDroppedBeats = result?.droppedBeats ?? Array.Empty<DroppedBeat>();
             if (!response.IsSuccessStatusCode)
             {

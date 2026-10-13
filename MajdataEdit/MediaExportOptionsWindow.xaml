@@ -16,6 +16,9 @@
             <Style TargetType="CheckBox">
                 <Setter Property="Template" Value="{DynamicResource DarkCheck}" />
                 <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
+                <Setter Property="Background" Value="{DynamicResource ButtonsBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource MenuSeparator}" />
+                <Setter Property="BorderThickness" Value="1" />
             </Style>
             <Style TargetType="Button">
                 <Setter Property="Template" Value="{DynamicResource DarkButton}" />

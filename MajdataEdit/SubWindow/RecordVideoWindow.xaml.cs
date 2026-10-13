@@ -30,16 +30,50 @@ public partial class RecordVideoWindow : Window
     private bool stopRequested;
     private bool windowLoaded;
     private CancellationTokenSource? cancelSource;
+    private readonly ChartListEntry[]? batchEntries;
+    private readonly System.Windows.Controls.ComboBox batchMode = new();
+    private readonly System.Windows.Threading.DispatcherTimer metadataSave = new() { Interval=TimeSpan.FromMilliseconds(600) };
 
-    public RecordVideoWindow(MainWindow main)
+    internal RecordVideoWindow(MainWindow main, ChartListEntry[]? batchEntries = null)
     {
         InitializeComponent();
         this.main = main;
+        this.batchEntries = batchEntries;
+        metadataSave.Tick += (_, _) => { metadataSave.Stop(); if (windowLoaded && batchEntries == null) SyncSettingsToMain(); };
+        foreach (var input in new[]{TitleBox, ArtistBox, DesignerBox, LevelBox, BpmBox, ClockBox, UtageLabelBox})
+            input.TextChanged += (_, _) => {
+                if (!windowLoaded || batchEntries != null) return;
+                metadataSave.Stop(); metadataSave.Start();
+            };
+        UtageCoopBox.Checked += (_, _) => { if (windowLoaded && batchEntries == null) SyncSettingsToMain(); };
+        UtageCoopBox.Unchecked += (_, _) => { if (windowLoaded && batchEntries == null) SyncSettingsToMain(); };
+        if (batchEntries != null)
+        {
+            Title = "批量录制";
+            RefreshPreviewButton.Visibility = Visibility.Collapsed;
+            var root = (System.Windows.Controls.Grid)Content;
+            root.Children.OfType<System.Windows.Controls.Border>().First(x => System.Windows.Controls.Grid.GetRow(x) == 1).Visibility = Visibility.Collapsed;
+            root.Children.OfType<System.Windows.Controls.Grid>().First(x => System.Windows.Controls.Grid.GetRow(x) == 0).Visibility = Visibility.Collapsed;
+            var footer = (System.Windows.Controls.StackPanel)StartButton.Parent;
+            footer.Orientation = System.Windows.Controls.Orientation.Vertical;
+            footer.HorizontalAlignment = HorizontalAlignment.Stretch;
+            batchMode.ItemsSource = new[] { "排队导出 · 同时 1 首", "并行导出 · 同时 2 首", "并行导出 · 同时 3 首" };
+            batchMode.SelectedIndex = 0; MajdataSessionUi.SessionTheme.Input(batchMode);
+            batchMode.Margin = new Thickness(0, 0, 0, 8); footer.Children.Insert(0, batchMode);
+            StartButton.Content = "开始批量录制"; StartButton.HorizontalAlignment = HorizontalAlignment.Right;
+            StatusText.Text = $"共 {batchEntries.Length} 个难度，使用相同录制参数。输出 out_难度编号.mp4（MASTER 为 out_5.mp4）。";
+        }
         var (songDetailStyle, showSongDetail, showAllPerfect, introStyle) = main.GetRecordDisplayDefaults();
         SongDetailStyleBox.SelectedIndex = songDetailStyle == 1 ? 1 : 0;
         SongDetailBox.IsChecked = showSongDetail;
         AllPerfectBox.IsChecked = showAllPerfect;
         ViewIntroStyleBox.SelectedIndex = StyleToIndex(introStyle);
+        ViewIntroStyleBox.SelectionChanged += (_, _) =>
+        {
+            if (!windowLoaded || ViewIntroStyleBox.SelectedIndex < 0) return;
+            main.editorSetting!.ViewIntroStyle = IndexToStyle(ViewIntroStyleBox.SelectedIndex);
+            main.SaveEditorSetting(); main.SendDisplaySettings();
+        };
         UtageOptionsPanel.Visibility = main.IsOriginalDifficulty
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -51,8 +85,12 @@ public partial class RecordVideoWindow : Window
         };
         SongDetailStyleBox.SelectionChanged += (_, _) =>
         {
-            if (windowLoaded)
-                LoadSelectedPreview();
+            if (!windowLoaded) return;
+            main.ApplyRecordDisplaySettings(SongDetailStyleBox.SelectedIndex,
+                SongDetailBox.IsChecked == true, AllPerfectBox.IsChecked == true,
+                IndexToStyle(ViewIntroStyleBox.SelectedIndex));
+            main.SendDisplaySettings();
+            LoadSelectedPreview();
         };
     }
 
@@ -69,6 +107,7 @@ public partial class RecordVideoWindow : Window
 
     private void RecordVideoWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        if (batchEntries != null) { windowLoaded = true; UtageOptionsPanel.Visibility = Visibility.Collapsed; return; }
         var info = main.GetRecordSongInfo();
         DifficultyText.Text = info.difficulty;
         TitleBox.Text = info.title;
@@ -86,9 +125,12 @@ public partial class RecordVideoWindow : Window
 
     private void LoadSelectedPreview()
     {
+        if (batchEntries != null) return;
         if (SongDetailStyleBox.SelectedIndex == 1)
         {
-            var cachedPreview = main.GetSongDetailPreviewPath();
+            var cachedPreview = main.PrepareSongDetailPreview(
+                TitleBox.Text, ArtistBox.Text, DesignerBox.Text, LevelBox.Text, BpmBox.Text,
+                NormalizeUtageLabel(), UtageCoopBox.IsChecked == true);
             if (!string.IsNullOrWhiteSpace(cachedPreview))
             {
                 LoadCoverPreview(cachedPreview, false);
@@ -130,9 +172,13 @@ public partial class RecordVideoWindow : Window
             CoverPreview.Source = image;
             RenderOptions.SetBitmapScalingMode(CoverPreview, BitmapScalingMode.HighQuality);
         }
-        catch (IOException)
+        catch (Exception exception)
         {
-            // The exporter can still run when a cover image is temporarily unavailable.
+            CoverPreview.Source = null;
+            if (!allowCoverFallback)
+                main.ReportSongDetailError(exception);
+            else
+                MessageBox.Show("封面预览加载失败：\n" + exception.Message);
         }
     }
 
@@ -141,7 +187,7 @@ public partial class RecordVideoWindow : Window
         if (running)
             return;
 
-        if (string.IsNullOrEmpty(MainWindow.maidataDir))
+        if (batchEntries == null && string.IsNullOrEmpty(MainWindow.maidataDir))
         {
             StatusText.Text = L("RecordOpenChartFirst");
             return;
@@ -166,6 +212,25 @@ public partial class RecordVideoWindow : Window
             return;
         }
 
+        if (batchEntries != null)
+        {
+            var existing = batchEntries.Count(x => File.Exists(Path.Combine(x.Folder, "outputs", $"out_{x.Difficulty + 1}.mp4")));
+            if (existing > 0 && MessageBox.Show($"其中 {existing} 个难度已有导出视频，成功导出后将替换对应的 out_难度编号.mp4，是否继续？", "批量录制", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+            main.ApplyRecordDisplaySettings(SongDetailStyleBox.SelectedIndex, SongDetailBox.IsChecked == true,
+                AllPerfectBox.IsChecked == true, IndexToStyle(ViewIntroStyleBox.SelectedIndex));
+            running = true; StartButton.IsEnabled = false; batchMode.IsEnabled = false;
+            CancelButton.Content = L("Cancel"); CancelButton.Visibility = Visibility.Visible;
+            using var stop = cancelSource = new CancellationTokenSource();
+            try
+            {
+                await main.ExportChartList(batchEntries, new RecordVideoOptions { FrameRate = frameRate, Width = width, Height = height },
+                    batchMode.SelectedIndex + 1, message => StatusText.Text = message, stop.Token);
+            }
+            catch (OperationCanceledException) { StatusText.Text = "批量录制已停止，已完成的视频已保留。"; }
+            catch (Exception error) { StatusText.Text = "批量录制失败：" + error.Message; }
+            finally { running = false; StartButton.IsEnabled = true; batchMode.IsEnabled = true; CancelButton.Visibility = Visibility.Collapsed; cancelSource = null; }
+            return;
+        }
         SyncSettingsToMain();
 
         var runs = new List<RecordVideoOptions>
@@ -185,6 +250,7 @@ public partial class RecordVideoWindow : Window
         stopRequested = false;
         StartButton.IsEnabled = false;
         CancelButton.Content = MainWindow.GetLocalizedString("Cancel");
+        CancelButton.Visibility = Visibility.Visible;
         cancelSource = new CancellationTokenSource();
         // Per-run timeout: virtual-clock recording may be faster or slower than real time, so double chart length plus presentation/finalization headroom.
         var timeout = TimeSpan.FromSeconds(Math.Max(120, main.GetChartLengthForRecord() * 2 + 90));
@@ -227,6 +293,7 @@ public partial class RecordVideoWindow : Window
             running = false;
             StartButton.IsEnabled = true;
             CancelButton.Content = L("Close");
+            CancelButton.Visibility = Visibility.Collapsed;
             main.pendingRecordOptions = null;
             cancelSource?.Dispose();
             cancelSource = null;
@@ -322,12 +389,14 @@ public partial class RecordVideoWindow : Window
             StatusText.Text = L("CancellingBeforeClose");
             return;
         }
-        SyncSettingsToMain();
+        metadataSave.Stop();
+        if (batchEntries == null && windowLoaded) SyncSettingsToMain();
         base.OnClosing(e);
     }
 
     private void RequestViewStop()
     {
+        if (batchEntries != null) return;
         if (stopRequested)
             return;
         stopRequested = true;
@@ -370,7 +439,8 @@ public partial class RecordVideoWindow : Window
             LevelBox.Text,
             BpmBox.Text,
             NormalizeUtageLabel(),
-            UtageCoopBox.IsChecked == true);
+            UtageCoopBox.IsChecked == true,
+            forceRefresh: true);
         if (!string.IsNullOrWhiteSpace(path))
             LoadCoverPreview(path, false);
     }
@@ -379,6 +449,9 @@ public partial class RecordVideoWindow : Window
     {
         "circleplus" => 1,
         "circle" => 2,
+        "chunithm-xversex" => 3,
+        "chunithm-mate" => 4,
+        "magical" => 5,
         _ => 0
     };
 
@@ -386,6 +459,9 @@ public partial class RecordVideoWindow : Window
     {
         1 => "circleplus",
         2 => "circle",
+        3 => "chunithm-xversex",
+        4 => "chunithm-mate",
+        5 => "magical",
         _ => "default"
     };
 }

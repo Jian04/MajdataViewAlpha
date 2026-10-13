@@ -53,6 +53,7 @@ internal static class NoteDurationTarget
                 slideTarget = true;
                 return note.path.segments.Count > 0 &&
                        note.path.segments[^1].duration.Length == 0;
+            case NoteExpressionKind.NoiseZone:
             case NoteExpressionKind.Hold:
             case NoteExpressionKind.TouchHold:
                 return note.isZeroLengthHold;

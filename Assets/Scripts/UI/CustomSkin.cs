@@ -1,5 +1,6 @@
-﻿using System.IO;
+using System.IO;
 using UnityEngine;
+using MajdataCore;
 
 public class CustomSkin : MonoBehaviour
 {
@@ -52,7 +53,8 @@ public class CustomSkin : MonoBehaviour
     public Sprite[] TouchHold = new Sprite[5];
     public Sprite[] TouchHold_Break = new Sprite[5];
 
-    public Sprite JudgeArea;
+    public Sprite JudgeLineBase;
+    public Sprite StyleOverlay;
 
     public Texture2D test;
     private SpriteRenderer Outline;
@@ -68,23 +70,17 @@ public class CustomSkin : MonoBehaviour
     public void LoadSkin(string skinName, string tapSkinName = null, string holdSkinName = null,
         string starSkinName = null, bool pinkStar = false)
     {
-        // Prefer packaged skins so Editor and release builds resolve the same files.
-        var external = Path.Combine(new DirectoryInfo(Application.dataPath).Parent.FullName, "Skin");
         var bundled = Path.Combine(Application.streamingAssetsPath, "Skin");
-        var root = Directory.Exists(bundled) ? bundled : external;
-        var requested = Path.Combine(root, SanitizeSkinName(skinName));
-        var dx = Path.Combine(root, "dx");
-        var path = Directory.Exists(requested)
-            ? requested
-            : Directory.Exists(dx)
-                ? dx
-                : root;
-        var tapPath = ResolvePartPath(root, tapSkinName, path);
-        var holdPath = ResolvePartPath(root, holdSkinName, path);
-        var legacyPinkStar = TryGetPinkStarBase(starSkinName, out var starBaseSkinName);
+        var roots = SkinPaths.Roots(new DirectoryInfo(Application.dataPath).Parent.FullName, bundled, true);
+        var path = SkinPaths.Folder(roots, SanitizeSkinName(skinName), SkinPaths.Folder(roots, "dx", bundled));
+        var tapPath = SkinPaths.Folder(roots, tapSkinName, path);
+        var holdPath = SkinPaths.Folder(roots, holdSkinName, path);
+        var starBaseSkinName = starSkinName;
+        var legacyPinkStar = SkinPaths.Folder(roots, starSkinName, null) == null &&
+            TryGetPinkStarBase(starSkinName, out starBaseSkinName);
         pinkStar |= legacyPinkStar;
         PinkStarEnabled = pinkStar;
-        var starPath = ResolvePartPath(root, starBaseSkinName, path);
+        var starPath = SkinPaths.Folder(roots, starBaseSkinName, path);
         var skinKey = string.Join("|", path, tapPath, holdPath, starPath, pinkStar);
         if (string.Equals(loadedSkinKey, skinKey, System.StringComparison.OrdinalIgnoreCase))
             return;
@@ -93,12 +89,13 @@ public class CustomSkin : MonoBehaviour
         Debug.Log($"Loading skin: base={path}, tap={tapPath}, hold={holdPath}, star={starPath}");
 
         Outline.sprite = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "outline.png"));
-        JudgeArea = LoadOrFallback(Path.Combine(path, "judge_area.png"), null);
+        JudgeLineBase = Outline.sprite;
+        StyleOverlay = LoadOrFallback(Path.Combine(path, "judge_area.png"), null);
 
         Tap = LoadPart(tapPath, path, "tap.png");
         Tap_Each = LoadPart(tapPath, path, "tap_each.png");
         Tap_Break = LoadPart(tapPath, path, "tap_break.png");
-        Tap_Ex = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "tap_ex.png"));
+        Tap_Ex = LoadPart(tapPath, path, "tap_ex.png");
 
         Slide = SpriteLoader.LoadSpriteFromFile(path + "/slide.png");
         Slide_Each = SpriteLoader.LoadSpriteFromFile(path + "/slide_each.png");
@@ -120,13 +117,13 @@ public class CustomSkin : MonoBehaviour
         Star_Each_Double = LoadPart(starPath, path, "star_each_double.png");
         Star_Break = LoadPart(starPath, path, "star_break.png");
         Star_Break_Double = LoadPart(starPath, path, "star_break_double.png");
-        Star_Ex = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "star_ex.png"));
-        Star_Ex_Double = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "star_ex_double.png"));
+        Star_Ex = LoadPart(starPath, path, "star_ex.png");
+        Star_Ex_Double = LoadPart(starPath, path, "star_ex_double.png");
 
         var border = new Vector4(0, 58, 0, 58);
         Hold = LoadPart(holdPath, path, "hold.png", border);
         Hold_Each = LoadPart(holdPath, path, "hold_each.png", border);
-        Hold_Ex = SpriteLoader.LoadSpriteFromFile(Path.Combine(path, "hold_ex.png"), border);
+        Hold_Ex = LoadPart(holdPath, path, "hold_ex.png", border);
         Hold_Break = LoadPart(holdPath, path, "hold_break.png", border);
         Hold_On = LoadOptionalPart(holdPath, path, "hold_on.png", border, Hold);
         Hold_Off = LoadPart(holdPath, path, "hold_off.png", border);
@@ -249,14 +246,6 @@ public class CustomSkin : MonoBehaviour
             return SpriteLoader.LoadSpriteFromFile(primary, border);
         var secondary = Path.Combine(fallbackPath, fileName);
         return File.Exists(secondary) ? SpriteLoader.LoadSpriteFromFile(secondary, border) : fallback;
-    }
-
-    private static string ResolvePartPath(string root, string skinName, string fallbackPath)
-    {
-        if (string.IsNullOrWhiteSpace(skinName))
-            return fallbackPath;
-        var candidate = Path.Combine(root, SanitizeSkinName(skinName));
-        return Directory.Exists(candidate) ? candidate : fallbackPath;
     }
 
     private static bool TryGetPinkStarBase(string skinName, out string baseSkinName)

@@ -266,9 +266,14 @@ namespace MajdataCore
         public static string RemoveModifiers(string expression)
         {
             var result = new StringBuilder(expression.Length);
+            var depth = 0;
             foreach (var character in expression)
-                if (ModifierCharacters.IndexOf(character) < 0)
+            {
+                if (character == '[') depth++;
+                if (depth > 0 || ModifierCharacters.IndexOf(character) < 0)
                     result.Append(character);
+                if (character == ']' && depth > 0) depth--;
+            }
             return result.ToString();
         }
 

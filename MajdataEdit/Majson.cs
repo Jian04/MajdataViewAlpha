@@ -16,6 +16,7 @@ internal class Majson
     public string wholeBpm = "";
     public string utageLabel = "宴";
     public bool utageCoop;
+    public bool hasAlphaEditorSyntax;
     // ALPHA: true SV table
     public List<SvPoint> svTable = new();
     public List<SpeedChange> hsTable = new();
@@ -121,6 +122,7 @@ internal class DisplayChange
     public string property = "";
     public float target;
     public float duration;
+    public bool resetToDefault;
 }
 
 internal class SubtitleChange
@@ -142,6 +144,8 @@ internal class SubtitleChange
 
 internal class EffectChange
 {
+    public bool rotatePV = false;
+    public bool gradient = true;
     public double time;
     public string effect = "";
     public float duration;
@@ -170,6 +174,8 @@ internal class MediaChange
     public double sourceOffset;
     public double duration;
     public bool timelineClip;
+    public double opacity = 1d;
+    public double brightness;
 }
 
 internal class BounceChange
@@ -205,6 +211,7 @@ internal class FakeChange
 internal class EditRequestjson
 {
     public int protocolVersion = 1;
+    public string recordBatch = "";
     public string language = "en-US";
     public float audioSpeed;
     public float mediaAudioVolume = 1f;
@@ -215,28 +222,28 @@ internal class EditRequestjson
     public bool clipBackgroundToRing;
     public bool showJudgeInfo;
     public bool showComboInfo;
-    public bool showJudgeLine = true;
+    public int judgeLineStyle = 3;
     public bool showJudgeText = true;
     public bool showMineHitFeedback = true;
-    // ALPHA: Judgment-area overlay toggle. Forced off whenever showJudgeLine is off (see MainWindowCore).
-    public bool showJudgeArea = false;
     public EditorComboIndicator comboStatusType;
     public EditorPlayMethod editorPlayMethod;
     public EditorControlMethod control;
     public string? jsonPath;
+    public string chartDirectory = MainWindow.maidataDir;
     public float noteSpeed;
     public float starSpeed;
     public long startAt;
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
+    public int starDisplayMode = 1;
     public string skin = "dx";
     public string tapSkin = "dx";
     public string holdSkin = "dx";
     public string starSkin = "dx";
     public bool pinkStar;
     public string standbyTheme = "dark";
-    public string introBgTheme = "default";
+    public string introBgTheme = "magical";
     public int songDetailStyle = 0;
     public bool previewFlow;
     public bool deferPlaybackStart;
@@ -316,24 +323,26 @@ internal class MajSetting
 //this setting is global
 public class EditorSetting
 {
+    public bool DragPreview = true;
     public float backgroundCover = 0.6f;
     public float InnerBackgroundCover = -1f;
     public float OuterBackgroundCover = -1f;
     public int BackgroundFitMode;
     public bool ShowJudgeInfo = true;
     public bool ShowComboInfo = true;
-    public bool ShowJudgeLine = true;
+    public int JudgeLineStyle = 3;
+    public int JudgeLinePresetVersion = 1;
     public bool ShowJudgeText = true;
     public bool ShowMineHitFeedback = true;
     // Keeps the background inside the play circle, so raising the outer
     // brightness no longer uncovers the four corners of the picture while the
     // notes out there stay visible.
     public bool ClipBackgroundToRing;
-    public bool ShowJudgeArea = true;
     public bool ShowSongDetail = true;
     public bool ShowAllPerfect = true;
     public bool ShowGeneratedMark = true;
     public int SongDetailStyle = 1;
+    public bool DisableAutomaticSongDetailRefresh;
     public string RecordUtageLabel = "\u5bb4";
     public bool RecordUtageCoop;
     public string Skin = "dx";
@@ -361,12 +370,15 @@ public class EditorSetting
     public int ViewDisplayFontPreset;
     public int FontPresetVersion = 1;
     public bool EnableVisualChartEditor = true;
+    public bool TextFollow = true;
+    public int QuickControlDefaultsVersion = 1;
     public bool EditorLightTheme = false;
     public string EditorTheme = ThemeManager.DefaultTheme;
-    // Editor window decoration: "default" (theme solid color), "circleplus" (Japanese site animation), or "circle" (international site animation).
-    public string EditorBackgroundStyle = "default";
-    // View intro transition background: "default" (original pink-purple), "circleplus", or "circle".
-    public string ViewIntroStyle = "circleplus";
+    public int BackgroundPresetVersion = 1;
+    // Website decoration; "default" retains the original solid editor background.
+    public string EditorBackgroundStyle = "magical";
+    // View intro transition; "default" retains the original pink-purple background.
+    public string ViewIntroStyle = "magical";
     public string IncreasePlaybackSpeedKey = "Ctrl+p";
     public string Language = "en-US";
     public string Mirror180Key = "Ctrl+l";
@@ -382,7 +394,20 @@ public class EditorSetting
     public int SyntaxCheckLevel = 1; // 0 = disabled, 1 = warning (default), 2 = enabled
     public string SaveKey = "Ctrl+s";
     public string SendViewerKey = "Ctrl+Shift+z";
+    public string FindKey = "Ctrl+f";
+    public string SidebarKey = "Ctrl+Alt+b";
+    public string MoveCaretUpKey = "Ctrl+Up";
+    public string MoveCaretDownKey = "Ctrl+Down";
+    public string OverwriteKey = "Insert";
+    public string MediaDeleteKey = "Delete";
+    public string MediaDeleteAlternateKey = "Back";
+    public string MediaCopyKey = "Ctrl+c";
+    public string MediaPasteKey = "Ctrl+v";
+    public string MediaUndoKey = "Ctrl+z";
+    public string MediaRedoKey = "Ctrl+y";
+    public string MediaSplitKey = "s";
     public float touchSpeed = 7.5f;
     public bool SmoothSlideAnime = false;
+    public int StarDisplayMode = 1;
     public string LastChartPath = "";
 }

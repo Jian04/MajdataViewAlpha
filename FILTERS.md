@@ -61,3 +61,9 @@ True 开启并保持到 False；再次 True 会从当前值过渡到新目标。
 噪域语法见 [NOISE_ZONES.md](NOISE_ZONES.md)。
 
 万花筒示例：<KALEIDOSCOPE*(True,45,1)> 在 1 秒内转到 45 度；<KALEIDOSCOPE*(True,-90,8:1)> 转到 -90 度；<KALEIDOSCOPE*(False,0.3)> 关闭。0 度仍是镜像万花筒。
+
+## ROTATE 与 PV
+
+ROTATE 在原有参数末尾可附加是否旋转 PV 的 True/False，默认 False。
+
+`<ROTATE*(True,30,8:1,True)>` 同时旋转谱面与 PV；`<ROTATE*(True,30)>` 仅旋转谱面。`<ROTATE*(Instant,90,4:1,False)>` 临时旋转谱面，PV 保持原方向；PVOVERLAY 也遵循这个开关。

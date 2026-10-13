@@ -38,12 +38,14 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
     private readonly List<TextSpan> alphaSpans = new();
     private readonly List<TextSpan> borrowSpans = new();
     private object? cachedVersion;
+    private SolidColorBrush?[] lineColors = Array.Empty<SolidColorBrush?>();
 
     protected override void ColorizeLine(DocumentLine line)
     {
         RefreshDocumentSpans();
 
         var text = CurrentContext.Document.GetText(line);
+        lineColors = new SolidColorBrush?[text.Length];
         var state = 0;
         var spanStart = 0;
 
@@ -105,6 +107,7 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
         ApplyForegroundSpans(line, borrowSpans, BorrowBrush);
         ApplyForegroundSpans(line, markerSpans, MarkerBrush);
         ApplyForegroundSpans(line, commentSpans, CommentBrush);
+        CommitLineColors(line);
     }
 
     private void RefreshDocumentSpans()
@@ -166,6 +169,21 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
 
             if (text[i] == '~')
             {
+                if (i + 1 < text.Length && text[i + 1] == '[')
+                {
+                    var close = text.IndexOf(']', i + 2);
+                    if (close >= 0 && text.IndexOf('\n', i, close - i) < 0)
+                    {
+                        var image = text.Substring(i + 2, close - i - 2);
+                        if (MajdataCore.SlidePathParser.LooksLikeSkinPath(image) &&
+                            MajdataCore.SlidePathParser.IsSkinPathUsable(image, out _))
+                        {
+                            borrowSpans.Add(new TextSpan(i, close - i + 1));
+                            i = close + 1;
+                            continue;
+                        }
+                    }
+                }
                 var inheritedPosition = new MajdataCore.SlidePositionData
                 {
                     area = 'E',
@@ -243,10 +261,49 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
         if (length <= 0)
             return;
 
-        ChangeLinePart(
-            line.Offset + start,
-            line.Offset + start + length,
-            element => element.TextRunProperties.SetForegroundBrush(brush));
+        Array.Fill(lineColors, brush, start, length);
+    }
+
+    private void CommitLineColors(DocumentLine line)
+    {
+        // Resolve overlapping styles first, then split/paint runs in one forward
+        // pass. ChangeLinePart starts scanning at element zero for every token,
+        // making thousands of durations and commas on one line quadratic.
+        var visualLine = CurrentContext.VisualLine;
+        var documentStart = visualLine.FirstDocumentLine.Offset;
+        var elementIndex = 0;
+        for (var start = 0; start < lineColors.Length;)
+        {
+            var brush = lineColors[start];
+            var end = start + 1;
+            while (end < lineColors.Length && ReferenceEquals(lineColors[end], brush)) end++;
+            if (brush != null)
+            {
+                var from = visualLine.GetVisualColumn(line.Offset + start - documentStart);
+                var until = visualLine.GetVisualColumn(line.Offset + end - documentStart);
+                while (elementIndex < CurrentElements.Count)
+                {
+                    var element = CurrentElements[elementIndex];
+                    var elementEnd = element.VisualColumn + element.VisualLength;
+                    if (element.VisualColumn >= until) break;
+                    if (elementEnd <= from) { elementIndex++; continue; }
+                    if (element.CanSplit && element.VisualColumn < from)
+                    {
+                        element.Split(from, CurrentElements, elementIndex);
+                        continue;
+                    }
+                    if (element.CanSplit && elementEnd > until)
+                    {
+                        element.Split(until, CurrentElements, elementIndex);
+                        continue;
+                    }
+                    if (element.VisualColumn >= from && elementEnd <= until)
+                        element.TextRunProperties.SetForegroundBrush(brush);
+                    elementIndex++;
+                }
+            }
+            start = end;
+        }
     }
 
     private readonly record struct TextSpan(int Start, int Length);
