@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using MajdataLauncher.Models;
+using MajdataCollaboration;
 
 namespace MajdataLauncher;
 
@@ -103,19 +104,19 @@ public partial class MainWindow : Window
     {
         var petRoot = Path.Combine(AppContext.BaseDirectory, "Pets", launcher.Settings.Pet);
         LoadPetMotion(petRoot);
-        var manifestPath = Path.Combine(petRoot, "pet.json");
-        var manifest = File.Exists(manifestPath)
-            ? JsonSerializer.Deserialize<PetManifest>(File.ReadAllText(manifestPath),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new PetManifest()
-            : new PetManifest();
-        var atlasPath = Path.Combine(petRoot, manifest.SpritesheetPath);
-        if (manifest.SpriteVersionNumber == 2 && animator!.LoadAtlas(atlasPath))
+        try
         {
+            var appearance = PetAppearance.Read(petRoot);
+            if (appearance.IsImage) animator!.LoadStaticImage(appearance.Path);
+            else if (!animator!.LoadAtlas(appearance.Path)) throw new InvalidDataException("桌宠图集格式不正确：" + appearance.Path);
             PresentStatus(L("Ready"));
             return true;
         }
-        Present(L("AssetError"), L("PetAtlasError"));
-        return false;
+        catch (Exception error) when (error is IOException or JsonException or InvalidOperationException or NotSupportedException)
+        {
+            Present(L("AssetError"), error.Message);
+            return false;
+        }
     }
 
     private void SwitchPet(string petId)
@@ -146,7 +147,9 @@ public partial class MainWindow : Window
         try
         {
             var progress = new Progress<string>(_ => { });
-            await launcher.LaunchAsync(progress, launchCancellation.Token);
+            var origin = PointToScreen(new Point(ActualWidth / 2, ActualHeight / 2));
+            var originText = FormattableString.Invariant($"{origin.X};{origin.Y}");
+            await launcher.LaunchAsync(progress, launchCancellation.Token, originText);
             ApplyPetMode(true);
         }
         catch (OperationCanceledException)
@@ -166,7 +169,7 @@ public partial class MainWindow : Window
 
     private void Pet_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton != MouseButton.Left || animator?.HasAtlas != true)
+        if (e.ChangedButton != MouseButton.Left || animator?.HasAppearance != true)
             return;
         if (petDragStartScreen is Point start && GetCursorPos(out var released))
             petDragMoved |= Math.Abs(released.X - start.X) + Math.Abs(released.Y - start.Y) > 12;
@@ -262,7 +265,7 @@ public partial class MainWindow : Window
 
     private void ApplyPetMode(bool force = false)
     {
-        if (docking || startupAppearancePlaying || petDragActive || animator?.HasAtlas != true)
+        if (docking || startupAppearancePlaying || petDragActive || animator?.HasAppearance != true)
             return;
         var mode = DesiredPetMode();
         if (!force && displayedMode == mode)
@@ -272,6 +275,7 @@ public partial class MainWindow : Window
         if (modeChanged) PresentStatus(CurrentPetStatus());
         else Present(CurrentPetStatus());
         expressionTimer.Stop();
+        if (animator.IsStatic) return;
         switch (mode)
         {
             case PetMode.Initial:
@@ -293,7 +297,7 @@ public partial class MainWindow : Window
 
     private void PlayModeGesture()
     {
-        if(docking || startupAppearancePlaying || petDragActive || animator?.HasAtlas!=true) return;
+        if(docking || startupAppearancePlaying || petDragActive || animator?.HasAppearance!=true) return;
         var mode=displayedMode;
         if(mode==PetMode.Initial || mode==PetMode.SyntaxError || (int)mode<0) return;
         if (animator.IsGesturePlaying || DateTime.UtcNow < nextModeGesture[(int)mode]) {
@@ -315,7 +319,7 @@ public partial class MainWindow : Window
 
     private void ResumeAmbientAnimation()
     {
-        if (docking || startupAppearancePlaying || petDragActive || animator?.HasAtlas != true) return;
+        if (docking || startupAppearancePlaying || petDragActive || animator?.HasAppearance != true) return;
         if (animator?.IsGesturePlaying == true) { ScheduleModeGesture(); return; }
         animator.Play(PetAnimation.Idle, true);
         ScheduleModeGesture();
@@ -408,7 +412,7 @@ public partial class MainWindow : Window
     private void IdleTimer_Tick(object? sender, EventArgs e)
     {
         if (launching || docking || startupAppearancePlaying || petDragActive ||
-            displayedMode != PetMode.Initial || animator?.HasAtlas != true || animator.IsGesturePlaying)
+            displayedMode != PetMode.Initial || animator?.HasAppearance != true || animator.IsGesturePlaying)
             return;
         if (random.Next(3) == 0)
             Present(CurrentPetStatus(), IdleMessages[random.Next(IdleMessages.Length)]);

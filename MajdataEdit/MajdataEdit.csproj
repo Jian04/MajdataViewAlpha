@@ -1,15 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
+        <DefineConstants>$(DefineConstants);MAJDATA_EDIT</DefineConstants>
         <OutputType>WinExe</OutputType>
         <TargetFramework>net6.0-windows</TargetFramework>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <UseWPF>true</UseWPF>
 
-        <Version>0.6.0</Version>
+        <Version>0.6.2</Version>
         <Company />
         <GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
-        <Authors>bbben</Authors>
+        <Authors>Jian04</Authors>
         <PackageProjectUrl>https://github.com/LingFeng-bbben/MajdataEdit</PackageProjectUrl>
         <Copyright>Copyright © 2021</Copyright>
         <ApplicationIcon>bear-3.ico</ApplicationIcon>
@@ -21,6 +22,8 @@
       <None Remove="Image\bg_dummy.jpg" />
       <None Remove="Image\PetDock.png" />
       <Resource Include="Image\PetDock.png" />
+      <Resource Include="Image\FilterPreviews\*.jpg" />
+      <Resource Include="Assets\Fonts\Ui\OFL.txt" />
       <None Remove="Image\outline_find_replace_white_24dp.png" />
       <None Remove="Image\outline_search_white_24dp.png" />
     </ItemGroup>
@@ -28,6 +31,7 @@
          Files under alpha/Assets/MajdataCore are included directly in Assembly-CSharp.
          A future editor integrated into View can reuse the same source files. -->
     <ItemGroup>
+        <Compile Include="..\Assets\Scripts\SvController.cs" Link="Editor\MonitorScroll.cs" />
         <Compile Include="..\Assets\MajdataCore\**\*.cs"
                  Exclude="..\Assets\MajdataCore\**\._*.cs;..\Assets\MajdataCore\**\.DS_Store">
             <Link>MajdataCore\%(RecursiveDir)%(Filename)%(Extension)</Link>
@@ -80,29 +84,13 @@
             <Link>Assets\SongDetailParts\%(Filename)%(Extension)</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </Content>
-        <Content Include="..\Assets\Resources\Fonts\Aileron-Regular.otf">
-            <Link>Resources\Fonts\Aileron-Regular.otf</Link>
+        <Content Include="..\Fonts\**\*">
+            <Link>Fonts\%(RecursiveDir)%(Filename)%(Extension)</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Never</CopyToPublishDirectory>
         </Content>
-        <Content Include="..\Assets\Resources\Fonts\FOT-NewRodin Pro EB.otf;..\Assets\Resources\Fonts\FOT-Seurat Pro DB.otf;..\Assets\Resources\Fonts\FOT-Rodin Pro EB.otf">
-            <Link>Resources\Fonts\%(Filename)%(Extension)</Link>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
-        <Content Include="Assets\Fonts\GenSenRounded2TW-R.otf">
-            <Link>Resources\Fonts\GenSenRounded2TW-R.otf</Link>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
-        <Content Include="..\Assets\Resources\Fonts\Allerta-Regular.ttf">
-            <Link>Resources\Fonts\Allerta-Regular.ttf</Link>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
-        <Content Include="..\Assets\Resources\Fonts\MicrosoftYaHei-Bold.ttc">
-            <Link>Resources\Fonts\MicrosoftYaHei-Bold.ttc</Link>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
-        <Content Include="..\Assets\Resources\Fonts\NotoSansSC-VF.ttf">
-            <Link>Resources\Fonts\NotoSansSC-VF.ttf</Link>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <Content Update="..\Fonts\Aileron-Regular.otf;..\Fonts\Allerta-Regular.ttf;..\Fonts\FOT-NewRodin Pro EB.otf;..\Fonts\FOT-Seurat Pro DB.otf;..\Fonts\GenSenRounded2TW-R.otf;..\Fonts\MajdataUIRounded-Regular.otf">
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         </Content>
     </ItemGroup>
     <ItemGroup>

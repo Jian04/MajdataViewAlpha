@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -46,6 +46,17 @@ public sealed class LiveNoteVisualController : MonoBehaviour
     private readonly List<LiveChange> changes = new();
     /// <summary>Which stream and kind the chart writes at all, asked once per note.</summary>
     private readonly HashSet<(int Stream, ChangeKind Kind)> written = new();
+    internal sealed class VisualState
+    {
+        internal int Version;
+        internal Color? Color, GuideColor;
+        internal Vector2? Size, GuideSize;
+        internal float? Alpha, GuideAlpha, TapLineAlpha;
+        internal bool UseColor, UseSize, UseAlpha;
+    }
+
+    // Live-only lookups depend on the current stream/type, never the note's birth time.
+    private readonly Dictionary<(int, string, string, bool, bool, bool), VisualState> states = new();
     private JsonDataLoader loader;
     private AudioTimeProvider timeProvider;
     private int cursor;
@@ -73,6 +84,7 @@ public sealed class LiveNoteVisualController : MonoBehaviour
         AudioTimeProvider clock)
     {
         changes.Clear();
+        states.Clear();
         Add(colorChanges?.Where(item => item.live).Select(item =>
             (item.time, item.sourcePosition, item.streamIndex)), ChangeKind.Color);
         Add(sizeChanges?.Where(item => item.live).Select(item =>
@@ -159,23 +171,63 @@ public sealed class LiveNoteVisualController : MonoBehaviour
         if (note == null || loader == null || timeProvider == null)
             return;
 
-        var time = timeProvider.AudioTime;
         var stream = note.VisualStreamIndex;
-        if (written.Contains((stream, ChangeKind.Color)))
+        var key = (stream, note.VisualNoteType, note.LiveGuideStarVisualType,
+            note.IsVisualBreak, note.isEachInStream, note.IsVisualMine);
+        states.TryGetValue(key, out var state);
+        if (state == null || state.Version != Version)
         {
-            note.ApplyLiveColor(ToColor(loader.ResolveLiveColor(note, time)));
-            note.ApplyLiveGuideStarColor(
-                ToColor(loader.ResolveLiveGuideStarColor(note, time)));
+            var time = timeProvider.AudioTime;
+            var next = new VisualState
+            {
+                Version = Version,
+                UseColor = written.Contains((stream, ChangeKind.Color)),
+                UseSize = written.Contains((stream, ChangeKind.Size)),
+                UseAlpha = written.Contains((stream, ChangeKind.Alpha))
+            };
+            if (next.UseColor)
+            {
+                next.Color = ToColor(loader.ResolveLiveColor(note, time));
+                next.GuideColor = ToColor(loader.ResolveLiveGuideStarColor(note, time));
+            }
+            if (next.UseSize)
+            {
+                next.Size = loader.ResolveLiveSize(note, time);
+                next.GuideSize = loader.ResolveLiveGuideStarSize(note, time);
+            }
+            if (next.UseAlpha)
+            {
+                next.Alpha = loader.ResolveLiveAlpha(note, time);
+                next.GuideAlpha = loader.ResolveLiveGuideStarAlpha(note, time);
+                next.TapLineAlpha = loader.ResolveTapLineAlpha(note, time, liveOnly: true);
+            }
+            if (state != null && Nullable.Equals(state.Color, next.Color) && Nullable.Equals(state.GuideColor, next.GuideColor) &&
+                Nullable.Equals(state.Size, next.Size) && Nullable.Equals(state.GuideSize, next.GuideSize) &&
+                Nullable.Equals(state.Alpha, next.Alpha) && Nullable.Equals(state.GuideAlpha, next.GuideAlpha) &&
+                Nullable.Equals(state.TapLineAlpha, next.TapLineAlpha))
+                state.Version = Version;
+            else
+                states[key] = state = next;
         }
-        if (written.Contains((stream, ChangeKind.Size)))
+        if (ReferenceEquals(note.appliedLiveVisualState, state))
+            return;
+        var previous = note.appliedLiveVisualState;
+        note.appliedLiveVisualState = state;
+        if (state.UseColor && note.propertyAnimation?.HandlesColor != true)
         {
-            note.ApplyLiveScale(loader.ResolveLiveSize(note, time));
-            note.ApplyLiveGuideStarScale(loader.ResolveLiveGuideStarSize(note, time));
+            if (previous == null || !Nullable.Equals(previous.Color, state.Color)) note.ApplyLiveColor(state.Color);
+            if (previous == null || !Nullable.Equals(previous.GuideColor, state.GuideColor)) note.ApplyLiveGuideStarColor(state.GuideColor);
         }
-        if (written.Contains((stream, ChangeKind.Alpha)))
+        if (state.UseSize && note.propertyAnimation?.HandlesSize != true)
         {
-            note.ApplyLiveAlpha(loader.ResolveLiveAlpha(note, time));
-            note.ApplyLiveGuideStarAlpha(loader.ResolveLiveGuideStarAlpha(note, time));
+            if (previous == null || !Nullable.Equals(previous.Size, state.Size)) note.ApplyLiveScale(state.Size);
+            if (previous == null || !Nullable.Equals(previous.GuideSize, state.GuideSize)) note.ApplyLiveGuideStarScale(state.GuideSize);
+        }
+        if (state.UseAlpha && note.propertyAnimation?.HandlesAlpha != true)
+        {
+            if (previous == null || !Nullable.Equals(previous.Alpha, state.Alpha)) note.ApplyLiveAlpha(state.Alpha);
+            if (previous == null || !Nullable.Equals(previous.GuideAlpha, state.GuideAlpha)) note.ApplyLiveGuideStarAlpha(state.GuideAlpha);
+            if (previous == null || !Nullable.Equals(previous.TapLineAlpha, state.TapLineAlpha)) note.ApplyLiveTapLineAlpha(state.TapLineAlpha);
         }
     }
 

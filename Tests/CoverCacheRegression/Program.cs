@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Windows;
@@ -10,9 +10,68 @@ internal static class Program
 {
     const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic;
     static void Check(bool value, string message) { if (!value) throw new Exception(message); }
-    [STAThread] static void Main()
+    [STAThread] static void Main(string[] args)
     {
+        if (args.Contains("--startup-084")) { Startup084Regression.Run(); return; }
         var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown }; app.InitializeComponent();
+        if (args.Contains("--reported-108")) { EditorInputRegression.VerifySectionAndBadges(); return; }
+        if (args.Contains("--monitor-100")) { Monitor100Regression.Run(); return; }
+        if (args.Contains("--monitor-101")) { Monitor100Regression.Run(); Monitor101Regression.Run(); return; }
+        if (args.Contains("--monitor-103")) { Monitor100Regression.Run(); Monitor101Regression.Run(); Monitor103Regression.Run(); return; }
+        if (args.Contains("--monitor-104")) { Monitor100Regression.Run(); Monitor101Regression.Run(); Monitor103Regression.Run(); Monitor104Regression.Run(); return; }
+        if (args.Contains("--package-098")) { Package098Regression.Run(); return; }
+        if (args.Contains("--wiki-096") || args.Contains("--export-096"))
+        {
+            app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+            if (args.Contains("--wiki-096")) Wiki096Examples.Run(); else Export096Regression.Run();
+            return;
+        }
+        if (args.Contains("--media-wait-092")) { MediaWait092Regression.Run(); return; }
+        if (args.Contains("--reported-093")) { Reported093Regression.Run(); return; }
+        if (args.Contains("--reported-094") || args.Contains("--hold-095")) { Reported094Regression.Run(); return; }
+        if (args.Contains("--reported-091"))
+        {
+            app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+            Reported091Regression.Run(); return;
+        }
+        if (args.Contains("--ui-090") || args.Contains("--font-095"))
+        {
+            app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+            Ui090Regression.Run(); return;
+        }
+        if (args.Contains("--font-088") || args.Contains("--reported-088"))
+        {
+            app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+            Reported088Regression.Run(args.Contains("--font-088")); return;
+        }
+        if (args.Contains("--reported-086")) { Reported086Regression.Run(); return; }
+        if (args.Contains("--settings-071"))
+        {
+            app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+            Settings071Regression.Run(); return;
+        }
+        if (args.Contains("--completion-071"))
+        {
+            app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+            EditorInputRegression.Run(); return;
+        }
+        if (args.Contains("--media-export-067")) { MediaExport067Regression.Run(); return; }
+        if (args.Contains("--assets-063"))
+        {
+            app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+            ChartAssetsRegression.Run(); return;
+        }
+        if (args.Contains("--reported-061") || args.Contains("--friend-audio-092"))
+        {
+            // Pump layout/render events without launching a second editor via StartupUri.
+            app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+            Reported061Regression.Run(args.Contains("--friend-audio-092")); return;
+        }
+        app.Startup += (_, e) => typeof(StartupEventArgs).GetProperty("PerformDefaultAction", Flags)!.SetValue(e, false);
+        EditorInputRegression.Run();
+        if (!args.Contains("--cover-only")) MediaAndInformationRegression.Run();
+        if (!args.Contains("--cover-only"))
+        {
         var panel = new EditorSettingPanel(page: EditorSettingPanel.SettingsPage.View);
         var style = (ComboBox)panel.FindName("SongDetailStyle");
         var toggle = (CheckBox)panel.FindName("DisableAutomaticSongDetailRefresh");
@@ -26,6 +85,7 @@ internal static class Program
             "refresh switch must be enabled for official cover style");
         typeof(EditorSettingPanel).GetField("settingsApplied", Flags)!.SetValue(panel, true);
         panel.Close();
+        }
         string folder = Path.GetFullPath(".codex-build/cover-cache-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         MainWindow.maidataDir = folder;
@@ -53,6 +113,7 @@ internal static class Program
         var classify = typeof(MainWindow).GetMethod("IsAlphaChart", BindingFlags.Static | BindingFlags.NonPublic)!;
         var cleanLevel = typeof(MainWindow).GetMethod("CleanLevelForCache", BindingFlags.Static | BindingFlags.NonPublic)!;
         foreach (var (source, expected) in new[] { ("1", "1"), ("14+", "14+"), ("15-", "15-"),
+            ("14?", "14?"), ("14-?", "14-?"),
             ("14.9", "14+"), ("14A", "14"), ("未知∞", ""), ("", "") })
             Check((string)cleanLevel.Invoke(null, new object[] { source })! == expected, "level truncation: " + source);
         foreach (var source in new[] { "1,2h[8:1],3-7[4:1],", "A1/Ch[4:1]," })
@@ -82,6 +143,9 @@ internal static class Program
         string figure = Path.Combine(folder, "figure");
         string existing = Path.Combine(figure, "songdetail_master-oldsession.png");
         File.WriteAllText(existing, "preserve exact bytes");
+        var legacyStem = "songdetail_master-" + Guid.NewGuid().ToString("N");
+        var legacyVersion = Path.Combine(figure, legacyStem + ".png");
+        File.WriteAllText(legacyVersion, "generated old session cache");
         var stamp = File.GetLastWriteTimeUtc(existing);
         Bake(false);
         Check(File.ReadAllText(existing) == "preserve exact bytes" && File.GetLastWriteTimeUtc(existing) == stamp,
@@ -93,7 +157,14 @@ internal static class Program
         Check(MissingError(), "another difficulty must not reuse the wrong difficulty cover");
         Set("diffNum", 4);
         Bake(true);
-        string rendered = Path.Combine(figure, MajdataCore.AlphaSession.FileName("songdetail_master") + ".png");
+        Set("filePath", Path.Combine(folder, "maidata.txt"));
+        MainWindow.maidataDir = Path.Combine(folder, "another-song");
+        Bake(true);
+        Check(!Directory.Exists(Path.Combine(MainWindow.maidataDir, "figure")), "an older cover build must not write into the new chart folder");
+        MainWindow.maidataDir = folder;
+        string rendered = Path.Combine(figure, "songdetail_master.png");
+        Check(!File.Exists(legacyVersion), "old generated session covers must be removed after refreshing");
+        Check(File.ReadAllText(existing) == "preserve exact bytes", "unrelated figure files must be preserved");
         Check(File.ReadAllBytes(rendered).Take(8).SequenceEqual(new byte[] {137,80,78,71,13,10,26,10}),
             "manual refresh must render a real PNG even while automatic refresh is disabled");
         using (var card = new System.Drawing.Bitmap(rendered))
@@ -113,7 +184,7 @@ internal static class Program
         using (var bitmap = new System.Drawing.Bitmap(400, 52))
         using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
         {
-            font.AddFontFile(Path.Combine(AppContext.BaseDirectory, "Resources/Fonts/GenSenRounded2TW-R.otf"));
+            font.AddFontFile(Path.Combine(AppContext.BaseDirectory, "Fonts/GenSenRounded2TW-R.otf"));
             Check(font.Families[0].Name.Contains("源泉") && !font.Families[0].Name.Contains("Bold"),
                 "Chinese designer must use the regular GenSen rounded face");
             typeof(MainWindow).GetMethod("ConfigureCardGraphics", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
@@ -138,7 +209,7 @@ internal static class Program
         (int Top, int Bottom) TextBounds(string text, string fontName, float size, System.Drawing.RectangleF rect, float? baseline)
         {
             using var fonts = new System.Drawing.Text.PrivateFontCollection();
-            fonts.AddFontFile(Path.Combine(AppContext.BaseDirectory, "Resources/Fonts", fontName));
+            fonts.AddFontFile(Path.Combine(AppContext.BaseDirectory, "Fonts", fontName));
             using var bitmap = new System.Drawing.Bitmap(682, 1176);
             using var graphics = System.Drawing.Graphics.FromImage(bitmap);
             typeof(MainWindow).GetMethod("ConfigureCardGraphics", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,

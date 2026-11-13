@@ -70,7 +70,7 @@
                 Width="100" Height="28"
                 Foreground="{DynamicResource ButtonForeground}"
                 Background="{DynamicResource ButtonsBackground}" />
-        <Label Foreground="#999999" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" FontSize="9">powered by Moying</Label>
+        <Label Foreground="{DynamicResource MutedForeground}" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" FontSize="9">powered by Moying</Label>
     </Grid>
 
 </Window>

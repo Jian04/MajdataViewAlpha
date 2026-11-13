@@ -2,6 +2,7 @@ using Assets.Scripts.Types;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using MajdataCore;
 #nullable enable
 namespace Assets.Scripts.Notes
 {
@@ -80,15 +81,22 @@ namespace Assets.Scripts.Notes
 
         protected virtual void Awake() => HideSpriteUntilInitialized(transform);
 
+        internal void HideExpiredFake()
+        {
+            enabled = false;
+            if (propertyAnimation != null) propertyAnimation.enabled = false;
+            spriteRenderer.forceRenderingOff = true;
+            exSpriteRender.forceRenderingOff = true;
+            tapLine.SetActive(false);
+        }
+
         protected void ApplyExAlpha()
         {
             if (!isEX || colorOverrideMaterial == null ||
                 !colorOverrideMaterial.HasProperty("_NoteAlpha"))
                 return;
 
-            var color = exSpriteRender.color;
-            color.a *= colorOverrideMaterial.GetFloat("_NoteAlpha");
-            exSpriteRender.color = color;
+            SetInitialRendererAlpha(exSpriteRender, colorOverrideMaterial.GetFloat("_NoteAlpha"));
         }
 
         public override void ApplyLiveScale(Vector2? scale)
@@ -212,6 +220,23 @@ namespace Assets.Scripts.Notes
                 return;
             }
 
+            if (spawnMode == SpawnVisualMode.Rewind && bounceDuration <= 0f &&
+                speed > 0f && SvController.HasDefaultScroll &&
+                timeProvider.AudioTime + 0.01f < time -
+                    (AlphaVisualTiming.GetPathLength(spawnRadius, destroyRadius) +
+                     SpawnScaleDistance) / speed)
+            {
+                if (State != NoteStatus.Initialized)
+                {
+                    State = NoteStatus.Initialized;
+                    transform.localScale = Vector3.zero;
+                    tapLine.SetActive(false);
+                    spriteRenderer.forceRenderingOff = true;
+                    if (isEX) exSpriteRender.forceRenderingOff = true;
+                }
+                return;
+            }
+
             var isBouncing = IsBounceActive();
             var distance = isBouncing ? GetBounceDistance() : GetSvDistance();
 
@@ -246,7 +271,7 @@ namespace Assets.Scripts.Notes
                 State = presentation.Running
                     ? NoteStatus.Running
                     : NoteStatus.Pending;
-                var visualDistance = isMine && timeProvider.AudioTime >= time
+                var visualDistance = isMine && !isFake && timeProvider.AudioTime >= time
                     ? Mathf.Min(presentation.Distance, DefaultDestroyRadius) : presentation.Distance;
                 transform.position = getPositionFromDistance(visualDistance);
                 transform.localScale = new Vector3(
@@ -268,7 +293,7 @@ namespace Assets.Scripts.Notes
 
             // Keep the short mine collision window for forced hits, but retire
             // its picture at the same beat on which DJAuto retires a normal Tap.
-            if (isMine && timeProvider.AudioTime >= time)
+            if (isMine && !isFake && timeProvider.AudioTime >= time)
             {
                 tapLine.SetActive(false);
                 spriteRenderer.forceRenderingOff = true;

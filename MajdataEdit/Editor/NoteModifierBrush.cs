@@ -42,20 +42,26 @@ internal static class NoteModifierBrush
     private static string Change(string raw,char modifier)
     {
         var text=raw.Trim();if(text.Length==0) return raw;
-        if(text.Length==2 && text.All(c=>c is >= '1' and <= '8'))
+        if(modifier!='X' && text.Length==2 && text.All(c=>c is >= '1' and <= '8'))
             return raw.Replace(text,$"{text[0]}{modifier}/{text[1]}{modifier}");
         var branch=SlidePathParser.ContainsSlideShape(text[..1]);
         var candidate=branch?"1"+text:text;
         if(!NoteExpressionParser.TryParse(candidate,out var note,out _,forPreview:true) || note.kind==NoteExpressionKind.NoiseZone) return raw;
+        if (modifier == 'X')
+        {
+            if (note.kind is not (NoteExpressionKind.Touch or NoteExpressionKind.TouchHold)) return raw;
+            var zone = note.position.area == 'C' ? "C" : $"{note.position.area}{note.position.position}";
+            return raw[..(raw.Length-raw.TrimStart().Length)] + "X" + zone + note.duration + raw[raw.TrimEnd().Length..];
+        }
         var additions=new List<int>();
-        var flag=modifier=='b'?NoteModifierFlags.Break:NoteModifierFlags.Ex;
+        var flag=modifier switch { 'b'=>NoteModifierFlags.Break, 'm'=>NoteModifierFlags.Mine, _=>NoteModifierFlags.Ex };
         if(!branch && !note.modifiers.HasHead(flag) && SlidePathParser.TryReadPosition(text,0,out _,out var offset))
         {
             var holdAt = text.IndexOf('h');
-            additions.Add(modifier == 'b' && note.kind is (NoteExpressionKind.Hold or NoteExpressionKind.TouchHold) && holdAt >= offset
+            additions.Add(modifier is 'b' or 'm' && note.kind is (NoteExpressionKind.Hold or NoteExpressionKind.TouchHold) && holdAt >= offset
                 ? holdAt + 1 : offset);
         }
-        if(modifier=='b' && note.kind==NoteExpressionKind.Slide)
+        if(modifier is 'b' or 'm' && note.kind==NoteExpressionKind.Slide)
         {
             var search=0;
             foreach(var segment in note.path.segments)
@@ -64,7 +70,7 @@ internal static class NoteModifierBrush
                 var at=FindDuration(text,segment.duration,search);
                 if(at<0) continue;
                 search=at+segment.duration.Length;
-                if(!segment.modifiers.Contains('b')) additions.Add(at);
+                if(!segment.modifiers.Contains(modifier)) additions.Add(at);
             }
             if(note.path.segments.All(s=>s.duration.Length==0) && !note.modifiers.HasSlide(flag))
             {

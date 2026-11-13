@@ -26,7 +26,6 @@ public static class ShakeDirectionVerification
                 var path = Path.Combine(Application.dataPath, "..", ".codex-build", name);
                 var chart = Newtonsoft.Json.JsonConvert.DeserializeObject<Fixture>(File.ReadAllText(path));
                 controller.Configure(chart.effectTable, clock);
-                render.Invoke(controller, new object[] { source, target }); // Shader warmup.
                 var samples = new System.Collections.Generic.List<(float Time, int Angle)>();
                 foreach (var item in chart.effectTable)
                 {
@@ -41,6 +40,7 @@ public static class ShakeDirectionVerification
                 var reverse = new System.Collections.Generic.List<(float Time, int Angle)>(samples);
                 reverse.Reverse(); samples.AddRange(reverse);
                 var motionByAngle = new System.Collections.Generic.Dictionary<int, float>();
+                var firstFrame = true;
                 foreach (var (time, angle) in samples)
                 {
                     clock.SetPreviewTime(time);
@@ -56,6 +56,9 @@ public static class ShakeDirectionVerification
                     px = px / weight - 128; py = py / weight - 128;
                     if (Mathf.Abs(angle == 0 ? py : px) > .05f)
                         throw new Exception($"Shake {angle} axis incorrect at {time}: ({px}, {py})");
+                    if (firstFrame && name.StartsWith("shake-fixtures/") && Mathf.Abs(angle == 0 ? px : py) < .1f)
+                        throw new Exception($"Shake {angle} was lost on the first rendered frame");
+                    firstFrame = false;
                     motionByAngle.TryGetValue(angle, out var largest);
                     motionByAngle[angle] = Mathf.Max(largest, Mathf.Abs(angle == 0 ? px : py));
                     Debug.Log($"SHAKE GPU PASS: {name}, Instant,1,10,{angle},0.2 at {time}: ({px}, {py}) pixels");

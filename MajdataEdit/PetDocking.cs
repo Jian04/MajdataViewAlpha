@@ -27,6 +27,7 @@ public partial class MainWindow
                 return new(false, "桌宠停靠状态已改变");
             dockedPetButton.Visibility = Visibility.Visible;
             dockedPetButton.IsHitTestVisible = true;
+            dockedPetButton.Tag = false;
             dockedPetButton.BeginAnimation(OpacityProperty,
                 new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(150)));
             return new(true, "停靠动画已完成");
@@ -35,11 +36,16 @@ public partial class MainWindow
         if (dockedPetPid != 0 && !AlphaSession.IsProcess(dockedPetPid, dockedPetStart))
         {
             dockedPetPid = 0;
-            if (dockedPetButton != null) dockedPetButton.Visibility = Visibility.Collapsed;
-            MainMenu.Padding = new Thickness(0, 0, 60, 0);
+            if (dockedPetButton != null) dockedPetButton.Opacity = .55;
+            UpdatePaneToolbar();
         }
-        if (command.Action == "dock-ready") return new(AlphaSession.IsProcess(command.PetPid, command.PetStart), "编辑器已就绪");
-        var targetPoint = new Point(Math.Max(0, MainMenu.ActualWidth - 76), 11);
+        if (command.Action == "dock-ready")
+        {
+            var alive = AlphaSession.IsProcess(command.PetPid, command.PetStart);
+            if (alive && dockedPetPid == 0) dockedPetButton!.Tag = true;
+            return new(alive, "编辑器已就绪");
+        }
+        var targetPoint = dockedPetButton!.TranslatePoint(new Point(dockedPetButton.Width / 2, dockedPetButton.Height / 2), MainMenu);
         var point = MainMenu.PointFromScreen(new Point(command.X, command.Y));
         if (!AlphaSession.IsProcess(command.PetPid, command.PetStart) ||
             (command.Action != "dock-startup" &&
@@ -52,8 +58,6 @@ public partial class MainWindow
         var target = MainMenu.PointToScreen(targetPoint);
         if (command.Action == "dock-probe")
         {
-            // A probe is only a hit-test. The launcher provides the blurred
-            // preview; the toolbar icon belongs exclusively to dock-complete.
             return new(true, "松开以停靠", X: (int)target.X, Y: (int)target.Y);
         }
         dockedPetPid = command.PetPid; dockedPetStart = command.PetStart;
@@ -61,9 +65,8 @@ public partial class MainWindow
         // Waiting for that signal keeps the icon from appearing over the pet.
         dockedPetButton.IsHitTestVisible = false;
         dockedPetButton.BeginAnimation(OpacityProperty, null);
-        dockedPetButton.Opacity = 0;
-        dockedPetButton.Visibility = Visibility.Collapsed;
-        MainMenu.Padding = new Thickness(0, 0, 94, 0);
+        dockedPetButton.Opacity = .55;
+        UpdatePaneToolbar();
         return new(true, "已停靠", X: (int)target.X, Y: (int)target.Y);
     }
     private Button CreatePetButton()
@@ -72,17 +75,23 @@ public partial class MainWindow
         button.Width = 28; button.Height = button.MinHeight = 24;
         button.Padding = new Thickness(2); button.Margin = new Thickness(0, 0, 62, 0);
         button.HorizontalAlignment = HorizontalAlignment.Right; button.VerticalAlignment = VerticalAlignment.Top;
-        button.Visibility = Visibility.Collapsed;
+        button.Opacity = 1;
+        button.Tag = startupPresentationOrigin != null;
         button.FocusVisualStyle = null; button.BorderThickness = new Thickness(0);
         button.Background = Brushes.Transparent;
         button.Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(@"
-<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='Button'>
+<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:sys='clr-namespace:System;assembly=mscorlib' TargetType='Button'>
  <Border Name='surface' Background='Transparent' CornerRadius='3'><ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border>
-<ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter TargetName='surface' Property='Background' Value='{DynamicResource MenuSeparator}'/></Trigger></ControlTemplate.Triggers></ControlTemplate>");
-        button.ToolTip = "桌宠 · 点击打开菜单，拖出工具栏恢复桌宠";
-        button.Content = new Image { Source = new BitmapImage(new Uri("pack://application:,,,/Image/PetDock.png")),
-            Stretch = Stretch.Uniform, Width = 18, Height = 18, Margin = new Thickness(0, 0, 0, 0) };
-        Grid.SetColumnSpan(button, 3); Panel.SetZIndex(button, 60);
+<ControlTemplate.Triggers>
+ <Trigger Property='Tag'><Trigger.Value><sys:Boolean>True</sys:Boolean></Trigger.Value><Setter TargetName='surface' Property='Background' Value='{DynamicResource SelectionBackground}'/></Trigger>
+ <Trigger Property='IsMouseOver' Value='True'><Setter TargetName='surface' Property='Background' Value='{DynamicResource MenuSeparator}'/></Trigger>
+</ControlTemplate.Triggers></ControlTemplate>");
+        button.ToolTip = "桌宠 · 拖到这里收回，拖出图标恢复桌宠，点击打开菜单";
+        var petIcon = new Border { Width = 18, Height = 18,
+            OpacityMask = new ImageBrush(new BitmapImage(new Uri("pack://application:,,,/MajdataEdit;component/Image/PetDock.png"))) { Stretch = Stretch.Uniform } };
+        petIcon.SetResourceReference(Border.BackgroundProperty, "ButtonForeground");
+        button.Content = petIcon;
+        Grid.SetColumnSpan(button, 4); Panel.SetZIndex(button, 60);
         var menu = new ContextMenu();
         menu.SetResourceReference(FrameworkElement.StyleProperty, "AlphaContextMenu");
         void Add(string title, RoutedEventHandler action)
@@ -95,6 +104,8 @@ public partial class MainWindow
         Add("多窗口控制", MultiControl_Click);
         Add("联机写谱", ChartRoom_Click);
         Add("恢复桌宠", async (_, _) => await UndockPet(button.PointToScreen(new Point(0, 28))));
+        var restore = (MenuItem)menu.Items[menu.Items.Count - 1];
+        menu.Opened += (_, _) => restore.IsEnabled = dockedPetPid != 0;
         button.ContextMenu = menu;
         button.PreviewMouseLeftButtonDown += (_, e) => { petDragStart = e.GetPosition(button); petDragging = true; button.CaptureMouse(); e.Handled = true; };
         button.PreviewMouseMove += async (_, e) =>
@@ -116,13 +127,16 @@ public partial class MainWindow
     private async Task UndockPet(Point screen)
     {
         if (dockedPetButton == null || dockedPetPid == 0) return;
-        dockedPetButton.Visibility = Visibility.Collapsed;
+        dockedPetButton.BeginAnimation(OpacityProperty, null);
+        dockedPetButton.Opacity = .55;
         if (!await PetDock.Restore(dockedPetPid, dockedPetStart, screen.X, screen.Y))
         {
-            dockedPetButton.Visibility = Visibility.Visible;
+            dockedPetButton.Opacity = 1;
             return;
         }
         dockedPetPid = 0;
-        MainMenu.Padding = new Thickness(0, 0, 60, 0);
+        dockedPetButton.Opacity = 1;
+        dockedPetButton.Tag = true;
+        UpdatePaneToolbar();
     }
 }

@@ -1,6 +1,7 @@
 using Assets.Scripts;
 using Assets.Scripts.Types;
 using System;
+using System.Collections.Generic;
 using MajdataCore;
 using Unity.Burst.Intrinsics;
 using UnityEngine;
@@ -41,13 +42,21 @@ public class TouchDrop : TouchBase
     private float moveDuration;
     private MultTouchHandler multTouchHandler;
     private NoteEffectManager noteEffectManager;
+    private SpriteRenderer? justRenderer;
+    private float initialJustAlpha = 1f;
 
     private float wholeDuration;
 
     // Start clears the fans one frame too late to stop them being drawn opaque;
     // see NoteDrop.HideSpriteUntilInitialized. Only the alpha is touched, matching
     // what Start does, because nothing here ever clears forceRenderingOff.
-    private void Awake() => HideFansUntilInitialized(fans);
+    private void Awake()
+    {
+        authoredRootScale = transform.localScale;
+        HideFansUntilInitialized(fans);
+        if (justEffect != null)
+            justEffect.SetActive(false);
+    }
 
     // Start is called before the first frame update
     void Start()
@@ -55,9 +64,7 @@ public class TouchDrop : TouchBase
         var skin = ResolveCustomSkin(fanNormalSprite);
         if (skin != null)
             fanNormalSprite = fanEachSprite = skin;
-        wholeDuration = AlphaVisualTiming.GetTouchMotionDuration(speed);
-        moveDuration = 0.8f * wholeDuration;
-        displayDuration = 0.2f * wholeDuration;
+        RefreshMotionDuration();
 
         var notes = GameObject.Find("Notes").transform;
         noteManager = notes.GetComponent<NoteManager>();
@@ -89,7 +96,11 @@ public class TouchDrop : TouchBase
             fansSprite[6].sprite = multTouchNormalSprite[1];
         }
 
-        justEffect.GetComponent<SpriteRenderer>().sprite = justSprite;
+        justRenderer = justEffect.GetComponent<SpriteRenderer>();
+        justRenderer.sprite = justSprite;
+        if (colorOverrideMaterial != null)
+            initialJustAlpha = colorOverrideMaterial.GetFloat("_NoteAlpha");
+        SetJustAlpha(initialJustAlpha);
 
         // Apply COLOR to note sprites only. justEffect is a judgement effect.
         if (colorOverrideMaterial != null)
@@ -109,7 +120,6 @@ public class TouchDrop : TouchBase
             noteEffectManager.transform,
             GetFixedFeedbackPosition(),
             GetFixedFeedbackRotation());
-        justEffect.SetActive(false);
         SetfanColor(new Color(1f, 1f, 1f, 0f));
         sensor = GameObject.Find("Sensors")
                                    .transform.GetChild((int)GetSensor())
@@ -123,6 +133,7 @@ public class TouchDrop : TouchBase
         judgeTextBreak = customSkin.JudgeText_Break;
         if (!JudgmentDisabled)
             inputManager.BindSensor(Check, GetSensor());
+        InvalidateLiveVisual();
     }
     void Check(object sender,InputEventArgs arg)
     {
@@ -505,7 +516,30 @@ public class TouchDrop : TouchBase
             multTouchEffect2.SetActive(false);
             multTouchEffect3.SetActive(false);
         }
+        InvalidateLiveVisual();
     }
+
+    protected override IEnumerable<SpriteRenderer> GetLiveVisualRenderers()
+    {
+        foreach (var fan in fansSprite)
+            if (fan != null) yield return fan;
+    }
+
+    public override void ApplyLiveAlpha(float? alpha)
+    {
+        base.ApplyLiveAlpha(alpha);
+        SetJustAlpha(alpha ?? initialJustAlpha);
+    }
+
+    private void SetJustAlpha(float alpha)
+    {
+        if (justRenderer == null) return;
+        var color = justRenderer.color;
+        if (color.a == alpha) return;
+        color.a = alpha;
+        justRenderer.color = color;
+    }
+
     public void layerDown()
     {
         setLayer(layer - 1);
@@ -557,6 +591,13 @@ public class TouchDrop : TouchBase
     private void SetfanColor(Color color)
     {
         foreach (var fan in fansSprite) fan.color = color;
+    }
+
+    internal void RefreshMotionDuration()
+    {
+        wholeDuration = AlphaVisualTiming.GetTouchMotionDuration(speed);
+        moveDuration = .8f * wholeDuration;
+        displayDuration = .2f * wholeDuration;
     }
 
     private void SetfanSprite(Sprite sprite)

@@ -10,6 +10,8 @@ internal sealed class ColorSectionBackgroundRenderer : IBackgroundRenderer
     private readonly TextEditor editor;
     private readonly Dictionary<string, SolidColorBrush> brushes =
         new(StringComparer.OrdinalIgnoreCase);
+    private ITextSourceVersion? sectionVersion;
+    private List<ColorSection> sections = new();
 
     public ColorSectionBackgroundRenderer(TextEditor editor)
     {
@@ -24,7 +26,11 @@ internal sealed class ColorSectionBackgroundRenderer : IBackgroundRenderer
         if (document == null || textView.VisualLines.Count == 0)
             return;
 
-        var sections = ParseSections(document.Text).ToList();
+        if (!ReferenceEquals(sectionVersion, document.Version))
+        {
+            sections = ParseSections(document.Text).ToList();
+            sectionVersion = document.Version;
+        }
         if (sections.Count == 0)
             return;
 

@@ -20,12 +20,30 @@ internal static class DurationBrushRegression
             ("{4}2h[8:1]/4<8d",'b',"{4}2hb[8:1]/4b<8db"),
             (" 2xh[8:1]~[hold.png] ",'b'," 2xhb[8:1]~[hold.png] "),
             ("2hb[8:1]/2bh[4:1]",'b',"2hb[8:1]/2bh[4:1]"),
-            ("A1h[8:1]/E2h",'b',"A1hb[8:1]/E2hb") })
+            ("A1h[8:1]/E2h",'b',"A1hb[8:1]/E2hb"),
+            ("1-5[8:1]/2h[4:1]/A1/Ch/12",'m',"1m-5m[8:1]/2hm[4:1]/A1m/Chm/1m/2m"),
+            ("1m-5m[8:1]*-7[4:1]",'m',"1m-5m[8:1]*-7m[4:1]"),
+            ("8P91K1[8:1]/XD1[4:1]",'m',"8mP91K1m[8:1]/XD1[4:1]"),
+            ("A1/B2h[8:1]/C/4/1-5[4:1]/XD3[8:1]",'X',"XA1/XB2[8:1]/XC/4/1-5[4:1]/XD3[8:1]"),
+            ("{4}<TEXT*(\"A1/h\")>A1f/E2bh[1:0]~[a.png],||A1\nA3>A5[4:1]",'X',"{4}<TEXT*(\"A1/h\")>XA1/XE2[1:0],||A1\nA3>A5[4:1]") })
         {
             var changed=NoteModifierBrush.Transform(item.Item1,item.Item2);
             if(changed!=item.Item3) throw new Exception($"Modifier brush: {changed}, expected {item.Item3}");
         }
-        Console.WriteLine("MODIFIER BRUSH PASS: 15 cases including plain and simultaneous Holds, partial selection boundaries, TouchHold breaks, paths, skins and EX heads.");
+        Console.WriteLine("MODIFIER BRUSH PASS: EX/Break/Mine, Touch/TouchHold to noise, chains, commands, skins and comments.");
+        foreach (var (parameters, origin) in new[] {
+            ("\"default\"", "TopLeft"), ("\"center\",2,origin=Center,x=-0.25,y=0.1", "Center"),
+            ("\"center\",2,0,0,32,Default,0,Fade,0,FFFFFF,Center", "Center") })
+        {
+            var command = "TEXT*(" + parameters + ")";
+            if (!MajdataCore.AlphaCommandGrammar.TryValidate(command, 120, out var error)) throw new Exception(error);
+            SimaiProcess.Serialize("(120){4}<" + command + ">1,");
+            if (SimaiProcess.subtitleTable.Count != 1 || SimaiProcess.subtitleTable[0].origin != origin)
+                throw new Exception("TEXT origin was not serialized: " + command);
+        }
+        if (MajdataCore.AlphaCommandGrammar.TryValidate("TEXT*(\"text\",origin=Wrong)", 120, out _))
+            throw new Exception("Invalid TEXT origin must be rejected");
+        Console.WriteLine("TEXT ORIGIN PASS: default, named/positional Center and negative offsets; invalid origin rejected.");
         var cases = new (string Input, string Mode, string Expected)[] {
             ("1-5[8:1]/1h", "max", "1-5[8:1]/1h[8:1]"),
             ("1-5[8:1]/1h", "min", "1-5[384:1]/1h[384:1]"),

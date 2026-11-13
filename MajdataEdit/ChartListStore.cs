@@ -13,7 +13,7 @@ internal static class ChartListStore
 #if CHART_LIST_TESTS
         Environment.GetEnvironmentVariable("CHART_LIST_TEST_FILE")!;
 #else
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MajdataAlpha", "ChartList.json");
+        Path.Combine(AppContext.BaseDirectory, "ChartList.json");
 #endif
     internal static string InstallRoot
     {
@@ -26,6 +26,14 @@ internal static class ChartListStore
     }
     internal static List<ChartListEntry> Read()
     {
+#if !CHART_LIST_TESTS
+        var previous = Path.Combine(InstallRoot, "ChartList.json");
+        if (!File.Exists(FilePath) && File.Exists(previous))
+        {
+            try { File.Move(previous, FilePath); }
+            catch (IOException) when (File.Exists(FilePath) && !File.Exists(previous)) { }
+        }
+#endif
         var entries = File.Exists(FilePath)
             ? JsonConvert.DeserializeObject<List<ChartListEntry>>(File.ReadAllText(FilePath)) ?? new() : new List<ChartListEntry>();
         for (var i = entries.Count - 1; i >= 0; i--)

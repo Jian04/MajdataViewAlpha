@@ -1,7 +1,8 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using MajdataCore;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 [DefaultExecutionOrder(-10000)]
 [RequireComponent(typeof(Camera))]
@@ -26,12 +27,14 @@ public class ScreenEffectController : MonoBehaviour
     private EffectTrack moveEffects;
     private EffectTrack rotateEffects;
     private EffectTrack shakeEffects;
+    private EffectTrack flipEffects;
     private EffectTrack kaleidoscopeVisibility;
     private readonly List<EffectTrack> extraEffects = new();
     private readonly float[] extraValues = new float[AlphaExtraFilters.All.Length];
     private readonly EffectChange[] extraSources = new EffectChange[AlphaExtraFilters.All.Length];
     private readonly Dictionary<EffectChange, Color> tintColors = new();
     private readonly List<FrameTarget> frameTargets = new();
+    private readonly List<GameObject> sceneRoots = new();
     private readonly List<Transform> backgroundTransforms = new();
     private readonly List<FrameTransformState> backgroundFrameStates = new();
     private AudioTimeProvider timeProvider;
@@ -43,12 +46,21 @@ public class ScreenEffectController : MonoBehaviour
     private RenderTexture trailTexture3;
     private int trailFrameCounter;
     private bool needsWarmup;
+    private bool hasFrameEffects;
     private bool hasTrailEvents;
     private bool trailWasActive;
     private bool materialIsDefault;
     private int trailSeedStage;
     private float gameplayRotationDegrees;
+    private EffectChange gameplayFlip;
     private EffectTrack pvRotateEffects;
+    private EffectTrack pvMoveEffects;
+    public Vector2 MovementForPV(float time)
+    {
+        if (pvMoveEffects == null) return Vector2.zero;
+        pvMoveEffects.EvaluateVector(time, out var x, out var y);
+        return new Vector2(x, y);
+    }
     public float RotationForPV(float time) => pvRotateEffects == null ? 0f : pvRotateEffects.Evaluate(time, out _);
     private Vector2 gameplayMove;
     private float gameplayScale = 1f;
@@ -63,9 +75,13 @@ public class ScreenEffectController : MonoBehaviour
     {
         timeProvider = provider;
         mediaTimeline = timeline;
-        RestoreBackgroundTransforms();
-        ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: false);
-        ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: true);
+        if (hasFrameEffects)
+        {
+            gameplayFlip = null;
+            RestoreBackgroundTransforms();
+            ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: false);
+            ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: true);
+        }
         effects.Clear();
         effectsByType.Clear();
         if (effectEvents != null)
@@ -98,8 +114,12 @@ public class ScreenEffectController : MonoBehaviour
         tintEffects = CreateTrack("Tint", true);
         moveEffects = CreateTrack("Move", true);
         rotateEffects = CreateTrack("Rotate", true);
+        hasFrameEffects = effectsByType.ContainsKey("Rotate") || effectsByType.ContainsKey("Move") ||
+                          effectsByType.ContainsKey("Zoom") || effectsByType.ContainsKey("Flip");
         pvRotateEffects = new EffectTrack(effects.Where(e => e.effect == "Rotate").Select(e => e.ForPV()).ToList(), true);
+        pvMoveEffects = new EffectTrack(effects.Where(e => e.effect == "Move").Select(e => e.ForPV()).ToList(), true);
         shakeEffects = CreateTrack("Shake", true);
+        flipEffects = CreateTrack("Flip", false);
         extraEffects.Clear();
         foreach (var filter in AlphaExtraFilters.All) extraEffects.Add(CreateTrack(filter.Canonical, true));
         kaleidoscopeVisibility = new EffectTrack(effects.Where(e => e.effect == "Kaleidoscope")
@@ -140,7 +160,7 @@ public class ScreenEffectController : MonoBehaviour
 
     private void Update()
     {
-        RefreshGameplayState();
+        if (hasFrameEffects) RefreshGameplayState();
     }
 
     /// <summary>
@@ -155,23 +175,26 @@ public class ScreenEffectController : MonoBehaviour
     /// </summary>
     private void LateUpdate()
     {
-        EnsureFrameTargets();
+        if (!hasFrameEffects) return;
         ApplyGameplayTransform(
             gameplayRotationDegrees, gameplayMove, gameplayScale, onCanvas: true);
     }
 
     private void OnPreCull()
     {
+        if (!hasFrameEffects) return;
         EnsureFrameTargets();
         CaptureFrameTargets();
         ApplyGameplayTransform(
             gameplayRotationDegrees, gameplayMove, gameplayScale, onCanvas: false);
         ApplyBackgroundTransform(
-            RotationForPV(timeProvider != null ? timeProvider.AudioTime : 0f), gameplayMove, gameplayScale);
+            RotationForPV(timeProvider != null ? timeProvider.AudioTime : 0f),
+            MovementForPV(timeProvider != null ? timeProvider.AudioTime : 0f), gameplayScale);
     }
 
     private void OnPostRender()
     {
+        if (!hasFrameEffects) return;
         RestoreBackgroundTransforms();
         ResetFrameTargets();
     }
@@ -213,10 +236,8 @@ public class ScreenEffectController : MonoBehaviour
             if (hasTrailEvents)
                 EnsureTrail(source);
             WarmupMaterial(source);
-            Graphics.Blit(source, destination);
             needsWarmup = false;
             materialIsDefault = true;
-            return;
         }
 
         var time = timeProvider.AudioTime;
@@ -231,6 +252,8 @@ public class ScreenEffectController : MonoBehaviour
         }
         var kaleidoscopeAmount = Mathf.Clamp01(kaleidoscopeVisibility.Evaluate(time));
         hasExtraEffect |= kaleidoscopeAmount > .0001f;
+        flipEffects.Evaluate(time, out var flip);
+        if (flip?.flipNotesOnly == true) flip = null;
         var gaussian = gaussianEffects.Evaluate(time);
         var neon = neonEffects.Evaluate(time);
         var trail = Mathf.Clamp01(trailEffects.Evaluate(time));
@@ -269,7 +292,7 @@ public class ScreenEffectController : MonoBehaviour
             }
         }
 
-        if (!hasExtraEffect && gaussian <= 0.001f && neon <= 0.001f && trail <= 0.001f && Mathf.Abs(flash) <= 0.001f &&
+        if (flip == null && !hasExtraEffect && gaussian <= 0.001f && neon <= 0.001f && trail <= 0.001f && Mathf.Abs(flash) <= 0.001f &&
             brightness <= 0.001f && saturation <= 0.001f && contrast <= 0.001f &&
             rainbow <= 0.001f && vignette <= 0.001f &&
             glitch <= 0.001f && tvNoise <= 0.001f &&
@@ -308,6 +331,9 @@ public class ScreenEffectController : MonoBehaviour
         material.SetFloat("_OffsetX", offsetX);
         material.SetFloat("_OffsetY", offsetY);
         material.SetFloat("_Rotate", 0f);
+        var flipAngle = flip == null ? 0f : (flip.paramA % 180f) * Mathf.Deg2Rad;
+        material.SetVector("_FlipAxis", flip == null ? Vector4.zero :
+            new Vector4(Mathf.Cos(flipAngle), Mathf.Sin(flipAngle), 0f, 0f));
         for (var i = 0; i < extraValues.Length; i++)
         {
             var definition=AlphaExtraFilters.All[i];
@@ -316,7 +342,15 @@ public class ScreenEffectController : MonoBehaviour
             if (AlphaExtraFilters.All[i].Canonical == "Ripple")
                 material.SetFloat("_RipplePhase", extraSources[i] == null ? 0f : (float)(time - extraSources[i].time));
             if (AlphaExtraFilters.All[i].Canonical == "Shatter")
+            {
                 material.SetFloat("_ShatterPhase", extraSources[i] == null ? 0f : (float)(time - extraSources[i].time));
+                var active = extraValues[i] > .0001f;
+                if (active != material.IsKeywordEnabled("ALPHA_SHATTER"))
+                {
+                    if (active) material.EnableKeyword("ALPHA_SHATTER");
+                    else material.DisableKeyword("ALPHA_SHATTER");
+                }
+            }
         }
         materialIsDefault = false;
 
@@ -339,7 +373,7 @@ public class ScreenEffectController : MonoBehaviour
             PrepareUpcomingTrail(source, time);
         }
 
-        Graphics.Blit(source, destination, material);
+        AlphaGlassMesh.Blit(source, destination, material);
 
         if (trail > 0.001f)
         {
@@ -399,13 +433,28 @@ public class ScreenEffectController : MonoBehaviour
         descriptor.depthBufferBits = 0;
         descriptor.msaaSamples = 1;
         var warmupTarget = RenderTexture.GetTemporary(descriptor);
-        Graphics.Blit(source, warmupTarget, material);
-        RenderTexture.ReleaseTemporary(warmupTarget);
+        var previousTarget = RenderTexture.active;
+        try
+        {
+            Graphics.Blit(source, warmupTarget, material);
+            if (effectsByType.ContainsKey("Shatter"))
+            {
+                material.EnableKeyword("ALPHA_SHATTER");
+                AlphaGlassMesh.Blit(source, warmupTarget, material);
+            }
+        }
+        finally
+        {
+            RenderTexture.active = previousTarget;
+            RenderTexture.ReleaseTemporary(warmupTarget);
+        }
         SetMaterialDefaults();
     }
 
     private void SetMaterialDefaults()
     {
+        material.DisableKeyword("ALPHA_SHATTER");
+        material.SetVector("_FlipAxis", Vector4.zero);
         material.SetFloat("_KaleidoscopeAngle",0);
         material.SetFloat("_Blur", 0f);
         material.SetFloat("_Neon", 0f);
@@ -456,16 +505,29 @@ public class ScreenEffectController : MonoBehaviour
             if (target.Transform == null || target.OnCanvas != onCanvas)
                 continue;
             var targetRotation = target.SkipRotation ? Quaternion.identity : rotation;
-            var planarPosition = targetRotation * new Vector3(
+            var origin = new Vector3(
                 target.BasePosition.x * scale,
                 target.BasePosition.y * scale,
                 0f);
-            target.Transform.localRotation = targetRotation * target.BaseRotation;
+            var reflected = gameplayFlip != null && !target.SkipRotation;
+            var targetScale = target.BaseScale * scale;
+            var localRotation = targetRotation * target.BaseRotation;
+            var planarPosition = targetRotation * origin + new Vector3(
+                normalizedOffset.x * target.MoveScale.x, normalizedOffset.y * target.MoveScale.y, 0);
+            if (reflected)
+            {
+                var radians = gameplayFlip.paramA * Mathf.Deg2Rad;
+                var axis = new Vector3(Mathf.Cos(radians),Mathf.Sin(radians),0);
+                planarPosition = 2*Vector3.Dot(planarPosition,axis)*axis-planarPosition;
+                localRotation = Quaternion.Euler(0,0,gameplayFlip.paramA*2) * Quaternion.Inverse(localRotation);
+                targetScale.y = -targetScale.y;
+            }
+            target.Transform.localRotation = localRotation;
             target.Transform.localPosition = new Vector3(
-                planarPosition.x + normalizedOffset.x * target.MoveScale.x,
-                planarPosition.y + normalizedOffset.y * target.MoveScale.y,
+                planarPosition.x,
+                planarPosition.y,
                 target.BasePosition.z);
-            target.Transform.localScale = target.BaseScale * scale;
+            target.Transform.localScale = targetScale;
         }
     }
 
@@ -526,6 +588,7 @@ public class ScreenEffectController : MonoBehaviour
         if (timeProvider == null || rotateEffects == null)
         {
             gameplayRotationDegrees = 0f;
+            gameplayFlip = null;
             gameplayMove = Vector2.zero;
             gameplayScale = 1f;
             return;
@@ -533,6 +596,8 @@ public class ScreenEffectController : MonoBehaviour
 
         var time = timeProvider.AudioTime;
         gameplayRotationDegrees = rotateEffects.Evaluate(time);
+        flipEffects.Evaluate(time, out var flip);
+        gameplayFlip = flip?.flipNotesOnly == true ? flip : null;
         moveEffects.EvaluateVector(time, out var moveX, out var moveY);
         gameplayMove = new Vector2(moveX, moveY);
         gameplayScale = Mathf.Clamp(1f + zoomEffects.Evaluate(time), 0.1f, 8f);
@@ -581,12 +646,14 @@ public class ScreenEffectController : MonoBehaviour
 
     public void BeginCanvasLayoutChange()
     {
+        if (!hasFrameEffects) return;
         EnsureFrameTargets();
         RestoreCanvasTargets();
     }
 
     public void EndCanvasLayoutChange()
     {
+        if (!hasFrameEffects) return;
         foreach (var target in frameTargets)
             if (target.Transform != null && target.OnCanvas)
                 target.CaptureBase();
@@ -612,15 +679,23 @@ public class ScreenEffectController : MonoBehaviour
         AddFrameTarget(GameObject.Find("FireworkEffect")?.transform);
 
         var outline = GameObject.Find("Outline") ?? GameObject.Find("DebugOutline");
-        AddFrameTarget(outline?.transform);
-        AddFrameTarget(GameObject.Find("JudgeLineStyleLayer")?.transform);
+        AddFrameTarget(outline?.transform, GetGameplayPlaneSize(), skipRotation: true);
+        AddFrameTarget(GameObject.Find("JudgeLineStyleLayer")?.transform, GetGameplayPlaneSize(), skipRotation: true);
         // The two cover layers frame the play area, so they follow its ZOOM/MOVE:
         // otherwise the aperture keeps its authored 1080 radius while the outline and
         // notes move inside it. Rotation is skipped because a rotated square aperture
         // cannot be framed by the axis-aligned letterbox panels, and the visible part
         // of both covers is a circle.
-        AddFrameTarget(FindSceneTransform("1080Circle_Rev"), GetGameplayPlaneSize(), true);
-        AddFrameTarget(FindSceneTransform("BackgroundCover"), GetGameplayPlaneSize(), true);
+        var planeSize = GetGameplayPlaneSize();
+        for (var i = 0; i < SceneManager.sceneCount; i++)
+        {
+            var scene = SceneManager.GetSceneAt(i);
+            if (!scene.isLoaded) continue;
+            scene.GetRootGameObjects(sceneRoots);
+            foreach (var root in sceneRoots)
+                if (root.name is "1080Circle_Rev" or "BackgroundCover")
+                    AddFrameTarget(root.transform, planeSize, true);
+        }
         AddCanvasInfoFrameTargets();
     }
 
@@ -638,17 +713,10 @@ public class ScreenEffectController : MonoBehaviour
         // gameplay plane.
         var canvasSize = new Vector2(canvas.rect.width, canvas.rect.height);
         for (var i = 0; i < canvas.childCount; i++)
+        {
+            if (canvas.GetChild(i).name == "FPS Text") continue;
             AddFrameTarget(canvas.GetChild(i), canvasSize, true, onCanvas: true);
-    }
-
-    private static Transform FindSceneTransform(string objectName)
-    {
-        foreach (var candidate in Resources.FindObjectsOfTypeAll<Transform>())
-            if (candidate != null &&
-                candidate.gameObject.scene.IsValid() &&
-                candidate.gameObject.name == objectName)
-                return candidate;
-        return null;
+        }
     }
 
     private void AddFrameTarget(Transform target)
@@ -1022,8 +1090,8 @@ public class ScreenEffectController : MonoBehaviour
     private void OnDestroy()
     {
         RestoreBackgroundTransforms();
-        ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: false);
-        ApplyGameplayTransform(0f, Vector2.zero, 1f, onCanvas: true);
+        ResetFrameTargets();
+        RestoreCanvasTargets();
         ReleaseTrail();
         if (material != null)
             Destroy(material);

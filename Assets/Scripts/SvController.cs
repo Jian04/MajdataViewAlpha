@@ -1,6 +1,10 @@
+#nullable disable
 using System.Collections.Generic;
 using System.Linq;
 using MajdataCore;
+#if MAJDATA_EDIT
+using SvPoint = MajdataEdit.SvPoint;
+#endif
 
 /// <summary>
 /// Global Scroll Velocity controller.
@@ -8,7 +12,11 @@ using MajdataCore;
 /// radius = destroy - direction * speed *
 ///          (noteScrollPos - GetCumulativeScroll(audioTime))
 /// </summary>
+#if MAJDATA_EDIT
+internal static class SvController
+#else
 public static class SvController
+#endif
 {
     private sealed class Curve
     {
@@ -16,6 +24,8 @@ public static class SvController
         public double[] Cumulatives = System.Array.Empty<double>();
         public float[] Multipliers = System.Array.Empty<float>();
         public ScrollPoint[] Points = System.Array.Empty<ScrollPoint>();
+        public double CachedTime = double.NaN;
+        public double CachedScroll;
     }
 
     // Breakpoint times in ascending order
@@ -25,10 +35,15 @@ public static class SvController
     // SV multiplier from this breakpoint until the next
     private static float[]  _multipliers = System.Array.Empty<float>();
     private static ScrollPoint[] _points = System.Array.Empty<ScrollPoint>();
+    private static double _cachedMainTime = double.NaN;
+    private static double _cachedMainScroll;
     private static readonly Dictionary<string, Curve> TypedCurves = new();
     private static readonly Dictionary<string, Curve> TypedOnlyCurves = new();
     private static readonly Dictionary<string, Curve> ResolvedCurves = new();
+    public static bool HasDefaultScroll =>
+        _points.Length == 1 && _points[0].Multiplier == 1f && TypedCurves.Count == 0;
     private static readonly HashSet<string> TypedKeys = new();
+    private static int noteCurveId;
     private static Curve DefaultStreamCurve = BuildCurve(new[] { (0d, 1f) });
 
     public static bool IsEmpty => _times.Length == 0;
@@ -55,11 +70,13 @@ public static class SvController
     /// </summary>
     public static void Load(List<SvPoint> points, double chartStartTime = 0.0)
     {
+        _cachedMainTime = double.NaN;
         points ??= new List<SvPoint>();
         TypedCurves.Clear();
         ResolvedCurves.Clear();
         TypedOnlyCurves.Clear();
         TypedKeys.Clear();
+        noteCurveId = 0;
 
         var mainCurve = BuildEffectiveCurve(points, 0, string.Empty, chartStartTime);
         DefaultStreamCurve = BuildCurve(new[] { (chartStartTime, 1f) });
@@ -87,68 +104,61 @@ public static class SvController
 
     private static Curve BuildTypedOnlyCurve(
         List<SvPoint> points, int streamIndex, string noteType, double chartStartTime)
-    {
-        var typedPoints = points
-            .Where(point => point.streamIndex == streamIndex &&
-                            string.Equals(point.noteType, noteType,
-                System.StringComparison.OrdinalIgnoreCase))
-            .OrderBy(point => point.time)
-            .ThenBy(point => point.sourcePosition)
-            .ToList();
-        var effective = 1f;
-        foreach (var point in typedPoints)
-            if (point.time <= chartStartTime)
-                effective = point.reset ? 1f : point.multiplier;
-
-        var entries = new List<(double Time, float Multiplier)> { (chartStartTime, effective) };
-        foreach (var point in typedPoints.Where(point => point.time > chartStartTime))
-        {
-            effective = point.reset ? 1f : point.multiplier;
-            if (entries.Count > 0 && System.Math.Abs(entries[^1].Time - point.time) < 0.000001d)
-                entries[^1] = (point.time, effective);
-            else
-                entries.Add((point.time, effective));
-        }
-        return BuildCurve(entries);
-    }
+        => BuildEffectiveCurve(points, streamIndex, noteType, chartStartTime, true);
 
     private static Curve BuildEffectiveCurve(
-        List<SvPoint> points, int streamIndex, string noteType, double chartStartTime)
+        List<SvPoint> points, int streamIndex, string noteType, double chartStartTime, bool typedOnly = false)
     {
         var relevant = points
             .Where(point => point.streamIndex == streamIndex &&
-                            (string.IsNullOrWhiteSpace(point.noteType) ||
+                            ((!typedOnly && string.IsNullOrWhiteSpace(point.noteType)) ||
                              (!string.IsNullOrWhiteSpace(noteType) &&
                               string.Equals(point.noteType, noteType,
                                   System.StringComparison.OrdinalIgnoreCase))))
             .OrderBy(point => point.time)
             .ThenBy(point => point.sourcePosition)
             .ToList();
-        var global = 1f;
-        float? typed = null;
-        foreach (var point in relevant.Where(point => point.time <= chartStartTime))
+        var boundaries = new SortedSet<double> { chartStartTime };
+        foreach (var point in relevant)
         {
-            if (string.IsNullOrWhiteSpace(point.noteType))
-                global = point.reset ? 1f : point.multiplier;
-            else
-                typed = point.reset ? null : point.multiplier;
+            if (point.time > chartStartTime) boundaries.Add(point.time);
+            if (point.transition == null || point.transition.duration <= 0f) continue;
+            // Linear ramps are exact. Nonlinear curves are baked once into 128
+            // linear segments; playback still uses one binary search and integral.
+            var steps = point.transition.easing == "linear" ? 1 : 128;
+            for (var step = 1; step <= steps; step++)
+            {
+                var at = point.time + point.transition.duration * (double)step / steps;
+                if (at > chartStartTime) boundaries.Add(at);
+            }
         }
-
-        var entries = new List<(double Time, float Multiplier)>
-            { (chartStartTime, typed ?? global) };
-        foreach (var point in relevant.Where(point => point.time > chartStartTime))
+        var times = boundaries.ToArray();
+        var entries = new List<ScrollChange>();
+        SvPoint global = null, typed = null;
+        var cursor = 0;
+        for (var i = 0; i < times.Length; i++)
         {
-            if (string.IsNullOrWhiteSpace(point.noteType))
-                global = point.reset ? 1f : point.multiplier;
-            else
-                typed = point.reset ? null : point.multiplier;
-            var effective = typed ?? global;
-            if (System.Math.Abs(entries[^1].Time - point.time) < 0.000001d)
-                entries[^1] = (point.time, effective);
-            else
-                entries.Add((point.time, effective));
+            var at = times[i];
+            while (cursor < relevant.Count && relevant[cursor].time <= at + .0000001d)
+            {
+                var point = relevant[cursor++];
+                if (string.IsNullOrWhiteSpace(point.noteType)) global = point.reset ? null : point;
+                else typed = point.reset ? null : point;
+            }
+            var source = typed ?? global;
+            float Value(double time) => source?.transition?.Evaluate(time - source.time) ?? source?.multiplier ?? 1f;
+            var value = Value(at);
+            var end = i + 1 < times.Length ? times[i + 1] : at;
+            var slope = end > at ? (float)((Value(end) - value) / (end - at)) : 0f;
+            entries.Add(new ScrollChange(at, value, i, slope));
+            if (slope != 0f)
+            {
+                var zero = at - value / slope;
+                if (zero > at + .000001d && zero < end - .000001d)
+                    entries.Add(new ScrollChange(zero, 0f, i, slope));
+            }
         }
-        return BuildCurve(entries);
+        return CreateCurve(AlphaVisualTiming.BuildScrollCurve(entries));
     }
 
     private static Curve BuildCurve(IReadOnlyList<(double Time, float Multiplier)> entries)
@@ -156,6 +166,11 @@ public static class SvController
         var points = AlphaVisualTiming.BuildScrollCurve(
             entries.Select((entry, index) =>
                 new ScrollChange(entry.Time, entry.Multiplier, index)));
+        return CreateCurve(points);
+    }
+
+    private static Curve CreateCurve(ScrollPoint[] points)
+    {
         var curve = new Curve
         {
             Points = points,
@@ -168,6 +183,7 @@ public static class SvController
 
     public static void Clear()
     {
+        _cachedMainTime = double.NaN;
         _times       = System.Array.Empty<double>();
         _cumulatives = System.Array.Empty<double>();
         _multipliers = System.Array.Empty<float>();
@@ -208,7 +224,13 @@ public static class SvController
     public static double GetCumulativeScroll(double time, string noteType = null)
     {
         var curve = GetCurve(noteType);
-        return AlphaVisualTiming.GetCumulativeScroll(curve?.Points ?? _points, time);
+        if (curve != null)
+            return GetCumulativeScroll(time, curve);
+        if (time == _cachedMainTime)
+            return _cachedMainScroll;
+        _cachedMainTime = time;
+        _cachedMainScroll = AlphaVisualTiming.GetCumulativeScroll(_points, time);
+        return _cachedMainScroll;
     }
 
     /// <summary>
@@ -257,6 +279,14 @@ public static class SvController
         return GetCumulativeScroll(time, curve);
     }
 
+    internal static float GetTypedOnlyMultiplier(double time, string noteType)
+    {
+        return !string.IsNullOrWhiteSpace(noteType) &&
+               TypedOnlyCurves.TryGetValue(noteType.ToLowerInvariant(), out var curve)
+            ? AlphaVisualTiming.GetMultiplier(curve.Points, time)
+            : 1f;
+    }
+
     public static float GetTypedOnlyProgress(
         double startTime,
         double duration,
@@ -265,7 +295,7 @@ public static class SvController
     {
         if (duration <= 0d)
             return 1f;
-        var linear = UnityEngine.Mathf.Clamp01((float)((currentTime - startTime) / duration));
+        var linear = (float)System.Math.Clamp((currentTime - startTime) / duration, 0d, 1d);
         if (string.IsNullOrWhiteSpace(noteType) ||
             !TypedOnlyCurves.TryGetValue(noteType.ToLowerInvariant(), out var curve))
             return linear;
@@ -274,7 +304,13 @@ public static class SvController
     }
 
     private static double GetCumulativeScroll(double time, Curve curve)
-        => AlphaVisualTiming.GetCumulativeScroll(curve.Points, time);
+    {
+        if (time == curve.CachedTime)
+            return curve.CachedScroll;
+        curve.CachedTime = time;
+        curve.CachedScroll = AlphaVisualTiming.GetCumulativeScroll(curve.Points, time);
+        return curve.CachedScroll;
+    }
 
     /// <summary>
     /// Resolves the first BOUNCE takeoff crossing before judge time. Rewind mode
@@ -350,6 +386,8 @@ public static class SvController
 
     private static float GetLatestNonZeroSV(double time, string noteType)
     {
+        var current=GetCurrentSV(time,noteType);
+        if(System.Math.Abs(current)>.000001f) return current;
         var curve = GetCurve(noteType);
         var times = curve?.Times ?? _times;
         var multipliers = curve?.Multipliers ?? _multipliers;
@@ -443,6 +481,82 @@ public static class SvController
         return double.IsNaN(appeared) ? 0d : System.Math.Max(0d, judgeTime - appeared);
     }
 
+    public static double GetRingAppearanceTime(double judgeTime,float speed,float spawn,float destroy,string noteType)
+    {
+        if (System.Math.Abs(speed) <= .000001f) return judgeTime;
+        var points = GetCurve(noteType)?.Points ?? _points;
+        var threshold = GetCumulativeScroll(judgeTime,noteType) -
+            (System.Math.Abs(destroy-spawn) + AlphaVisualTiming.SpawnScaleDistance) / speed;
+        var appeared = AlphaVisualTiming.FindLastTimeAtCumulativeScroll(points,judgeTime,threshold);
+        return double.IsNaN(appeared) ? judgeTime : appeared;
+    }
+
+    public static string CreateBirthSpeedCurve(string original,double judgeTime,double distance,
+        NoteValueTransition hs,double endTime,ref double appearance,bool ignoreSv=false)
+    {
+        var source = ignoreSv ? DefaultStreamCurve.Points : GetCurve(original)?.Points ?? _points;
+        double Integral(double start)
+        {
+            const int steps = 64;
+            var dt = (judgeTime-start)/steps;
+            var sum = 0d;
+            for(var i=0;i<steps;i++)
+            {
+                var at = start+(i+.5d)*dt;
+                sum += AlphaVisualTiming.GetMultiplier(source,at)*hs.Evaluate(at-start)*dt;
+            }
+            return sum;
+        }
+        var direction = System.Math.Sign(hs.from != 0f ? hs.from : hs.to) *
+            (ignoreSv ? 1 : System.Math.Sign(GetLatestNonZeroSV(judgeTime, original)));
+        var target = distance*(direction == 0 ? 1 : direction);
+        var lead = System.Math.Max(.01d,judgeTime-appearance);
+        var low = judgeTime-lead;
+        for(var i=0;direction != 0 && i<24 && Integral(low)*target < target*target;i++)
+            low = judgeTime - (judgeTime-low)*2d;
+        if(direction != 0 && Integral(low)*target >= target*target)
+        {
+            var high = judgeTime;
+            for(var i=0;i<28;i++)
+            {
+                var middle = (low+high)*.5d;
+                if(Integral(middle)*target >= target*target) low=middle; else high=middle;
+            }
+            appearance = (low+high)*.5d;
+        }
+        var appeared = appearance;
+        var boundaries = new SortedSet<double> { appeared,judgeTime,endTime };
+        if(appeared+hs.duration < endTime) boundaries.Add(appeared+hs.duration);
+        foreach(var point in source)
+            if(point.Time>appeared && point.Time<endTime) boundaries.Add(point.Time);
+        for(var i=1;i<128;i++)
+        {
+            var at=appeared+hs.duration*i/128d;
+            if(at<endTime) boundaries.Add(at);
+        }
+        var times = boundaries.ToArray();
+        var entries = new List<ScrollChange>();
+        for(var i=0;i<times.Length;i++)
+        {
+            var at = times[i];
+            float Value(double t) => AlphaVisualTiming.GetMultiplier(source,t)*hs.Evaluate(t-appeared);
+            var value = Value(at);
+            var end = i+1<times.Length ? times[i+1] : at;
+            // Read just before the next boundary so an SV step remains a step.
+            var slope = end>at ? (float)((Value(end-.00000001d)-value)/(end-at)) : 0f;
+            entries.Add(new ScrollChange(at,value,i,slope));
+            if(slope != 0f)
+            {
+                var zero=at-value/slope;
+                if(zero>at+.000001d && zero<end-.000001d) entries.Add(new ScrollChange(zero,0f,i,slope));
+            }
+        }
+        var separator=original?.IndexOf('|') ?? -1;
+        var key=(separator>0 ? original.Substring(0,separator+1) : "")+"#hs"+(++noteCurveId);
+        TypedCurves[key]=CreateCurve(AlphaVisualTiming.BuildScrollCurve(entries));
+        return key;
+    }
+
     private static Curve GetCurve(string noteType)
     {
         if (string.IsNullOrWhiteSpace(noteType))
@@ -460,11 +574,29 @@ public static class SvController
 
     private static string NormalizeCurveKey(string key) =>
         (key ?? string.Empty).Trim().ToLowerInvariant();
+#if MAJDATA_EDIT
+    internal static double MonitorFirstAppearance(double judge,float speed,float spawn,float destroy,string key,bool touch,double fallback)
+    {
+        var points=GetCurve(key)?.Points ?? _points;
+        var searchStart=System.Math.Min(0d,fallback);
+        var scroll=GetCumulativeScroll(judge,key);
+        var first=touch ? AlphaVisualTiming.FindFirstTouchVisibleTime(points,searchStart,judge,scroll,speed)
+            : AlphaVisualTiming.FindFirstVisibleTime(points,searchStart,judge,scroll,speed,spawn,destroy);
+        return double.IsNaN(first) ? fallback : first;
+    }
+    internal static void ReleaseMonitorBirthCurve(string key)
+    {
+        TypedCurves.Remove(key);
+        ResolvedCurves.Remove(key);
+    }
+#endif
 }
 
+#if !MAJDATA_EDIT
 /// <summary>Chart SV change point serialized to Majson JSON.</summary>
 public class SvPoint
 {
+    public NoteValueTransition transition;
     public double time;
     public int sourcePosition;
     public int streamIndex;
@@ -472,3 +604,4 @@ public class SvPoint
     public string noteType;
     public bool reset;
 }
+#endif

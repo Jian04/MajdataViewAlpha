@@ -4,7 +4,6 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using ShapePath = System.Windows.Shapes.Path;
 using MajdataSessionUi;
 using Newtonsoft.Json;
 
@@ -17,7 +16,7 @@ internal sealed partial class ChartListPanel : Window
     private readonly TextBlock status = SessionTheme.Text("", true);
     private readonly ComboBox mode = new() { ItemsSource = new[] { "顺序循环", "随机循环", "单曲循环" }, SelectedIndex = 0, Width = 96 };
     internal int PlaybackMode => mode.SelectedIndex;
-    private readonly Button playbackButton = SessionTheme.Button("▶");
+    private readonly Button playbackButton;
     private readonly Slider playbackProgress = SessionTheme.PlaybackSlider();
     private readonly TextBlock playbackTime = SessionTheme.Text("00:00 / 00:00", true);
     private readonly System.Windows.Threading.DispatcherTimer progressTimer = new() { Interval = TimeSpan.FromMilliseconds(650) };
@@ -43,51 +42,22 @@ internal sealed partial class ChartListPanel : Window
         AddButton("刷新", Refresh);
         var transport = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 4) };
         toolbar.Children.Add(transport);
-        Button TransportButton(string glyph, Action action)
+        Button TransportButton(string glyph, string tooltip, Action action)
         {
-            var button = SessionTheme.Button(glyph);
-            button.Width = button.Height = 34;
-            button.Padding = new Thickness(0);
-            button.HorizontalContentAlignment = HorizontalAlignment.Center;
-            button.VerticalContentAlignment = VerticalAlignment.Center;
-            button.Background = Brushes.Transparent;
-            button.SetResourceReference(Control.TemplateProperty, "DarkButton");
+            var button = new Button { Content = glyph, ToolTip = tooltip, Width = 34, Height = 34,
+                Padding = new Thickness(0), Margin = new Thickness(0, 0, 2, 0),
+                VerticalAlignment = VerticalAlignment.Center, BorderThickness = new Thickness(0),
+                Background = Brushes.Transparent, FocusVisualStyle = null };
+            button.SetResourceReference(Control.TemplateProperty, "EditorTransportButton");
+            button.SetResourceReference(Control.ForegroundProperty, "ButtonForeground");
             button.Click += (_, _) => action();
             transport.Children.Add(button);
             return button;
         }
-        Button StepButton(bool previous, Action action)
-        {
-            var button = SessionTheme.Button("");
-            button.Width = button.Height = 34;
-            button.Padding = new Thickness(0);
-            button.Background = Brushes.Transparent;
-            button.SetResourceReference(Control.TemplateProperty, "DarkButton");
-            button.Content = new ShapePath
-            {
-                Data = Geometry.Parse(previous
-                    ? "M 2,2 L 4,2 L 4,18 L 2,18 Z M 18,2 L 5,10 L 18,18 Z"
-                    : "M 16,2 L 18,2 L 18,18 L 16,18 Z M 2,2 L 15,10 L 2,18 Z"),
-                Stretch = Stretch.Uniform
-            };
-            ((ShapePath)button.Content).Width = 11;
-            ((ShapePath)button.Content).Height = 11;
-            ((ShapePath)button.Content).SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "ButtonForeground");
-            button.Click += (_, _) => action();
-            transport.Children.Add(button);
-            return button;
-        }
-        StepButton(true, () => main.StepChartList(-1));
-        TransportButton("◼", main.StopChartList);
-        playbackButton.Width = playbackButton.Height = 34;
-        playbackButton.Padding = new Thickness(0);
-        playbackButton.HorizontalContentAlignment = HorizontalAlignment.Center;
-        playbackButton.VerticalContentAlignment = VerticalAlignment.Center;
-        playbackButton.Background = Brushes.Transparent;
-        playbackButton.SetResourceReference(Control.TemplateProperty, "DarkButton");
-        playbackButton.Click += (_, _) => main.ToggleChartListPlayback(mode.SelectedIndex);
-        transport.Children.Add(playbackButton);
-        StepButton(false, () => main.StepChartList(1));
+        TransportButton("Previous", "上一首", () => main.StepChartList(-1));
+        TransportButton("◼", "终止", main.StopChartList);
+        playbackButton = TransportButton("▶", "播放／暂停", () => main.ToggleChartListPlayback(mode.SelectedIndex));
+        TransportButton("Next", "下一首", () => main.StepChartList(1));
         SessionTheme.Input(mode); mode.Margin = new Thickness(8, 0, 0, 0);
         mode.VerticalAlignment = VerticalAlignment.Center; transport.Children.Add(mode);
         var progressRow = new Grid { Margin = new Thickness(0, 0, 0, 5) };
@@ -147,8 +117,9 @@ internal sealed partial class ChartListPanel : Window
             details.Children.Add(SessionTheme.Text(new[] { "EASY", "BASIC", "ADVANCED", "EXPERT", "MASTER", "Re:MASTER", "UTAGE" }[Math.Clamp(entry.Difficulty, 0, 6)] + "  " + entry.Level, true));
             details.Children.Add(SessionTheme.Text("曲师：" + entry.Artist + "\n谱师：" + entry.Designer, true));
             var open = new Border { Child = details, Padding = new Thickness(8), CornerRadius = new CornerRadius(4),
-                Background = SessionTheme.Brush("ButtonsBackground", "#343A43"), ToolTip = entry.Folder,
+                ToolTip = entry.Folder,
                 Cursor = System.Windows.Input.Cursors.Hand };
+            open.SetResourceReference(BackgroundProperty, "ButtonsBackground");
             card.Children.Add(open);
             var remove = SessionTheme.Button("移出列表"); remove.Margin = new Thickness(0, 6, 0, 0); remove.HorizontalAlignment = HorizontalAlignment.Right;
             remove.Click += (_, _) => { ChartListStore.Update(list => list.RemoveAll(x => ChartListStore.Same(x, entry))); Refresh(); };

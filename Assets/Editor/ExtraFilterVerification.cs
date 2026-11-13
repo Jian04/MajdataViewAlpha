@@ -8,6 +8,42 @@ using UnityEngine;
 
 public static class ExtraFilterVerification
 {
+    public static void VerifyGlassThreshold()
+    {
+        var target = RenderTexture.GetTemporary(128, 128, 24, AlphaGlassMesh.MapFormat);
+        var pixels = new Texture2D(128, 128, TextureFormat.RGBAFloat, false, true);
+        var previous = RenderTexture.active;
+        var material = AlphaGlassMesh.Material;
+        Color[] Draw(float strength, float phase)
+        {
+            Graphics.SetRenderTarget(target); GL.Clear(true, true, Color.clear);
+            material.SetFloat("_GlassStrength", strength); material.SetFloat("_GlassPhase", phase);
+            material.SetFloat("_GlassAspect", 1); material.SetPass(0);
+            Graphics.DrawMeshNow(AlphaGlassMesh.Geometry, Matrix4x4.identity);
+            pixels.ReadPixels(new Rect(0, 0, 128, 128), 0, 0); pixels.Apply();
+            return pixels.GetPixels();
+        }
+        try
+        {
+            foreach (var strength in new[] { .1f, .2f, .3f })
+            {
+                var before = Draw(strength, 0);
+                var after = Draw(strength, 1);
+                if (after.Any(c => c.a < .93f))
+                    throw new Exception("Low-strength glass moved or left holes: " + strength);
+                if (before.Zip(after, (a,b) => Mathf.Abs(a.b-b.b)).Average() < .0001f)
+                    throw new Exception("Low-strength glass did not grow cracks: " + strength);
+            }
+            if (Draw(.85f, 1).Count(c => c.a == 0) < 300)
+                throw new Exception("High-strength glass did not scatter");
+            Debug.Log("GLASS THRESHOLD PASS: 0.1/0.2/0.3 stay intact with growing cracks; 0.85 scatters.");
+        }
+        finally
+        {
+            RenderTexture.active = previous; RenderTexture.ReleaseTemporary(target);
+            UnityEngine.Object.DestroyImmediate(pixels);
+        }
+    }
     public static void BuildViewFixes()
     {
         Run();
@@ -36,7 +72,7 @@ public static class ExtraFilterVerification
         void Require(bool ok, string name) { if (!ok) throw new Exception(name); }
         Color[] Draw()
         {
-            Graphics.Blit(source, target, material);
+            AlphaGlassMesh.Blit(source, target, material);
             RenderTexture.active = target;
             pixels.ReadPixels(new Rect(0, 0, 256, 256), 0, 0); pixels.Apply();
             return pixels.GetPixels();
@@ -59,6 +95,7 @@ public static class ExtraFilterVerification
             foreach (var filter in AlphaExtraFilters.All)
             {
                 material.SetFloat(filter.Uniform, filter.Name == "BLOOM" ? 2 : .8f);
+                if (filter.Name == "SHATTER") material.EnableKeyword("ALPHA_SHATTER");
                 material.SetFloat("_RipplePhase", .55f);
                 material.SetFloat("_ShatterPhase", .2f);
                 var result = Draw();
@@ -80,6 +117,7 @@ public static class ExtraFilterVerification
             Require(Difference(Draw(),zeroAngle)>.01f,"Kaleidoscope degrees do not rotate mirrored sectors");
             material.SetFloat("_Kaleidoscope",0); material.SetFloat("_KaleidoscopeAngle",0);
             material.SetFloat("_Shatter", .8f);
+            material.EnableKeyword("ALPHA_SHATTER");
             var first = Draw(); material.SetFloat("_EffectTime", 20);
             Require(Difference(Draw(), first) < .001f, "Glass shards drift randomly when seeking");
             material.SetFloat("_ShatterPhase", .01f);
@@ -152,6 +190,20 @@ public static class ExtraFilterVerification
             provider.AudioTime=5;
             Require(Difference(RenderController(),baseline)<.001f,"Kaleidoscope False did not restore the image");
             Debug.Log("KALEIDOSCOPE ANGLE PASS: real GPU degrees, zero-angle enable, 45-degree midpoint, False and seek reset.");
+            controller.Configure(new System.Collections.Generic.List<EffectChange> {
+                new(){time=1,effect="Flip",intensity=1,holdTime=.5f,duration=.5f,paramA=0,flipNotesOnly=false},
+                new(){time=2,effect="Flip",stateful=true,enabled=true,intensity=1,paramA=90,flipNotesOnly=false},
+                new(){time=3,effect="Flip",stateful=true,enabled=true,intensity=1,paramA=45,flipNotesOnly=false},
+                new(){time=4,effect="Flip",stateful=true,enabled=false}
+            },provider);
+            foreach (var (at, sx, sy) in new[] { (1.25f,48,175), (2.25f,207,80), (3.25f,80,48), (4.25f,48,80), (.5f,48,80) })
+            {
+                provider.AudioTime=at;
+                var actual = RenderController()[80 * 256 + 48];
+                var expected = baseline[sy * 256 + sx];
+                Require(Mathf.Abs(actual.r-expected.r)+Mathf.Abs(actual.b-expected.b)<.025f, "FLIP pixel or timing mismatch at " + at);
+            }
+            Debug.Log("111 FLIP GPU PASS: 0/45/90 degree axes, instant expiry, False and seek.");
             foreach (var message in ShaderUtil.GetShaderMessages(shader)) Require(message.severity.ToString() != "Error", message.message);
             // Controller owns the material once assigned.
             typeof(ScreenEffectController).GetField("material", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(controller, null);

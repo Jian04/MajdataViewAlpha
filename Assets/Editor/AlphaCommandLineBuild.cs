@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -7,6 +7,23 @@ using UnityEngine;
 
 public static class AlphaCommandLineBuild
 {
+    public static void BuildStarModeCheckedView()
+    {
+        StarDisplayOrderVerification.Run();
+        StarDisplayModeVerification.Run();
+        BuildView();
+    }
+    public static void BuildOct18SyntaxView()
+    {
+        FontFileVerification.Run();
+        NoteAnimationVerification.Run();
+        BuildView();
+    }
+    public static void BuildOct18View()
+    {
+        NoteAnimationVerification.Run();
+        BuildView();
+    }
     public static void BuildOct12CheckedView()
     {
         DjAutoHoldVerification.Run();
@@ -29,6 +46,14 @@ public static class AlphaCommandLineBuild
     public static void BuildGradientCheckedView()
     {
         VignetteGradientVerification.Run();
+        BuildView();
+    }
+    public static void BuildShakeCheckedView()
+    {
+        ShakeDirectionVerification.Run();
+        DjAutoHoldVerification.Run();
+        UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/Scenes/SampleScene.unity");
+        RotatePvVerification.Run();
         BuildView();
     }
     // Unity -batchmode -quit -projectPath <alpha> -executeMethod AlphaCommandLineBuild.BuildView

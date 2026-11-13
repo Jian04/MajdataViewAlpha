@@ -94,8 +94,8 @@ public sealed class ChartRoomWindow : Window
         displayName.LostKeyboardFocus += (_, _) => SaveDisplayName();
         Title = "联机写谱"; MinWidth = 540; MinHeight = 560;
         SessionTheme.Apply(this, 620, 720);
-        progress.Background = SessionTheme.Brush("ButtonsBackground", "#343A43");
-        progress.Foreground = SessionTheme.Brush("HelperForeground", "#72B4D4");
+        SessionTheme.BindBrush(progress, Control.BackgroundProperty, "ButtonsBackground", "#343A43");
+        SessionTheme.BindBrush(progress, Control.ForegroundProperty, "HelperForeground", "#72B4D4");
         status.SetResourceReference(TextBlock.ForegroundProperty, "HelperForeground");
         progress.BorderThickness = new Thickness(0);
         WindowStartupLocation = WindowStartupLocation.CenterOwner;

@@ -43,7 +43,7 @@ public partial class MainWindow
     }
     private async Task PlayStartupJump(int generation)
     {
-        if (animator?.HasAtlas != true) return;
+        if (animator?.HasAppearance != true) return;
         var finished = new TaskCompletionSource<bool>();
         startupJumpCompletion = finished;
         animator.Play(PetAnimation.Jumping, false, () => finished.TrySetResult(true));

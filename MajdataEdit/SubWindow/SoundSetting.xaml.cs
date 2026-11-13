@@ -1,9 +1,8 @@
 using System.ComponentModel;
-using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
 using Un4seen.Bass;
-using Timer = System.Timers.Timer;
+using System.Windows.Threading;
 
 namespace MajdataEdit;
 
@@ -15,7 +14,8 @@ public partial class SoundSetting : Window
     private readonly MainWindow MainWindow;
     private readonly Dictionary<Slider, Label> SliderValueBindingMap = new(); // Slider-to-value-label bindings
 
-    private readonly Timer UpdateLevelTimer = new(1);
+    private readonly DispatcherTimer UpdateLevelTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
+    private FrameworkElement? mixerContent;
 
     public SoundSetting()
     {
@@ -73,11 +73,14 @@ public partial class SoundSetting : Window
         DockPanel.SetDock(buttons, Dock.Bottom); root.Children.Add(buttons);
         root.Children.Add(new ScrollViewer { Content = strip, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalAlignment = VerticalAlignment.Top });
+        mixerContent = root;
+        root.IsVisibleChanged += (_, _) => UpdateLevelTimer.IsEnabled = root.IsVisible;
         return root;
     }
 
     private void SoundSettingWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        MainWindow.ReadSharedVolume();
         SliderValueBindingMap.Add(BGM_Slider, BGM_Value);
         SliderValueBindingMap.Add(Answer_Slider, Answer_Value);
         SliderValueBindingMap.Add(Judge_Slider, Judge_Value);
@@ -101,31 +104,28 @@ public partial class SoundSetting : Window
         SetSlider(Hanabi_Slider, MainWindow.hanabiStream, MainWindow.holdRiserStream);
         SetMineSlider();
 
-        UpdateLevelTimer.AutoReset = true;
-        UpdateLevelTimer.Elapsed += UpdateLevelTimer_Elapsed;
-        UpdateLevelTimer.Start();
+        UpdateLevelTimer.Tick += UpdateLevelTimer_Elapsed;
+        UpdateLevelTimer.IsEnabled = mixerContent?.IsVisible ?? IsVisible;
     }
 
-    private void UpdateLevelTimer_Elapsed(object? sender, ElapsedEventArgs e)
+    private void UpdateLevelTimer_Elapsed(object? sender, EventArgs e)
     {
-        Dispatcher.Invoke(() =>
-        {
-            UpdateProgressBar(BGM_Level, MainWindow.bgmStream, MainWindow.trackStartStream, MainWindow.allperfectStream,
-                MainWindow.clockStream);
-            UpdateProgressBar(Answer_Level, MainWindow.answerStream);
-            UpdateProgressBar(Judge_Level, MainWindow.judgeStream);
-            UpdateProgressBar(Break_Level, MainWindow.breakStream, MainWindow.judgeBreakStream);
-            UpdateProgressBar(BreakSlide_Level, MainWindow.breakSlideStream, MainWindow.judgeBreakSlideStream);
-            UpdateProgressBar(Slide_Level, MainWindow.slideStream, MainWindow.breakSlideStartStream);
-            UpdateProgressBar(EX_Level, MainWindow.judgeExStream);
-            UpdateProgressBar(Touch_Level, MainWindow.touchStream);
-            UpdateProgressBar(Hanabi_Level, MainWindow.hanabiStream, MainWindow.holdRiserStream);
-            UpdateProgressBar(Mine_Level, MainWindow.MineSoundStreams.ToArray());
-        });
+        UpdateProgressBar(BGM_Level, MainWindow.bgmStream, MainWindow.trackStartStream, MainWindow.allperfectStream,
+            MainWindow.clockStream);
+        UpdateProgressBar(Answer_Level, MainWindow.answerStream);
+        UpdateProgressBar(Judge_Level, MainWindow.judgeStream);
+        UpdateProgressBar(Break_Level, MainWindow.breakStream, MainWindow.judgeBreakStream);
+        UpdateProgressBar(BreakSlide_Level, MainWindow.breakSlideStream, MainWindow.judgeBreakSlideStream);
+        UpdateProgressBar(Slide_Level, MainWindow.slideStream, MainWindow.breakSlideStartStream);
+        UpdateProgressBar(EX_Level, MainWindow.judgeExStream);
+        UpdateProgressBar(Touch_Level, MainWindow.touchStream);
+        UpdateProgressBar(Hanabi_Level, MainWindow.hanabiStream, MainWindow.holdRiserStream);
+        UpdateProgressBar(Mine_Level, MainWindow.MineSoundStreams.ToArray());
     }
 
     private void UpdateProgressBar(ProgressBar bar, params int[] channels)
     {
+        if (channels.Length == 0) { bar.Value = bar.Minimum; return; }
         var values = new double[channels.Length];
         var ampLevel = 0f;
         for (var i = 0; i < channels.Length; i++)
@@ -178,7 +178,7 @@ public partial class SoundSetting : Window
     private void SoundSettingWindow_Closing(object sender, CancelEventArgs e)
     {
         UpdateLevelTimer.Stop();
-        UpdateLevelTimer.Dispose();
+
     }
 
     private void BtnSetDefault_Click(object sender, RoutedEventArgs e) => SaveVolumeDefaults();
@@ -203,7 +203,7 @@ public partial class SoundSetting : Window
         Bass.BASS_ChannelGetAttribute(MainWindow.hanabiStream, BASSAttribute.BASS_ATTRIB_VOL,
             ref MainWindow.editorSetting!.Default_Hanabi_Level);
         MainWindow.editorSetting!.Default_Mine_Level = MainWindow.MineVolume;
-        MainWindow.SaveEditorSetting();
+        MainWindow.SaveSharedVolume();
 
     }
 

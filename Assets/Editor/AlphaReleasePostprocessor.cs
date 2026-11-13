@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
@@ -59,23 +60,63 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
             "-p:PublishSingleFile=true", "-p:IncludeNativeLibrariesForSelfExtract=true");
         MovePlayerIntoAppFolder(Path.GetDirectoryName(builtPlayerPath)!, builtPlayerPath, viewRoot, playerName);
         CopyDirectory(editOutput, editRoot, leanEditor: true);
+        CopyRequiredFonts(projectRoot, editRoot);
         CopyLauncherToRoot(launcherOutput, releaseRoot);
-        // Single-file publishing bundles PNG/WebP content but leaves JSON external, so copy pet assets explicitly
+        // Pet files stay external to the single-file executable and are loaded from this directory.
         CopyDirectory(Path.Combine(projectRoot, "MajdataLauncher", "Pets"), Path.Combine(releaseRoot, "Pets"));
+        ArchiveRuntimeDirectory(projectRoot, releaseRoot, "Pets/03");
 
         var skinSource = Path.Combine(projectRoot, "Skin");
         if (Directory.Exists(skinSource))
             CopyDirectory(skinSource, Path.Combine(editRoot, "Skin"));
+        PruneDefaultDxSkin(Path.Combine(editRoot, "Skin"));
+        PruneDefaultDxSkin(Path.Combine(viewRoot, playerName + "_Data", "StreamingAssets", "Skin"));
 
         // Edit and View share the copy in View's StreamingAssets.
         PruneRetiredEditorFiles(editRoot);
-        RemoveObsoleteReleaseNotes(releaseRoot);
+        ExportReleaseDocumentation(projectRoot, releaseRoot);
         CopyIfPresent(Path.Combine(projectRoot, "README.md"), Path.Combine(releaseRoot, "README.md"));
-        var licenses=Path.Combine(projectRoot,"Licenses");
-        if(Directory.Exists(licenses)) CopyDirectory(licenses,Path.Combine(releaseRoot,"Licenses"));
+        var licenses = Path.Combine(projectRoot, "Licenses");
+        var licenseOutput = Path.Combine(editRoot, "Licenses");
+        Directory.CreateDirectory(licenseOutput);
+        foreach (var file in Directory.GetFiles(licenses))
+            File.Copy(file, Path.Combine(licenseOutput, Path.GetFileName(file)), true);
+        foreach (var retired in new[] { "MiSans.pdf", "MiSans.txt" })
+            File.Delete(Path.Combine(licenseOutput, retired));
+        var notices = Directory.GetFiles(Path.Combine(licenses, "WebRTC"))
+            .GroupBy(File.ReadAllText)
+            .Select(group => string.Join(", ", group.Select(Path.GetFileName)) + Environment.NewLine + group.Key);
+        File.WriteAllText(Path.Combine(licenseOutput, "WebRTC.txt"), string.Join(Environment.NewLine + Environment.NewLine, notices));
+        ArchiveRuntimeDirectory(projectRoot, releaseRoot, "App/MajdataEdit/Licenses/WebRTC");
+        ArchiveRuntimeDirectory(projectRoot, releaseRoot, "Fonts");
+        ArchiveRuntimeDirectory(projectRoot, releaseRoot, "Licenses");
+        ArchiveRuntimeDirectory(projectRoot, releaseRoot, "Cache");
+        ArchiveRuntimeDirectory(projectRoot, releaseRoot, "App/MajdataEdit/Cache");
+        ArchiveRuntimeDirectory(projectRoot, releaseRoot, "ChartList.json");
+        ArchiveRuntimeDirectory(projectRoot, releaseRoot, "App/MajdataEdit/ChartList.json");
 
         ValidateRelease(viewRoot, editRoot, releaseRoot, playerName, !EditorUserBuildSettings.development);
         UnityEngine.Debug.Log($"[MajdataViewAlpha] Release dependencies collected in {releaseRoot}");
+    }
+
+    private static void ArchiveRuntimeDirectory(string projectRoot, string releaseRoot, string relative)
+    {
+        var root = Path.GetFullPath(releaseRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var source = Path.GetFullPath(Path.Combine(root, relative));
+        if (!source.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw new BuildFailedException("Release cleanup path is outside the package: " + source);
+        var isDirectory = Directory.Exists(source);
+        if (!isDirectory && !File.Exists(source)) return;
+        if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0)
+            throw new BuildFailedException("Refusing to move a linked runtime directory: " + source);
+        var archiveRoot = Path.GetFullPath(Path.Combine(projectRoot, "Library", "ReleasePublish", "ExcludedRuntime"));
+        var destination = Path.GetFullPath(Path.Combine(archiveRoot,
+            Path.GetFileName(source) + "-" + Guid.NewGuid().ToString("N")));
+        if (!destination.StartsWith(archiveRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new BuildFailedException("Runtime archive path is outside the project: " + destination);
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        if (isDirectory) Directory.Move(source, destination);
+        else File.Move(source, destination);
     }
 
     private static void ArchiveBuildBackup(string projectRoot, string outputDirectory, string playerName)
@@ -320,10 +361,14 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
     {
         var path = relative.Replace('\\', '/');
         return path.Equals("ffmpeg.exe", StringComparison.OrdinalIgnoreCase) ||
+               path.Equals("ChartList.json", StringComparison.OrdinalIgnoreCase) ||
+                 path.StartsWith("Fonts/", StringComparison.OrdinalIgnoreCase) ||
+               path.StartsWith("Cache/", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWith("tools/Maicaiyin/", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWith("ChartSearchCache/", StringComparison.OrdinalIgnoreCase) ||
                path.StartsWith("charts/", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase) ||
+               path.EndsWith(".log", StringComparison.OrdinalIgnoreCase) ||
                path.EndsWith(".pyc", StringComparison.OrdinalIgnoreCase) ||
                path.Contains("/__pycache__/");
     }
@@ -331,7 +376,8 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
     private static void PruneRetiredEditorFiles(string editRoot)
     {
         var root = Path.GetFullPath(editRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        foreach (var relative in new[] { "tools/Maicaiyin", "ChartSearchCache", "ffmpeg.exe" })
+        foreach (var relative in new[] { "tools/Maicaiyin", "ChartSearchCache", "ffmpeg.exe", "Resources/Fonts",
+                     "startup-error.log", "startup-trace.log", "visualedit-error.log" })
         {
             var path = Path.GetFullPath(Path.Combine(root, relative));
             if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new BuildFailedException("Invalid release path.");
@@ -353,16 +399,88 @@ internal sealed class AlphaReleasePostprocessor : IPostprocessBuildWithReport
         }
     }
 
+    private static void PruneDefaultDxSkin(string skinRoot)
+    {
+        var sdRoot = Path.Combine(Path.GetFullPath(skinRoot), "sd");
+        var dxRoot = Path.Combine(Path.GetFullPath(skinRoot), "dx");
+        var standardFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.GetFiles(sdRoot, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sdRoot, file);
+            standardFiles.Add(relative);
+            if (!File.Exists(Path.Combine(dxRoot, relative)))
+                throw new BuildFailedException("DX skin file is missing: " + relative);
+        }
+        if (standardFiles.Count == 0)
+            throw new BuildFailedException("The SD skin file list is empty: " + sdRoot);
+
+        // Keep the default DX file list aligned with SD across repeated releases.
+        foreach (var file in Directory.GetFiles(dxRoot, "*", SearchOption.AllDirectories))
+            if (Path.GetFileName(file).IndexOf("mine", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                !standardFiles.Contains(Path.GetRelativePath(dxRoot, file)))
+                File.Delete(file);
+
+        if (Directory.GetFiles(dxRoot, "*", SearchOption.AllDirectories).Length != standardFiles.Count)
+            throw new BuildFailedException("DX and SD skin file lists differ: " + skinRoot);
+    }
+
     private static void CopyIfPresent(string source, string destination)
     {
         if (File.Exists(source))
             File.Copy(source, destination, true);
     }
 
-    private static void RemoveObsoleteReleaseNotes(string releaseRoot)
+    private static void CopyRequiredFonts(string projectRoot, string editRoot)
     {
-        foreach (var path in Directory.GetFiles(
-                     releaseRoot, "RELEASE_NOTES*.md", SearchOption.TopDirectoryOnly))
-            File.Delete(path);
+        var target = Path.Combine(editRoot, "Fonts");
+        Directory.CreateDirectory(target);
+        foreach (var file in new[] { "Aileron-Regular.otf", "Allerta-Regular.ttf", "FOT-NewRodin Pro EB.otf",
+                     "FOT-Seurat Pro DB.otf", "GenSenRounded2TW-R.otf", "MajdataUIRounded-Regular.otf" })
+            File.Copy(Path.Combine(projectRoot, "Fonts", file), Path.Combine(target, file), true);
+        foreach (var file in new[] { "FOT-Rodin Pro EB.otf", "MicrosoftYaHei-Bold.ttc", "NotoSansSC-VF.ttf", "MiSans-Regular.ttf" })
+        {
+            var path = Path.Combine(target, file);
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    private static void ExportReleaseDocumentation(string projectRoot, string releaseRoot)
+    {
+        var docsRoot = Path.GetFullPath(releaseRoot).TrimEnd(Path.DirectorySeparatorChar) + "-docs";
+        Directory.CreateDirectory(docsRoot);
+        foreach (var relative in new[] { "App/MajdataEdit/Themes", "App/MajdataView/MajdataView_Data/StreamingAssets/Background/SongDetailBg" })
+        {
+            var directory = Path.Combine(releaseRoot, relative);
+            if (!Directory.Exists(directory)) continue;
+            foreach (var path in Directory.GetFiles(directory, "sources.json", SearchOption.AllDirectories))
+            {
+                var target = Path.Combine(docsRoot, Path.GetRelativePath(releaseRoot, path));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(path, target, true);
+                File.Delete(path);
+            }
+        }
+        foreach (var name in new[] { "README.md", "FILTERS.md", "NOISE_ZONES.md", "SLIDECODE.md" })
+            CopyIfPresent(Path.Combine(projectRoot, name), Path.Combine(docsRoot, name));
+        CopyDirectory(Path.Combine(projectRoot, "wiki"), Path.Combine(docsRoot, "wiki"));
+        CopyIfPresent(Path.Combine(projectRoot, "MajdataLauncher", "Pets", "MOTION.md"), Path.Combine(docsRoot, "PET_MOTION.md"));
+        CopyIfPresent(Path.Combine(projectRoot, "Assets", "StreamingAssets", "README.md"), Path.Combine(docsRoot, "FFMPEG.md"));
+        File.WriteAllText(Path.Combine(docsRoot, "INDEX.md"), "# MajdataAlpha 文档\n\n" +
+            "- [Simai 语法](wiki/Simai.md)\n- [Alpha 语法](wiki/Alpha.md)\n- [SlideCode](wiki/SlideCode.md)\n" +
+            "- [滤镜](FILTERS.md)\n- [噪域](NOISE_ZONES.md)\n- [桌宠动作配置](PET_MOTION.md)\n- [版本说明](README.md)\n");
+
+        foreach (var path in Directory.GetFiles(releaseRoot, "*.md", SearchOption.TopDirectoryOnly))
+            if (!Path.GetFileName(path).Equals("README.md", StringComparison.OrdinalIgnoreCase)) File.Delete(path);
+        var wikiRoot = Path.Combine(releaseRoot, "wiki");
+        if (Directory.Exists(wikiRoot))
+        {
+            foreach (var path in Directory.GetFiles(wikiRoot, "*.md")) File.Delete(path);
+            if (Directory.GetFileSystemEntries(wikiRoot).Length == 0) Directory.Delete(wikiRoot);
+        }
+        foreach (var relative in new[] { "Pets/MOTION.md", "App/MajdataView/MajdataView_Data/StreamingAssets/README.md" })
+        {
+            var path = Path.Combine(releaseRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
 }

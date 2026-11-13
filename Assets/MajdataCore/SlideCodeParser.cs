@@ -21,6 +21,7 @@ namespace MajdataCore
         public int parameter;
         public int offset;
         public int length;
+        public SlidePositionData endpoint;
 
         public bool IsNode => command is
             SlideCodeCommand.Start or SlideCodeCommand.A or
@@ -34,19 +35,19 @@ namespace MajdataCore
     {
         public string source = string.Empty;
         public List<SlideCodeInstruction> instructions = new();
+        public bool HasExtendedEndpoints => instructions.Count >= 2 &&
+            (IsExtended(instructions[0].endpoint) || IsExtended(instructions[^1].endpoint));
+        private static bool IsExtended(SlidePositionData position) => position != null && (!position.IsKey || position.isDZone);
     }
 
     public static class SlideCodeParser
     {
         public static bool LooksLikeSlideCode(string expression)
         {
-            if (string.IsNullOrEmpty(expression) ||
-                expression[0] is < '1' or > '8')
-                return false;
-
-            for (var index = 1; index + 1 < expression.Length && expression[index] != '['; index++)
-                if (expression[index] == 'K' &&
-                    expression[index + 1] is >= '1' and <= '8')
+            if (string.IsNullOrEmpty(expression) || expression.IndexOf('K') < 0) return false;
+            if (!SlidePathParser.TryReadPosition(expression, 0, out _, out var startEnd)) return false;
+            for (var index = startEnd; index + 1 < expression.Length && expression[index] != '['; index++)
+                if (expression[index] == 'K' && SlidePathParser.TryReadPosition(expression, index + 1, out _, out _))
                     return true;
             return false;
         }
@@ -58,28 +59,39 @@ namespace MajdataCore
         {
             code = new SlideCodeData { source = expression ?? string.Empty };
             error = string.Empty;
-            if (string.IsNullOrEmpty(expression) ||
-                expression[0] is < '1' or > '8')
+            if (!SlidePathParser.TryReadPosition(expression, 0, out var start, out var startEnd))
                 return Fail(
-                    "SlideCode 必须以 1-8 的起点开头",
-                    "SLIDECODE MUST START WITH A KEY FROM 1 TO 8",
+                    "SlideCode 缺少有效起点",
+                    "SLIDECODE MUST START WITH A VALID POSITION",
                     expression ?? string.Empty, out error);
 
             code.instructions.Add(new SlideCodeInstruction
             {
                 command = SlideCodeCommand.Start,
-                parameter = expression[0] - '0',
+                parameter = start.position,
+                endpoint = start,
                 offset = 0,
-                length = 1
+                length = startEnd
             });
 
             SlideCodeCommand? active = null;
             var activeOffset = -1;
             var activeParameterCount = 0;
             var keyCount = 0;
-            for (var index = 1; index < expression.Length; index++)
+            for (var index = startEnd; index < expression.Length; index++)
             {
                 var character = expression[index];
+                if (character == 'K')
+                {
+                    if (active.HasValue && activeParameterCount == 0)
+                        return MissingParameter(active.Value, expression, out error);
+                    if (!SlidePathParser.TryReadPosition(expression, index + 1, out var end, out var next) || next != expression.Length)
+                        return Fail("K 后必须是唯一的终点", "K MUST BE FOLLOWED BY THE FINAL POSITION", expression, out error);
+                    code.instructions.Add(new SlideCodeInstruction { command = SlideCodeCommand.Key,
+                        parameter = end.position, endpoint = end, offset = index, length = next - index });
+                    keyCount++;
+                    break;
+                }
                 if (char.IsLetter(character))
                 {
                     if (active.HasValue && activeParameterCount == 0)
@@ -122,17 +134,6 @@ namespace MajdataCore
                         $"INVALID PARAMETER '{parameter}' FOR {CommandName(active.Value)}",
                         expression, out error);
 
-                if (active.Value == SlideCodeCommand.Key)
-                {
-                    keyCount++;
-                    if (keyCount != 1 || activeParameterCount != 0 ||
-                        index != expression.Length - 1)
-                        return Fail(
-                            "K 必须只出现一次，并以 K1-K8 结束整条 SlideCode",
-                            "K MUST APPEAR ONCE AS THE FINAL K1-K8 IN SLIDECODE",
-                            expression, out error);
-                }
-
                 code.instructions.Add(new SlideCodeInstruction
                 {
                     command = active.Value,
@@ -149,8 +150,8 @@ namespace MajdataCore
                 code.instructions.Count < 2 ||
                 code.instructions[^1].command != SlideCodeCommand.Key)
                 return Fail(
-                    "SlideCode 必须以 K1-K8 结束",
-                    "SLIDECODE MUST END WITH K1-K8",
+                    "SlideCode 必须以 K 加终点结束",
+                    "SLIDECODE MUST END WITH K AND A POSITION",
                     expression, out error);
 
             for (var index = 2; index < code.instructions.Count; index++)
@@ -229,8 +230,39 @@ namespace MajdataCore
             return Math.Sqrt(x * x + y * y) < orbit.Radius - 0.000001d;
         }
 
+        public static bool EndsWithLine(SlideCodeData code)
+        {
+            var previous = code.instructions[^2];
+            if (!previous.IsOrbit) return true;
+            var orbit = OrbitFor(previous.parameter);
+            var end = Node(code.instructions[^1]);
+            var x = end.X - orbit.Center.X;
+            var y = end.Y - orbit.Center.Y;
+            return Math.Abs(Math.Sqrt(x * x + y * y) - orbit.Radius) > 0.000001d;
+        }
+
+        public static System.Numerics.Complex EndpointPosition(SlidePositionData position)
+        {
+            if (position.area == 'C') return System.Numerics.Complex.Zero;
+            var radius = position.area switch { 'K' => 4.8d, 'A' or 'D' => 4.1d, 'B' => 2.3d, 'E' => 3d, _ => 0d };
+            var angle = (position.area is 'K' or 'A' or 'B' ? 112.5d : 135d) - position.position * 45d;
+            if (position.IsKey && position.isDZone) angle += 22.5d;
+            return System.Numerics.Complex.FromPolarCoordinates(radius, angle * Math.PI / 180d);
+        }
+
+        public static int EndpointSensor(SlidePositionData position) => position.area switch
+        {
+            'C' => 16, 'B' => position.position + 7, 'D' => position.position + 16, 'E' => position.position + 24,
+            'K' when position.isDZone => position.position + 16, _ => position.position - 1
+        };
+
         private static Point Node(SlideCodeInstruction instruction)
         {
+            if (instruction.endpoint != null && (instruction.endpoint.IsTouch || instruction.endpoint.isDZone))
+            {
+                var point = EndpointPosition(instruction.endpoint);
+                return new Point(point.Real, point.Imaginary);
+            }
             if (instruction.command == SlideCodeCommand.C)
                 return new Point(0d, 0d);
             const double radius = 4.8d;

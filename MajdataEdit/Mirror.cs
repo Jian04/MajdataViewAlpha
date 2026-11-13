@@ -59,8 +59,6 @@ internal static class Mirror
         { '2', '3' },
         { '8', '5' },
         { '1', '4' },
-        { '<', '>' },
-        { '>', '<' },
         { 'q', 'p' },
         { 'p', 'q' },
         { 'z', 's' },
@@ -126,6 +124,19 @@ internal static class Mirror
         while (index < str.Length)
         {
             var protectedEnd = FindProtectedRangeEnd(str, index);
+            if (str[index] == '~')
+            {
+                if (SlidePathParser.TryReadTrajectoryBorrow(str, index, out var path, out var pathEnd))
+                {
+                    result.Append(MirrorPlainText(str[plainStart..index], type));
+                    result.Append("~[").Append(NoteMirrorHandle(path, type)).Append(']');
+                    index = plainStart = pathEnd;
+                    continue;
+                }
+                if (SlidePathParser.TryReadRadiusOverride(str, index, new SlidePositionData(), out var suffixEnd) ==
+                    RadiusOverrideResult.Applied)
+                    protectedEnd = suffixEnd;
+            }
             if (protectedEnd < 0 && TryMirrorSlideCode(str, index, type, out var codeEnd, out var mirroredCode))
             {
                 if (index > plainStart) result.Append(MirrorPlainText(str[plainStart..index], type));
@@ -154,25 +165,25 @@ internal static class Mirror
     private static bool TryMirrorSlideCode(string text, int start, HandleType type, out int end, out string transformed)
     {
         end = start; transformed = "";
-        if (text[start] is < '1' or > '8') return false;
-        int cursor = start + 1;
+        if (!SlidePathParser.TryReadPosition(text, start, out _, out var cursor)) return false;
         while (cursor < text.Length && (text[cursor] is >= '0' and <= '9' or 'A' or 'B' or 'C' or 'P' or 'Q')) cursor++;
-        if (cursor + 1 >= text.Length || text[cursor] != 'K' || text[cursor + 1] is < '1' or > '8') return false;
-        end = cursor + 2;
+        if (cursor >= text.Length || text[cursor] != 'K' || !SlidePathParser.TryReadPosition(text, cursor + 1, out _, out end)) return false;
         var source = text[start..end];
         if (!SlideCodeParser.TryParse(source, out var code, out _)) return false;
         var chars = source.ToCharArray();
         foreach (var instruction in code.instructions)
         {
-            if (instruction.command == SlideCodeCommand.C) continue;
-            int position = instruction.offset + instruction.length - 1;
+            if (instruction.command == SlideCodeCommand.C || instruction.endpoint?.area == 'C') continue;
+            int position = instruction.endpoint == null ? instruction.offset + instruction.length - 1 :
+                instruction.offset + (instruction.command == SlideCodeCommand.Key ? 1 : 0) + (instruction.endpoint.IsTouch ? 1 : 0);
             var digit = source[position];
             bool orbit = instruction.IsOrbit;
+            var dPoint = instruction.endpoint != null && (instruction.endpoint.isDZone || instruction.endpoint.area is 'D' or 'E');
             if (orbit && digit is '0' or '9') continue;
             chars[position] = type switch
             {
-                HandleType.LRMirror => (orbit ? MIRROR_LEFT_RIGHT_SPECIAL_MAP : MIRROR_LEFT_RIGHT_MAP)[digit],
-                HandleType.UDMirror => (orbit ? MIRROR_UPSIDE_DOWN_SPECIAL_MAP : MIRROR_UPSIDE_DOWN_MAP)[digit],
+                HandleType.LRMirror => (orbit || dPoint ? MIRROR_LEFT_RIGHT_SPECIAL_MAP : MIRROR_LEFT_RIGHT_MAP)[digit],
+                HandleType.UDMirror => (orbit || dPoint ? MIRROR_UPSIDE_DOWN_SPECIAL_MAP : MIRROR_UPSIDE_DOWN_MAP)[digit],
                 HandleType.HalfRotation => (char)('1' + (digit - '1' + 4) % 8),
                 HandleType.Rotation45 => ROTATE_CW_45_MAP[digit],
                 HandleType.CcwRotation45 => ROTATE_CCW_45_MAP[digit],
@@ -180,8 +191,9 @@ internal static class Mirror
             };
         }
         if (type is HandleType.LRMirror or HandleType.UDMirror)
-            for (int i = 0; i < chars.Length; i++)
-                chars[i] = chars[i] == 'P' ? 'Q' : chars[i] == 'Q' ? 'P' : chars[i];
+            foreach (var instruction in code.instructions)
+                if (instruction.IsOrbit && chars[instruction.offset] is 'P' or 'Q')
+                    chars[instruction.offset] = chars[instruction.offset] == 'P' ? 'Q' : 'P';
         transformed = new string(chars);
         return true;
     }

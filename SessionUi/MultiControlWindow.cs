@@ -152,7 +152,7 @@ public sealed class MultiControlWindow : Window
         var layout = new StackPanel(); layout.Children.Add(SessionTheme.Text("录制合成画布", size: 16));
         var hint = SessionTheme.Text("拖动摆放；点击画面设置它的宽高和位置。黑色区域就是最终视频范围。", true);
         hint.Margin = new Thickness(0, 8, 0, 12); layout.Children.Add(hint);
-        canvas.Background = SessionTheme.Brush("WindowBackground", "#20242B"); layout.Children.Add(canvas);
+        SessionTheme.BindBrush(canvas, Panel.BackgroundProperty, "WindowBackground", "#20242B"); layout.Children.Add(canvas);
         canvas.SizeChanged += (_, _) => DrawLayout();
         width.TextChanged += (_, _) => DrawLayout(); height.TextChanged += (_, _) => DrawLayout();
         selection.Margin = new Thickness(0, 10, 0, 10); layout.Children.Add(selection);

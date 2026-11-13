@@ -1,4 +1,4 @@
-using Assets.Scripts.Interfaces;
+﻿using Assets.Scripts.Interfaces;
 using Assets.Scripts.Types;
 using System;
 using System.Collections.Generic;
@@ -48,22 +48,19 @@ public class WifiDrop : NoteLongDrop,IFlasher
     public float guideStarScaleX = 1f;
     public float guideStarScaleY = 1f;
     private Vector2? liveScaleDefault;
+    private readonly Dictionary<Transform,Vector3> authoredBarScales = new();
     private Vector2? liveGuideStarScaleDefault;
 
     public override void ApplyLiveScale(Vector2? scale)
     {
         liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
-        var previous = new Vector2(noteScaleX, noteScaleY);
         var value = scale ?? liveScaleDefault.Value;
         noteScaleX = value.x;
         noteScaleY = value.y;
-        if (previous.x == 0f || previous.y == 0f)
-            return;
-
-        var ratio = new Vector3(value.x / previous.x, value.y / previous.y, 1f);
+        var ratio = new Vector3(value.x,value.y,1f);
         foreach (var bar in slideBars)
             if (bar != null)
-                bar.transform.localScale = Vector3.Scale(bar.transform.localScale, ratio);
+                bar.transform.localScale = Vector3.Scale(authoredBarScales[bar.transform], ratio);
     }
 
     // COLOR paints a slide's route and leaves the moving guide star to the "star"
@@ -80,6 +77,14 @@ public class WifiDrop : NoteLongDrop,IFlasher
         foreach (var renderer in sbRender)
             if (renderer != null)
                 yield return renderer;
+    }
+
+    internal override void CollectAngleTargets(List<Transform> body, List<Transform> guide)
+    {
+        foreach (var renderer in sbRender)
+            if (renderer != null) body.Add(renderer.transform);
+        foreach (var renderer in spriteRenderer_star)
+            if (renderer != null) guide.Add(renderer.transform);
     }
 
     public override void ApplyLiveGuideStarColor(Color? color)
@@ -219,6 +224,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
 
         for (var i = 0; i < slideBars.Count; i++)
         {
+            authoredBarScales[slideBars[i].transform] = slideBars[i].transform.localScale;
             slideBars[i].transform.localScale = Vector3.Scale(
                 slideBars[i].transform.localScale, new Vector3(noteScaleX, noteScaleY, 1f));
             var sr = slideBars[i].GetComponent<SpriteRenderer>();
@@ -246,6 +252,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
             sr.sortingOrder = sortIndex--;
             sr.sortingLayerName = "Slide";
         }
+        StarDisplayOrder.RegisterTrack(gameObject, sbRender);
         var sManagerObj = GameObject.Find("Sensors");
         sManager = sManagerObj.GetComponent<SensorManager>();
 
@@ -579,6 +586,7 @@ public class WifiDrop : NoteLongDrop,IFlasher
             var alpha = fadeInTime >= -0.0001f
                 ? (startiming >= 0f ? 1f : 0f)
                 : Mathf.InverseLerp(fadeInTime, 0f, startiming);
+            alpha = propertyAnimation?.SlideFadeProgress(timeProvider.AudioTime) ?? alpha;
             setSlideBarAlpha(alpha);
             return;
         }

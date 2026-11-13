@@ -22,19 +22,37 @@ internal static class MediaTools
         return File.Exists(cache) ? cache : null;
     }
 
-    public static async Task<string?> BuildTimelineAudioAsync(string chartDirectory)
+    private static readonly Dictionary<string, Task<string?>> audioBuilds = new(StringComparer.OrdinalIgnoreCase);
+
+    public static Task<string?> BuildTimelineAudioAsync(string chartDirectory)
     {
         var project = MediaTimelineProject.LoadWorking(chartDirectory);
         var clips = ResolveAudioClips(chartDirectory, project);
         if (clips.Count == 0)
-            return null;
+            return Task.FromResult<string?>(null);
         if (TryGetPassThroughAudio(clips, out var source))
-            return source;
+            return Task.FromResult<string?>(source);
 
         var output = GetTimelineAudioCachePath(chartDirectory, clips);
         if (File.Exists(output))
-            return output;
+            return Task.FromResult<string?>(output);
+        lock (audioBuilds)
+        {
+            if (audioBuilds.TryGetValue(output, out var running)) return running;
+            var task = Task.Run(() => BuildCachedTimelineAudioAsync(output, clips));
+            audioBuilds.Add(output, task);
+            return task;
+        }
+    }
 
+    private static async Task<string?> BuildCachedTimelineAudioAsync(string output, IReadOnlyList<TimelineAudioClip> clips)
+    {
+        try { return await RenderTimelineAudioAsync(output, clips).ConfigureAwait(false); }
+        finally { lock (audioBuilds) audioBuilds.Remove(output); }
+    }
+
+    private static async Task<string?> RenderTimelineAudioAsync(string output, IReadOnlyList<TimelineAudioClip> clips)
+    {
         var ffmpeg = FindFfmpeg();
         var cacheDirectory = Path.GetDirectoryName(output)!;
         Directory.CreateDirectory(cacheDirectory);
@@ -72,6 +90,30 @@ internal static class MediaTools
         {
             if (File.Exists(temporary))
                 File.Delete(temporary);
+        }
+    }
+
+    internal static void PruneTimelineAudioCache(string chartDirectory, string? activeAudioPath)
+    {
+        var cache = Path.GetFullPath(Path.Combine(chartDirectory, "media", ".cache"));
+        if (!Directory.Exists(cache)) return;
+        lock (audioBuilds)
+        {
+            if (audioBuilds.Keys.Any(path => Path.GetDirectoryName(path)!.Equals(cache, StringComparison.OrdinalIgnoreCase))) return;
+            var active = activeAudioPath == null ? null : Path.GetFullPath(activeAudioPath);
+            foreach (var path in Directory.EnumerateFiles(cache, "timeline_audio_*.wav"))
+            {
+                var name = Path.GetFileNameWithoutExtension(path);
+                // Only generated, completed mixes; a concurrent render owns its .tmp.wav.
+                if (name.Length != "timeline_audio_".Length + 16 ||
+                    path.Equals(active, StringComparison.OrdinalIgnoreCase)) continue;
+                try { File.Delete(path); }
+                catch (IOException error) { Trace.TraceWarning("媒体缓存仍被占用：" + path + ": " + error.Message); }
+                catch (UnauthorizedAccessException error) { Trace.TraceWarning("无法清理媒体缓存：" + path + ": " + error.Message); }
+            }
+            if (!Directory.EnumerateFileSystemEntries(cache).Any()) Directory.Delete(cache);
+            var media = Path.GetDirectoryName(cache)!;
+            if (!Directory.EnumerateFileSystemEntries(media).Any()) Directory.Delete(media);
         }
     }
 
@@ -228,7 +270,10 @@ internal static class MediaTools
                 $"enable='between(t,{Fmt(clip.TimelineStart)},{Fmt(clip.TimelineEnd)})'[{output}]");
             previous = output;
         }
-        filters.Add($"[{previous}]fps={options.FrameRate},format=yuv420p[vout]");
+        // An overlay can end between output frame timestamps. Supply the final
+        // frame's duration; -t still trims the encoded result to the timeline end.
+        filters.Add($"[{previous}]tpad=stop_mode=clone:stop_duration={Fmt(1d / options.FrameRate)}," +
+                    $"fps={options.FrameRate},format=yuv420p[vout]");
         var audioMap = hasAudio ? $" -map {audioInputIndex}:a:0" : string.Empty;
         var audioCodec = hasAudio ? $" -c:a aac -b:a {audioBitrate}" : string.Empty;
         var filter = Q(string.Join(";", filters));
@@ -375,6 +420,52 @@ internal static class MediaTools
                 return path;
         }
         throw new FileNotFoundException(MainWindow.GetLocalizedString("FfmpegNotFound"));
+    }
+
+    internal static byte[] ReadVideoPoster(string path)
+    {
+        using var process = new Process { StartInfo = new ProcessStartInfo(FindFfmpeg()) {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true } };
+        foreach (var argument in new[] { "-nostdin", "-v", "error", "-i", path, "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1" })
+            process.StartInfo.ArgumentList.Add(argument);
+        process.Start();
+        var error = process.StandardError.ReadToEndAsync();
+        using var image = new MemoryStream();
+        process.StandardOutput.BaseStream.CopyTo(image);
+        process.WaitForExit();
+        if (process.ExitCode != 0 || image.Length == 0)
+            throw new IOException("视频封面读取失败：" + path + "\n" + error.GetAwaiter().GetResult());
+        return image.ToArray();
+    }
+
+    internal static async Task<double> ProbeVideoDurationAsync(string path)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo(FindFfmpeg())
+            {
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardError = true, RedirectStandardOutput = true
+            }
+        };
+        foreach (var argument in new[] { "-nostdin", "-hide_banner", "-i", path })
+            process.StartInfo.ArgumentList.Add(argument);
+        process.Start();
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        var description = await error.ConfigureAwait(false) + await output.ConfigureAwait(false);
+        // -i without an output deliberately exits nonzero after printing container metadata.
+        var match = System.Text.RegularExpressions.Regex.Match(description,
+            @"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)");
+        if (match.Success)
+        {
+            var seconds = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) * 3600d +
+                double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture) * 60d +
+                double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+            if (seconds > 0d) return seconds;
+        }
+        throw new InvalidDataException("无法读取媒体时长：" + path + "\n" + description);
     }
 
     private static async Task RunFfmpegAsync(string ffmpeg, string args)
@@ -614,10 +705,6 @@ internal static class MediaTools
         if (clip.TrackIndex != 0 || clip.TimelineStart > 0.0001d ||
             clip.SourceOffset > 0.0001d || clip.Duration + 0.02d < clip.SourceDuration ||
             Math.Abs(clip.Volume - 1d) > 0.0001d || clip.FadeIn > 0.0001d || clip.FadeOut > 0.0001d)
-            return false;
-        var fileName = Path.GetFileName(clip.SourcePath);
-        if (!fileName.Equals("track.mp3", StringComparison.OrdinalIgnoreCase) &&
-            !fileName.Equals("track.ogg", StringComparison.OrdinalIgnoreCase))
             return false;
         source = clip.SourcePath;
         return true;

@@ -11,7 +11,7 @@
         Title="{lex:Loc Key=SoundSettings}" Height="381" Width="1274" Background="{DynamicResource WindowBackground}" MinHeight="290"
         MinWidth="646" ResizeMode="NoResize" Loaded="SoundSettingWindow_Loaded" Closing="SoundSettingWindow_Closing">
     <Grid>
-        <Grid HorizontalAlignment="Left" Margin="10,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="10,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundBgmTip}">
             <Label x:Name="BGM_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -27,7 +27,7 @@
             <ScrollViewer HorizontalAlignment="Left" Height="100" Margin="110,15,-90,0" VerticalAlignment="Top"
                           Width="100" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="135,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="135,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundAnswerTip}">
             <Label x:Name="Answer_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -41,7 +41,7 @@
             <Label Content="Answer" Margin="30,21,32,0" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="260,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="260,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundJudgeTip}">
             <Label x:Name="Judge_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -55,7 +55,7 @@
             <Label Content="Judge" Margin="30,21,32,0" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="385,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="385,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundSlideTip}">
             <Label x:Name="Slide_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -69,7 +69,7 @@
             <Label Content="Slide" Margin="30,21,32,0" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="510,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="510,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundBreakTip}">
             <Label x:Name="Break_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -83,7 +83,7 @@
             <Label Content="Break" Margin="30,21,32,0" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="635,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="635,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundBreakSlideTip}">
             <Label x:Name="BreakSlide_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -97,7 +97,7 @@
             <Label Content="BreakSlide" Margin="0,21,0,0" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="760,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="760,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundExTip}">
             <Label x:Name="EX_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -112,7 +112,7 @@
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="885,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="885,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundTouchTip}">
             <Label x:Name="Touch_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -127,7 +127,7 @@
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
                    HorizontalContentAlignment="Center" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="1010,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="1010,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundHanabiTip}">
             <Label x:Name="Hanabi_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"
@@ -141,7 +141,7 @@
             <Label Content="Hanabi" Margin="30,21,32,0" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" />
         </Grid>
-        <Grid HorizontalAlignment="Left" Margin="1135,10,0,56" Width="120" Background="#FF272727"
+        <Grid HorizontalAlignment="Left" Margin="1135,10,0,56" Width="120" Background="{DynamicResource PreviewBackground}"
               ToolTip="{lex:Loc Key=SoundMineTip}">
             <Label x:Name="Mine_Value" Content="100%" Margin="23,240,23,2" VerticalAlignment="Top"
                    Foreground="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" Width="74"

@@ -1,4 +1,4 @@
-using MajdataCore;
+﻿using MajdataCore;
 using System.Text.RegularExpressions;
 namespace MajdataEdit;
 
@@ -7,7 +7,7 @@ internal static class AlphaGuideFormatter
 {
     internal static string[] Format(string source, string language = "zh")
     {
-        source = Regex.Replace(source, @"旧(?:版|写法)[^。\r\n]*。", "");
+        source = source.Replace("旧写法仍然有效。", "");
         var lines=source.Replace("\r\n","\n").Replace('\r','\n').Split('\n')
             .SelectMany(line => line.StartsWith("S ") || line.StartsWith("E ")
                 ? line[2..].Split(" / ").Select(form => line[..2] + form) : new[] { line }).ToArray();
@@ -33,9 +33,9 @@ internal static class AlphaGuideFormatter
                 syntax=commandNames.Select(name=>"S "+AlphaCommandExamples.Header(name, language)).ToArray();
             var chinese=language is not ("en" or "ja");
             if(syntax.Length>0) { result.Add(chinese ? "#### 写法" : language=="ja" ? "#### 書式" : "#### Syntax"); result.AddRange(syntax); }
-            var examples=commandNames.Length>0
-                ? commandNames.SelectMany(name=>AlphaCommandExamples.Examples(name).Split(" / ")).Select(s=>"E "+s).ToArray()
-                : body.Where(l=>l.StartsWith("E ")).ToArray();
+            var examples=body.Where(l=>l.StartsWith("E ")).Concat(commandNames
+                .SelectMany(name=>AlphaCommandExamples.Examples(name).Split(" / ")).Select(s=>"E "+s))
+                .Distinct().ToArray();
             if(examples.Length>0) { result.Add(chinese ? "#### 示例" : language=="ja" ? "#### 使用例" : "#### Examples"); result.AddRange(examples); }
             var details=body.Where(l=>l.Length>0 && l != description && !l.StartsWith("S ") && !l.StartsWith("E ")).Distinct().ToArray();
             var parameterHeading=chinese ? "#### 参数与影响" : language=="ja" ? "#### 引数と効果" : "#### Parameters and effects";
@@ -75,29 +75,31 @@ internal static class AlphaGuideFormatter
     }
 
     private static IEnumerable<string> ParameterEffects(string command) => command switch {
-        "SV" => new[]{"SV · 倍率：1 原速、2 双速、0 停止、负值倒退。全局默认控制 blockarea，不控制 Slide 轨迹；显式 slide= 改变轨迹运动。", "SV · blockarea=倍率：单独控制噪域预警。SV=2 的预警提前量减半，与同流速 Touch 同时出现。类型=NULL 恢复跟随全局值。"},
+        "SV" => new[]{"SV · 倍率：1 原速、2 双速、0 停止、负值倒退。全局默认控制 blockarea，不控制 Slide 轨迹及其运动星；显式 slide= 改变轨迹运动。", "SV · blockarea=倍率：单独控制噪域预警。SV=2 的预警提前量减半，与同流速 Touch 同时出现。SV*NULL 恢复全局1倍；类型=NULL 只恢复该类型跟随全局。"},
         "HS" => new[]{"HS · 倍率：改变出现与下落速度；全局默认控制 blockarea，不影响 Slide；slide= 只改变轨迹渐入，不改变移动时长。", "HS · blockarea=倍率：单独控制噪域预警，使用 Touch 的速度公式。类型=NULL 恢复默认倍率。"},
         "SPAWN" => new[]{"SPAWN · 半径：0 中心、4.8 本侧判定线、-4.8 对侧判定线；允许圈外有限数值。NULL 恢复默认出生位置。"},
         "DESTROY" => new[]{"DESTROY · 半径：设置视觉终点，判定时刻不变；NULL 恢复 4.8。"},
         "SPAWNMODE" => new[]{"SPAWNMODE · 模式：Rewind 在回退到出生点之前隐藏；Once 出生一次后保持可见；NULL 恢复 Rewind。"},
         "BOUNCE" => new[]{"BOUNCE · 时长：控制从判定线跳起再返回的完整往返时间；秒数或拍数必须大于 0。NULL / False 取消往返运动。"},
         "FAKE" => new[]{"FAKE · 状态：True 仅显示，False 恢复正常；类型=状态只作用于指定音符类型。"},
-        "COLOR" or "COLORV" => new[]{command+" · 颜色：6 位十六进制 RGB；FFFFFF 白色。全局默认不控制 blockarea；blockarea= 指定噪域。分类型值优先；COLORV 也修改已出现音符。"},
+        "COLOR" or "COLORV" => new[]{command+" · 颜色：6 位十六进制 RGB；FFFFFF 白色。全局默认不控制 mine、blockarea；分别用 mine=、blockarea= 单独设置。分类型值优先；COLORV 也修改已出现音符。",command+" · 渐变：(起始RGB,终止RGB,持续时间,函数[,参数])，RGB 三个通道分别插值。COLOR 从每颗音符出现时开始；COLORV 从指令所在槽位开始，结束后保持终止颜色。NULL 恢复原有颜色。"},
         "SIZE" or "SIZEV" => new[]{command+" · 倍率：1 原大小，0.5 一半；(X,Y) 分别缩放宽高。全局不控制轨迹或 blockarea；blockarea= 指定噪域。slide= 控制轨迹，slidestar= 控制运动星。SIZEV 也修改已出现音符。"},
-        "ALPHA" or "ALPHAV" => new[]{command+" · 不透明度：0 隐藏、1 完全可见。全局默认不控制 blockarea；blockarea= 指定噪域。只改显示，ALPHAV 也修改已出现音符。"},
+        "ALPHA" or "ALPHAV" => new[]{command+" · 不透明度：0 隐藏、1 完全可见。默认不控制噪域，使用 blockarea= 指定；引导圆弧跟随对应音符透明度，使用 tapline= 单独覆盖。只改显示，ALPHAV 也修改已出现音符。"},
         "JLINE" => new[]{"JLINE · 参数 1 颜色：RRGGBB 或 RRGGBBAA；NULL 恢复皮肤颜色。参数 2 过渡时间：可省略，省略立即改变。"},
         "TEXT" => new[]{"TEXT · 参数 1 内容：双引号内的文字。参数 2 持续时间：可省略，省略保持到相同 index 的下一条字幕。",
             "TEXT · x / y：字幕位置；size：字号；font：字体名；index：任意非负整数的独立字幕通道。",
-            "TEXT · style：Fade 渐入或 Typewriter 逐字出现；transition：渐入时长或逐字显示完成时长。"},
+            "TEXT · style：Fade 渐入或 Typewriter 逐字出现；transition：渐入时长或逐字显示完成时长。",
+            "TEXT · color：6 位十六进制 RGB，默认 FFFFFF 白色；可写在第 10 个位置，或写 color=00BBFF。字体路径相对于 Fonts。"},
         "JUDGELINEEXPAND" => new[]{"JUDGELINEEXPAND · 参数 1 开关：True 展开，False 立即移除附加白线，保留原判定线；True 后的参数 2 过渡时间默认 0 秒，参数 3 方向默认 1 / CW 顺时针，-1 / CCW 逆时针，目标均为 22.5°。"},
         "JUDGELINE" => new[]{"JUDGELINE · 参数 1 样式：0 / False 关闭，1 默认，2 判定区，3 Magical；Default 恢复设置中的判定线样式；参数 2 过渡时间可省略。"},
         "SHOWJUDGETEXT" or "SHOWJUDGEINFO" or "SHOWCOMBOINFO" => new[]{command+" · 参数 1 开关：True 显示，False 隐藏，Default 恢复设置中的开关；参数 2 过渡时间：可省略，省略立即切换。"},
         "COMBODISPLAY" => new[]{"COMBODISPLAY · 参数 1 模式：选择中央显示的数据，None 隐藏，Default 恢复设置中的中央显示模式；参数 2 过渡时间可省略。"},
         "OUTERBRIGHTNESS" or "INNERBRIGHTNESS" => new[]{command+" · 参数 1 明暗值：0 全亮，1 最暗，Default 恢复设置中的亮度；参数 2 过渡时间可省略。"},
         "HUE" => new[]{command+" · 参数 2 角度：单位为度，允许正负；参数 3 为可省略的过渡时间。False 关闭，Instant 的末参数为必填持续时间。"},
-        "ROTATE" => new[]{"ROTATE · 角度：单位为度，允许正负；True 的时间为可省略过渡时间，Instant 的时间为必填持续时间；False 关闭。", "ROTATE · 旋转 PV：末尾可附加 True / False，默认 False，仅旋转谱面。True 同时旋转歌曲 PV 和 PVOVERLAY；切换和关闭均支持过渡、回拖。"},
+        "ROTATE" => new[]{"ROTATE · 只旋转音符、轨迹及对应击打特效，判定线与界面文字不旋转。角度单位为度，允许正负；False 关闭。", "ROTATE · 旋转 PV：末尾可附加 True / False，默认 False。True 同时旋转歌曲 PV 和 PVOVERLAY；切换和关闭均支持过渡、回拖。"},
+        "FLIP" => new[]{"FLIP · 沿经过谱面中心的轴翻转，0° 为水平轴、90° 为垂直轴。末尾“仅音符”开关默认 True，只影响音符、轨迹及对应击打特效；False 翻转整幅画面。Instant 支持持续时间，无过渡，不改变判定。"},
         "TINT" => new[]{"TINT · 参数 2 颜色：RRGGBB；参数 3 强度：0 保留原图，1 完全染成目标色；参数 4 为过渡时间（True）或持续时间（Instant）。"},
-        "MOVE" => new[]{"MOVE · 参数 2 dx：正数向右；参数 3 dy：正数向上；参数 4 为过渡时间（True）或持续时间（Instant）。"},
+        "MOVE" => new[]{"MOVE · 参数 2 dx：正数向右；参数 3 dy：正数向上；参数 4 为过渡时间（True）或持续时间（Instant）。末尾可附加移动 PV 的 True / False，默认 False。"},
         "SHAKE" => new[]{"SHAKE · 参数 2 强度：1 约为画面尺寸的 5%；参数 3 频率：每秒震动次数；参数 4 角度：0 水平、90 垂直，省略为二维震动；末参数为时间。"},
         "VIGNETTE" => new[]{"VIGNETTE · 参数 2 强度：越大圆形可见区域越小；参数 3 过渡时间；参数 4 渐变：默认 True，False 为硬边。"},
         "ZOOM" => new[]{"ZOOM · 参数 2 倍率：1 原大小，0.6 缩小，1.5 放大；参数 3 过渡时间可省略。"},

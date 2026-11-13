@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using MajdataCore;
 
 internal class Majson
@@ -11,6 +11,7 @@ internal class Majson
     public string level = "1";
     public int songDetailStyle = 0;
     public List<SimaiTimingPoint> timingList = new();
+    public List<BeatDisplayPoint> beatDisplayTable = new();
     public string title = "default";
     public string wholeBpm = "";
     public string utageLabel = "宴";
@@ -26,6 +27,7 @@ internal class Majson
     public List<ColorChange> colorTable = new();
     public List<SizeChange> sizeTable = new();
     public List<AlphaChange> alphaTable = new();
+    public List<AngleChange> angleTable = new();
     public List<DisplayChange> displayTable = new();
     public List<SubtitleChange> subtitleTable = new();
     public List<EffectChange> effectTable = new();
@@ -42,11 +44,13 @@ internal class ColorChange
     public string color = string.Empty;
     public float duration;
     public bool live;
+    public MajdataCore.NoteValueTransition transition;
 }
 
 /// <summary>A timed note scale override.</summary>
 internal class SizeChange
 {
+    public NoteValueTransition transition;
     public double time;
     public int sourcePosition;
     public int streamIndex;
@@ -60,6 +64,7 @@ internal class SizeChange
 
 internal class SpeedChange
 {
+    public NoteValueTransition transition;
     public double time;
     public int sourcePosition;
     public int streamIndex;
@@ -70,6 +75,7 @@ internal class SpeedChange
 
 internal class SpawnChange
 {
+    public NoteValueTransition transition;
     public double time;
     public int sourcePosition;
     public int streamIndex;
@@ -100,6 +106,7 @@ internal class BounceChange
 
 internal class DestroyChange
 {
+    public NoteValueTransition transition;
     public double time;
     public int sourcePosition;
     public int streamIndex;
@@ -121,6 +128,7 @@ internal class FakeChange
 /// <summary>A timed note opacity override.</summary>
 internal class AlphaChange
 {
+    public NoteValueTransition transition;
     public double time;
     public int sourcePosition;
     public int streamIndex;
@@ -128,6 +136,18 @@ internal class AlphaChange
     public float alpha;
     public bool reset;
     public bool live;
+}
+
+internal class AngleChange
+{
+    public double time;
+    public int sourcePosition;
+    public int streamIndex;
+    public string noteType;
+    public float angle;
+    public bool live;
+    public bool reset;
+    public NoteValueTransition transition;
 }
 
 public class DisplayChange
@@ -144,9 +164,7 @@ public class SubtitleChange
     public double time;
     public string text;
     public float duration = -1f;
-    // Left edge and top edge as a fraction of the screen, on top of the margin a
-    // caption has always had, so a caption that asks for neither lands exactly
-    // where captions have always landed. Zero point size means the same.
+    // Screen fractions; origin selects both the coordinate origin and text alignment.
     public float x;
     public float y;
     public float size;
@@ -154,6 +172,8 @@ public class SubtitleChange
     public int index;
     public string style = "Fade";
     public float transition;
+    public string color = "FFFFFF";
+    public string origin = "TopLeft";
 }
 
 public class EffectChange
@@ -161,10 +181,13 @@ public class EffectChange
     public EffectChange ForPV()
     {
         var copy = (EffectChange)MemberwiseClone();
-        if (!rotatePV) copy.intensity = 0f;
+        if (effect == "Rotate" && !rotatePV || effect == "Move" && !movePV)
+        { copy.intensity = 0f; copy.paramA = copy.paramB = 0f; }
         return copy;
     }
     public bool rotatePV = false;
+    public bool flipNotesOnly = true;
+    public bool movePV = false;
     public bool gradient = true;
     public double time;
     public string effect;
@@ -216,6 +239,15 @@ internal class SimaiTimingPoint
     public bool isEach;
     public bool? isEachInStream;
     public double time;
+}
+
+internal class BeatDisplayPoint
+{
+    public double time;
+    public float bpm;
+    public int meterNumerator;
+    public int meterDenominator;
+    public int subdivision;
 }
 
 internal enum SimaiNoteType
@@ -329,8 +361,11 @@ internal class EditRequestjson
     public string tapSkin = "dx";
     public string holdSkin = "dx";
     public string starSkin = "dx";
+    public string slideSkin;
     public bool pinkStar;
     public string standbyTheme = "dark";
+    public string standbyBackgroundColor = "";
+    public bool showPausedJudgeAreas = true;
     public string introBgTheme = "magical";
     public bool previewFlow;
     public bool deferPlaybackStart;
@@ -339,9 +374,12 @@ internal class EditRequestjson
     public bool showAllPerfect = true;
     public bool showGeneratedMark;
     public int viewDisplayFontPreset;
+    public string viewDisplayFontFile = "";
+    public int viewTopLeftDisplayMode;
     public bool enableVisualChartEditor = true;
     public int songDetailStyle = 0;
     public float chartLength;
+    public float recordEndTime = -1f;
     public int recordFrameRate = 30;
     public string recordLayers = "";
     public string recordFileName = "out.mp4";
@@ -382,7 +420,8 @@ internal enum EditorControlMethod
     SetDisplay,
     Preview,
     TimelinePreview,
-    Seek
+    Seek,
+    RefreshAssets
 }
 
 public enum EditorPlayMethod

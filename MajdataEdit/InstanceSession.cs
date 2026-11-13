@@ -62,7 +62,7 @@ public partial class MainWindow
         using var view = session.GetProcess(true);
         if (view?.MainWindowHandle is { } handle && handle != IntPtr.Zero)
         {
-            SetWindowText(handle, "MajdataViewAlpha v0.6.0" + (identityVisible ? marker : ""));
+            SetWindowText(handle, "MajdataViewAlpha v0.6.2" + (identityVisible ? marker : ""));
             SetIdentityBorder(handle, color);
         }
     }
@@ -102,6 +102,13 @@ public partial class MainWindow
     {
         if (AlphaSession.Current == null) return FindWindow(null, "MajdataView");
         using var process = AlphaSession.Current.GetProcess(true);
-        return process?.MainWindowHandle ?? IntPtr.Zero;
+        if (process == null) return IntPtr.Zero;
+        var handle = process.MainWindowHandle;
+        if (handle != IntPtr.Zero) return handle;
+        var path = System.IO.Path.Combine(AlphaSession.Current.DirectoryPath, "view-window");
+        if (!System.IO.File.Exists(path) || !long.TryParse(System.IO.File.ReadAllText(path), out var value)) return IntPtr.Zero;
+        handle = new IntPtr(value);
+        StartupWindowProcessId(handle, out var pid);
+        return pid == process.Id ? handle : IntPtr.Zero;
     }
 }

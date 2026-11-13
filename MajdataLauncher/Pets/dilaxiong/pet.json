@@ -18,5 +18,6 @@
     "recommendation": "review",
     "needs-input": "waiting",
     "error": "failed"
-  }
+  },
+  "mode": "codex"
 }

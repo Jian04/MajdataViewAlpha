@@ -1,4 +1,4 @@
-using Assets.Scripts.Types;
+﻿using Assets.Scripts.Types;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 
+[DefaultExecutionOrder(-9500)]
 public class ScreenRecorder : MonoBehaviour
 {
     public float CutoffTime;
@@ -27,6 +28,7 @@ public class ScreenRecorder : MonoBehaviour
 
     private bool isStarting;
     private bool isRecording;
+    private bool captureClockPending;
     private bool captureActive;
     private bool highLoadWarningShown;
     private float scheduledStopAt = -1f;
@@ -51,6 +53,17 @@ public class ScreenRecorder : MonoBehaviour
     // Update is called once per frame
     private void Update()
     {
+        if (captureClockPending && isStarting)
+        {
+            captureClockPending = false;
+            // Arm before note Update, so the first captured image uses frame zero.
+            timeProvider?.BeginRecordingCapture(ShowSongDetail ? 5f : 0f);
+            MediaTimeline?.SetPlaybackActive(true);
+            if (ShowSongDetail) bgManager?.PlaySongDetail(-5f, timeProvider?.CurrentSpeed ?? 1f);
+            else bgManager?.HideSongDetail();
+            isStarting = false;
+            isRecording = true;
+        }
         if(isRecording)
         {
             if (loader == null)
@@ -101,6 +114,7 @@ public class ScreenRecorder : MonoBehaviour
         var wasRecording = isRecording;
         isStarting = false;
         isRecording = false;
+        captureClockPending = false;
         if (timeProvider != null)
             timeProvider.isStart = false;
         if (cancelledStartup)
@@ -169,7 +183,9 @@ public class ScreenRecorder : MonoBehaviour
             if (File.Exists(Path.Combine(maidata_path, outputName)))
                 File.Delete(Path.Combine(maidata_path, outputName));
             var audioTempoFilter = BuildAudioTempoFilter(timeProvider?.CurrentSpeed ?? 1f);
-            arguments = string.Format(
+            arguments = outputName.EndsWith(".gif", System.StringComparison.OrdinalIgnoreCase)
+                ? RecordingEncoder.BuildGifArguments(Screen.width, Screen.height, FrameRate, outputfile)
+                : string.Format(
                 CultureInfo.InvariantCulture,
                 File.ReadAllText(Path.Combine(Application.streamingAssetsPath, "ffarguments.txt")).Trim().Replace("majdataRec", MajdataCore.AlphaSession.PipeName),
                 Screen.width, Screen.height,
@@ -235,9 +251,9 @@ public class ScreenRecorder : MonoBehaviour
                 }
                 yield return null;
             }
-            if (bgManager != null && !bgManager.IsPreparedForRecording)
+            if (bgManager != null && (!bgManager.IsPreparedForRecording || bgManager.PreparationError != null))
             {
-                AppendError(ViewLocalization.Text("PvPrewarmFailed"));
+                AppendError(bgManager.PreparationError ?? ViewLocalization.Text("PvPrewarmFailed"));
                 TryTerminateEncoder(p);
                 CleanupRecordingState();
                 yield break;
@@ -317,14 +333,8 @@ public class ScreenRecorder : MonoBehaviour
                     TryTerminateEncoder(p); CleanupRecordingState(); yield break;
                 }
             }
-            timeProvider?.BeginRecordingCapture(ShowSongDetail ? 5f : 0f);
-            MediaTimeline?.SetPlaybackActive(true);
-            if (ShowSongDetail)
-                bgManager?.PlaySongDetail(-5f, timeProvider?.CurrentSpeed ?? 1f);
-            else
-                bgManager?.HideSongDetail();
-            isStarting = false;
-            isRecording = true;
+            captureClockPending = true;
+            while (isStarting && captureClockPending) yield return null;
             long capturedFrames = 0;
             var maxCaptureFrames = CutoffTime > 0f
                 ? (long)System.Math.Ceiling((CutoffTime + (ShowSongDetail ? 5f : 0f) + 1f) * FrameRate)
@@ -542,6 +552,7 @@ public class ScreenRecorder : MonoBehaviour
         AlphaInstanceBadge.Recording = false;
         isStarting = false;
         isRecording = false;
+        captureClockPending = false;
         captureActive = false;
         var process = encoderProcess;
         encoderProcess = null;

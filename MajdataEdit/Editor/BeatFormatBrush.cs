@@ -102,6 +102,15 @@ internal static class BeatFormatBrush
         foreach (var token in tokens)
         {
             var textPart = StripBeatMarkers(token.Text);
+            var leadingLength = textPart.Length - textPart.TrimStart().Length;
+            var newline = leadingLength == 0 ? -1 : textPart.LastIndexOf('\n', leadingLength - 1, leadingLength);
+            if (newline >= 0)
+            {
+                FlushRun();
+                output.Append(textPart, 0, newline + 1);
+                textPart = textPart[(newline + 1)..];
+                currentBeat = BigInteger.Zero;
+            }
             if (string.IsNullOrWhiteSpace(textPart))
             {
                 if (token.HasComma)

@@ -5,16 +5,18 @@ namespace MajdataCore
 {
     public readonly struct ScrollPoint
     {
-        public ScrollPoint(double time, double cumulative, float multiplier)
+        public ScrollPoint(double time, double cumulative, float multiplier, float slope = 0f)
         {
             Time = time;
             Cumulative = cumulative;
             Multiplier = multiplier;
+            Slope = slope;
         }
 
         public double Time { get; }
         public double Cumulative { get; }
         public float Multiplier { get; }
+        public float Slope { get; }
     }
 
     public readonly struct ScrollChange
@@ -22,16 +24,18 @@ namespace MajdataCore
         public ScrollChange(
             double time,
             float multiplier,
-            int sourcePosition = 0)
+            int sourcePosition = 0, float slope = 0f)
         {
             Time = time;
             Multiplier = multiplier;
             SourcePosition = sourcePosition;
+            Slope = slope;
         }
 
         public double Time { get; }
         public float Multiplier { get; }
         public int SourcePosition { get; }
+        public float Slope { get; }
     }
 
     public enum SpawnVisualMode
@@ -183,13 +187,13 @@ namespace MajdataCore
                 if (index > 0)
                 {
                     var previous = effective[index - 1];
-                    cumulative += previous.Multiplier *
-                        (effective[index].Time - previous.Time);
+                    var dt = effective[index].Time - previous.Time;
+                    cumulative += previous.Multiplier * dt + .5d * previous.Slope * dt * dt;
                 }
                 result[index] = new ScrollPoint(
                     effective[index].Time,
                     cumulative,
-                    effective[index].Multiplier);
+                    effective[index].Multiplier, effective[index].Slope);
             }
             return result;
         }
@@ -277,7 +281,9 @@ namespace MajdataCore
 
             var index = FindPointIndex(curve, time);
             var point = curve[index];
-            return point.Cumulative + point.Multiplier * (time - point.Time);
+            var dt = time - point.Time;
+            return point.Cumulative + point.Multiplier * dt +
+                (dt > 0d ? .5d * point.Slope * dt * dt : 0d);
         }
 
         public static float GetMultiplier(
@@ -286,7 +292,8 @@ namespace MajdataCore
         {
             if (curve == null || curve.Count == 0)
                 return 1f;
-            return curve[FindPointIndex(curve, time)].Multiplier;
+            var point = curve[FindPointIndex(curve, time)];
+            return point.Multiplier + point.Slope * (float)Math.Max(0d, time - point.Time);
         }
 
         public static float GetScrollProgress(
@@ -425,9 +432,8 @@ namespace MajdataCore
                     continue;
 
                 var point = curve[index];
-                var endScroll = point.Cumulative +
-                    point.Multiplier * (segmentEnd - start);
-                if (Math.Abs(point.Multiplier) <= Epsilon)
+                var endScroll = GetCumulativeScroll(curve, segmentEnd);
+                if (Math.Abs(point.Multiplier) <= Epsilon && Math.Abs(point.Slope) <= Epsilon)
                 {
                     if (Math.Abs(point.Cumulative - targetScroll) <= Epsilon)
                         candidate = segmentEnd;
@@ -438,9 +444,9 @@ namespace MajdataCore
                 var maximum = Math.Max(point.Cumulative, endScroll) + Epsilon;
                 if (targetScroll < minimum || targetScroll > maximum)
                     continue;
-                candidate = Math.Min(
-                    endTime,
-                    start + (targetScroll - point.Cumulative) / point.Multiplier);
+                var crossed = SolveScrollCrossing(point.Multiplier, point.Slope,
+                    targetScroll - point.Cumulative, segmentEnd - start);
+                if (!double.IsNaN(crossed)) candidate = start + crossed;
             }
 
             return candidate;
@@ -473,14 +479,17 @@ namespace MajdataCore
                 var nextTime = GetNextPointTime(curve, currentTime, searchEnd);
                 if (nextTime <= currentTime + Epsilon)
                     nextTime = searchEnd;
-                var nextScroll = currentScroll +
-                    multiplier * (nextTime - currentTime);
+                var nextScroll = GetCumulativeScroll(curve, nextTime);
                 if (!Satisfies(currentScroll, threshold, atOrAbove) &&
                     Satisfies(nextScroll, threshold, atOrAbove) &&
-                    Math.Abs(multiplier) > Epsilon)
+                    (Math.Abs(multiplier) > Epsilon ||
+                     (curve != null && curve.Count > 0 &&
+                      Math.Abs(curve[FindPointIndex(curve, currentTime)].Slope) > Epsilon)))
                 {
-                    return currentTime +
-                        (threshold - currentScroll) / multiplier;
+                    var slope = curve == null || curve.Count == 0 || currentTime < curve[0].Time ? 0f :
+                        curve[FindPointIndex(curve, currentTime)].Slope;
+                    return currentTime + SolveScrollCrossing(multiplier, slope,
+                        threshold - currentScroll, nextTime - currentTime);
                 }
 
                 currentTime = nextTime;
@@ -497,6 +506,19 @@ namespace MajdataCore
             atOrAbove
                 ? value >= threshold - Epsilon
                 : value <= threshold + Epsilon;
+
+        private static double SolveScrollCrossing(float speed, float slope, double distance, double duration)
+        {
+            if (Math.Abs(slope) <= Epsilon)
+                return Math.Abs(speed) <= Epsilon ? double.NaN : distance / speed;
+            var discriminant = speed * speed + 2d * slope * distance;
+            if (discriminant < -Epsilon) return double.NaN;
+            var root = Math.Sqrt(Math.Max(0d, discriminant));
+            var first = (-speed + root) / slope;
+            var second = (-speed - root) / slope;
+            if (first >= -Epsilon && first <= duration + Epsilon) return Math.Max(0d, first);
+            return second >= -Epsilon && second <= duration + Epsilon ? Math.Max(0d, second) : double.NaN;
+        }
 
         private static int FindPointIndex(
             IReadOnlyList<ScrollPoint> curve,
@@ -522,6 +544,7 @@ namespace MajdataCore
         {
             if (curve == null || curve.Count == 0)
                 return fallback;
+            if (time < curve[0].Time - Epsilon) return Math.Min(fallback,curve[0].Time);
             var index = FindPointIndex(curve, time);
             if (index + 1 < curve.Count &&
                 curve[index + 1].Time > time + Epsilon)

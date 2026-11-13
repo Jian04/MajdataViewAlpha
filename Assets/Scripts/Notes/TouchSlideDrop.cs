@@ -1,4 +1,4 @@
-using Assets.Scripts;
+﻿using Assets.Scripts;
 using Assets.Scripts.Types;
 using MajdataCore;
 using System;
@@ -32,6 +32,7 @@ public sealed class TouchSlideDrop : NoteDrop
     public RuntimeAnimatorController judgeBreakShine;
     public JsonDataLoader slideRouteSource;
     public Vector2 barScale = Vector2.one;
+    private readonly Dictionary<Transform,Vector3> authoredBarScales = new();
     public Vector2 starScale = Vector2.one;
     private Vector2? liveBarScaleDefault;
     private Vector2? liveStarScaleDefault;
@@ -54,6 +55,7 @@ public sealed class TouchSlideDrop : NoteDrop
     private bool completed;
     private bool mineSafeResolved;
     private bool isSlideCode;
+    private bool slideCodeEndsWithLine;
     private bool endsWithCircle;
     private bool endCounterClockwise;
     private GameObject judgeVisual;
@@ -73,16 +75,12 @@ public sealed class TouchSlideDrop : NoteDrop
     public override void ApplyLiveScale(Vector2? scale)
     {
         liveBarScaleDefault ??= barScale;
-        var previous = barScale;
         var value = scale ?? liveBarScaleDefault.Value;
         barScale = value;
-        if (previous.x == 0f || previous.y == 0f)
-            return;
-
-        var ratio = new Vector3(value.x / previous.x, value.y / previous.y, 1f);
+        var ratio = new Vector3(value.x,value.y,1f);
         foreach (var renderer in bars)
             if (renderer != null)
-                renderer.transform.localScale = Vector3.Scale(renderer.transform.localScale, ratio);
+                renderer.transform.localScale = Vector3.Scale(authoredBarScales[renderer.transform], ratio);
     }
 
     // COLOR paints a slide's route and leaves the moving guide star to the "star"
@@ -98,6 +96,13 @@ public sealed class TouchSlideDrop : NoteDrop
         foreach (var renderer in bars)
             if (renderer != null)
                 yield return renderer;
+    }
+
+    internal override void CollectAngleTargets(List<Transform> body, List<Transform> guide)
+    {
+        foreach (var renderer in bars)
+            if (renderer != null) body.Add(renderer.transform);
+        if (starRenderer != null) guide.Add(starRenderer.transform);
     }
 
     public override void ApplyLiveGuideStarColor(Color? color) =>
@@ -313,6 +318,8 @@ public sealed class TouchSlideDrop : NoteDrop
 
     private float GetBodyAlpha(float now)
     {
+        var animated = propertyAnimation?.SlideFadeProgress(now);
+        if (animated.HasValue) return animated.Value;
         var fadeLeadScale = 1f - Mathf.Clamp(starSpeed, -1f, 1f);
         var motionSpeed = Mathf.Abs(speed);
         var fadeStart = motionSpeed <= 0.0001f
@@ -483,12 +490,16 @@ public sealed class TouchSlideDrop : NoteDrop
         {
             if (segment.shape == "SC")
             {
-                if (!SlideCodePathGeometry.TryBuild(segment.slideCode, path))
+                var codePath = new List<Vector3>();
+                if (!SlideCodePathGeometry.TryBuild(segment.slideCode, codePath))
                     return false;
+                for (var index = path.Count == 0 ? 0 : 1; index < codePath.Count; index++)
+                    path.Add(codePath[index]);
                 isSlideCode = true;
                 if (SlideCodeParser.TryParse(segment.slideCode, out var code, out _))
                 {
                     var lastRoute = code.instructions[code.instructions.Count - 2];
+                    slideCodeEndsWithLine = SlideCodeParser.EndsWithLine(code);
                     endsWithCircle = lastRoute.IsOrbit && lastRoute.parameter == 9;
                     endCounterClockwise = lastRoute.command == SlideCodeCommand.P;
                 }
@@ -534,6 +545,11 @@ public sealed class TouchSlideDrop : NoteDrop
                 end.Area, end.Position, end.IsDZone,
                 segment.shape);
         }
+        if (isSlideCode && segments[^1].shape != "SC")
+        {
+            slideCodeEndsWithLine = segments[^1].shape is "-" or "v" or "V" or "s" or "z";
+            endsWithCircle = false;
+        }
         return path.Count >= 2;
     }
 
@@ -571,7 +587,7 @@ public sealed class TouchSlideDrop : NoteDrop
         int legacyPosition,
         bool legacyDZone)
     {
-        return parsed != null && parsed.position != 0
+        return parsed != null && (parsed.area == 'C' || parsed.position != 0)
             ? (parsed.area, parsed.position, parsed.isDZone)
             : ('K', legacyPosition, legacyDZone);
     }
@@ -793,11 +809,12 @@ public sealed class TouchSlideDrop : NoteDrop
     {
         if (isSlideCode)
         {
-            codeAreas = SlideCodeJudgment.Build(totalPathLength, progress =>
+            codeAreas = SlideCodeJudgment.BuildForEndpoints(totalPathLength, progress =>
             {
                 var point = EvaluatePath((float)progress);
                 return new System.Numerics.Complex(point.x, point.y);
-            }, !endsWithCircle);
+            }, slideCodeEndsWithLine, new SlidePositionData { area = startArea, position = startPosition, isDZone = isDZone },
+                new SlidePositionData { area = endArea, position = endPosition, isDZone = isDZoneEnd });
             for (var i = 0; i < codeAreas.Length; i++)
             {
                 var area = codeAreas[i];
@@ -894,6 +911,7 @@ public sealed class TouchSlideDrop : NoteDrop
             var tangent = EvaluateTangent(progress);
             var angle = Mathf.Atan2(tangent.y, tangent.x) * Mathf.Rad2Deg;
             barObject.transform.localRotation = Quaternion.Euler(0f, 0f, angle + rotationOffset);
+            authoredBarScales[barObject.transform] = templateScale;
             barObject.transform.localScale = Vector3.Scale(
                 templateScale,
                 new Vector3(barScale.x, barScale.y, 1f));
@@ -901,6 +919,7 @@ public sealed class TouchSlideDrop : NoteDrop
             barProgress.Add(progress);
         }
 
+        StarDisplayOrder.RegisterTrack(gameObject, bars);
         SetVisualAlpha(0f, 0f);
     }
 

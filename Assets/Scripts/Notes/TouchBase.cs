@@ -14,6 +14,7 @@ namespace Assets.Scripts
         public float noteScaleX = 1f;
         public float noteScaleY = 1f;
         private Vector2? liveScaleDefault;
+        protected Vector3 authoredRootScale = Vector3.one;
 
         public GameObject tapEffect;
         public GameObject judgeEffect;
@@ -21,14 +22,11 @@ namespace Assets.Scripts
         public override void ApplyLiveScale(Vector2? scale)
         {
             liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
-            var previous = new Vector2(noteScaleX, noteScaleY);
             var value = scale ?? liveScaleDefault.Value;
             noteScaleX = value.x;
             noteScaleY = value.y;
-            if (previous.x != 0f && previous.y != 0f)
-                transform.localScale = Vector3.Scale(
-                    transform.localScale,
-                    new Vector3(value.x / previous.x, value.y / previous.y, 1f));
+            transform.localScale = Vector3.Scale(authoredRootScale,
+                new Vector3(noteScale*value.x,noteScale*value.y,1f));
         }
 
 

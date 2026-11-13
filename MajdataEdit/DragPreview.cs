@@ -8,11 +8,6 @@ public partial class MainWindow
     {
         editorSetting.DragPreview = DragPreviewCheck.IsChecked == true;
         SaveEditorSetting();
-        if (!editorSetting.DragPreview)
-        {
-            PrepareTimelineDrag();
-            ClearStoppedNotePreview();
-        }
     }
 
     private void PrepareTimelineDrag()
@@ -23,11 +18,17 @@ public partial class MainWindow
             return;
         }
         if (stopPending) return;
-        if (isPlaying || pausePending || lastEditorState == EditorControlMethod.Pause)
+        if (isPlaying || pausePending || lastEditorState != EditorControlMethod.Stop)
         {
             var position = GetTimelinePosition();
-            ToggleStop();
+            StopPlaybackForScrub();
             SetTimelinePosition(position);
+            _ = PreviewAfterDragStopAsync(pendingScrubStop!, viewControlGeneration);
         }
+    }
+
+    private async Task PreviewAfterDragStopAsync(Task<bool> stop, int generation)
+    {
+        if (await stop && generation == viewControlGeneration) QueueNotePreview();
     }
 }

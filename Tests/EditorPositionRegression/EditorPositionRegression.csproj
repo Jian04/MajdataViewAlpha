@@ -9,11 +9,15 @@
   <ItemGroup>
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <Compile Include="../../MajdataEdit/Editor/FumenEditorAdapter.cs" Link="FumenEditorAdapter.cs" />
+    <Compile Include="../../MajdataEdit/Editor/FontLibrary.cs" Link="FontLibrary.cs" />
     <Compile Include="../../MajdataEdit/Editor/BeatFormatBrush.cs" Link="BeatFormatBrush.cs" />
     <Compile Include="../../MajdataEdit/Editor/ChartOrganizer.cs" Link="ChartOrganizer.cs" />
     <Compile Include="../../Assets/MajdataCore/ChartBracketTracker.cs" Link="ChartBracketTracker.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaCommandBoundary.cs" Link="AlphaCommandBoundary.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaCommandGrammar.cs" Link="AlphaCommandGrammar.cs" />
+    <Compile Include="../../Assets/MajdataCore/NoteValueTransition.cs" Link="NoteValueTransition.cs" />
+    <Compile Include="../../Assets/MajdataCore/FontFiles.cs" Link="FontFiles.cs" />
+    <Compile Include="../../Assets/MajdataCore/AlphaSession.cs" Link="AlphaSession.cs" />
     <Compile Include="../../Assets/MajdataCore/JudgeLineStyles.cs" Link="JudgeLineStyles.cs" />
     <Compile Include="../../Assets/MajdataCore/ParserMessageLocale.cs" Link="ParserMessageLocale.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaExtraFilters.cs" Link="AlphaExtraFilters.cs" />

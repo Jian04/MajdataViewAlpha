@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!-- 
     Microsoft ResX Schema 
@@ -950,7 +950,6 @@ E @4/4
 E @7/8
 - Both values must be positive integers. The marker changes the strong/weak beat grid from the current time; it does not change View speed or audio.
 - A marker must appear at the start of a timing cell before note characters; placing it on its own line is recommended.
-- Use “@” for meter. A legacy “&” meter may be interpreted as a maidata field after reload and should no longer be used.
 ### Overlapping note stream
 S @{division}note stream,
 E @{4}1h,2h,3h,
@@ -968,7 +967,6 @@ E {8}1,2,3,4,5,6,7,8,
 S @RRGGBB
 E @3A587A
 S @NULL
-- Put the marker on its own line. It colors the following editor region only; @NULL restores the theme. Legacy “&RRGGBB / &NULL” is accepted.
 ## 3  Extended note syntax
 ### Non-C-area TouchHold
 S A/B/D/E area position + h[duration]
@@ -997,28 +995,33 @@ E 1f / 1hf[8:1] / 1f-5[8:1] / Cf / Chf[8:1]
 S key$ / key$$
 E 1$ / 2$$
 - $ changes a normal TAP into a non-rotating star; $$ uses the same star with fixed-speed rotation.
-### Touch Slide (AstroDX arc-direction compatibility)
+### Touch Slide
 S start[-|<|>|<<|>>|^|v|p|q|pp|qq]target[duration]
 S startVturntarget[duration]
-S startPorbittarget[duration] / startQorbittarget[duration]
 E A1-A3[8:1] / A1<A3<A5[8:1] / 1d-E5[8:1]
 E A1VCE2[8:1]
 E A1pE5[8:1] / B1ppB5[8:1]
-E A1-E5[8:1] / 1P3E5Q0A5[8:1]
 E A1b-A2b[8:1] / A1!-A2[8:1] / A1?-A2[8:1]
 E A1<<E5[8:1] / A1<<<E5[8:1] / A1>>>E5[8:1]
 - A path with an A/B/C/D/E Touch endpoint is a Touch Slide; a normal key or D key may be used at the other end.
 - b on the head creates a Break head and b after the destination creates a Break path. Both ? and ! remove the head: ? keeps the moving guide-star fade-in, while ! hides it until the Slide starts moving. Duration is required.
 - A connected Touch Slide uses one total duration. Per-segment durations are rejected because View cannot preserve those segment boundaries yet.
 - Repeating the same < or > creates one continuous, equally spaced spiral: two symbols make one full loop before entering the target, three make two loops, and so on. Multi-loop syntax is Touch-Slide-only; ordinary numeric Slides and mixed directions are rejected.
-- Capital P / Q selects an orbit and enters/leaves it tangentially: 0 is the centre orbit, 1-8 are side orbits, and 9 is the outer ring. P runs counter-clockwise and Q clockwise.
-### SlideCode (MajdataPlay sensor-route and end-effect compatibility)
+### Large P / Q — Alpha selectable orbit
+Alpha adds selectable P/Q orbits to ordinary, D-zone, and Touch Slides. P is counterclockwise; Q is clockwise. 0 selects the center circle, 1–8 the side circles, and 9 the outer circle. Without K, A1/B4 name Touch sensors; with a K endpoint, A/B are SlideCode geometric nodes.
+S 1P35[8:1],1Q95[8:1],
+E A1P9A5[8:1] / 1P5A8-B4[8:1] / 1dQ05d[8:1],
+### SlideCode
 S start + A/B/C/P/Q commands + Kend[duration]
-E 5Q9A1P98CQ49K5[8:1] / 1A3571P0K1[4:1]
+E 1A3B5K7[8:1] / 5Q9A1P98CQ49K5[8:1] / 1A3571P0K1[4:1]
 - The first 1-8 is the start. A visits an outer key, B an inner intersection, C the centre, P/Q orbit counter-clockwise/clockwise, and K1-K8 ends the path.
 - One command may take consecutive parameters: A357 visits A3, A5, A7; P98 transfers from orbit 9 to orbit 8.
 - P and Q cannot connect directly. Orbit 0 and orbit 9 also need an A, B, or C node between them.
 - Without K, 1Q85 is ordinary selectable PQ and retains the legacy pp/qq extra loop. With K, 1Q8K5 is SlideCode and uses the shortest tangent-and-arc connection. The two syntaxes are independent.
+
+- Judgment uses the original MajdataPlay sampling thresholds and sensor-transition table. B nodes are geometric nodes, not Touch B sensor centers.
+https://github.com/TeamMajdata/MajdataPlay/blob/dev/Assets/Scripts/Scenes/Game/Misc/Parsing/SlideCodeParser.cs
+https://github.com/TeamMajdata/MajdataPlay/blob/dev/Assets/Scripts/Scenes/Game/Misc/Parsing/SlideDataBuilder.cs
 ### Mine, D-zone, and modifier placement
 S m = gray Mine; d = D-zone position
 E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
@@ -1041,13 +1044,53 @@ S XD1[8:1] / XC[4:1] / XA1 / XE1[4:1]/XC[4:1]/XE2[4:1]/XE3[4:1]/XE4[4:1]
 E (120){4}XD1[8:1],D1,XE1[1:1]/XC[1:1]/XE2[1:1],,
 - X prefixes a touch area: A1–A8, B1–B8, C, D1–D8 or E1–E8. Prefix every area with X and join simultaneous zones with /.
 - Durations use Hold syntax: at 120 BPM, [8:1] is 0.25 seconds. [#seconds] is supported. Omission is one short judgement frame, like 1h.
-- Touch speed determines outline warning lead time; HS/SV adjust appearance time and white Ready flashes start when the outline appears without disabling input. Short zones show the full glitch field for at least 0.1 seconds visually, without extending input blocking.
 E <COLOR*noise=00BBFF> / <SIZE*noise=0.8> / <ALPHA*noise=0.5>
 - Global SV/HS include noise warnings by default; noise= overrides them. SV=2 halves the warning lead. Global COLOR/SIZE/ALPHA and their live variants exclude noise; use noise= explicitly. Screen filters include noise; styling does not change disabled sensors or duration.
 - At the authored beat, a red glitch-filled zone disables that sensor; A zones also block their outer button. Zones add no note count, score or hand requirement.
 - Later adjacent active zones grow from shared edges; ending zones retreat toward surviving neighbors before their authored end, and split when a bridge ends. Missing sensor regions are never filled. Active rendering follows Phira-Pro displacement, edge/glow and scene sampling; warnings remain red outlines. Overlaps last until the final event ends; seeking reconstructs state.
 
+- Input is blocked on [start,end): blocked at start, restored at end. Warnings never block; [1:0] is warning-only.
 ## 4  Note Alpha commands
+### Numeric transitions and note angle
+S (start,end,duration,function[,power])
+E <SV*tap=(1,2,8:1,linear)>
+E <HS*(0.5,2,1,sineinout)>
+E <SIZE*tap=((1,1),(2,0.5),8:1,easeinout,3)>
+- SV and V commands start at the authored slot. Other numeric commands start when each following note appears. End values persist; duration is seconds or beats, and zero switches immediately.
+- COLOR / COLORV accept (startRGB,endRGB,duration,function[,power]); each RGB channel interpolates independently. BOUNCE accepts only its round-trip duration, NULL or False.
+- Ease curves accept an optional power (default 2), range 0.1–100. Other curves take no extra parameter.
+- linear：Linear。
+- easein：Power, adjustable exponent, in。
+- easeout：Power, adjustable exponent, out。
+- easeinout：Power, adjustable exponent, in/out。
+- sinein：Sine, in。
+- sineout：Sine, out。
+- sineinout：Sine, in/out。
+- expoin：Exponential, in。
+- expoout：Exponential, out。
+- expoinout：Exponential, in/out。
+- circin：Circular, in。
+- circout：Circular, out。
+- circinout：Circular, in/out。
+- smoothstep：Smooth endpoints。
+- smootherstep：Smoother endpoints。
+- backin：Back, overshoots, in。
+- backout：Back, overshoots, out。
+- backinout：Back, overshoots, in/out。
+- elasticin：Elastic, overshoots, in。
+- elasticout：Elastic, overshoots, out。
+- elasticinout：Elastic, overshoots, in/out。
+- bouncein：Bounce, in。
+- bounceout：Bounce, out。
+- bounceinout：Bounce, in/out。
+- Back / Elastic may exceed their endpoints.
+
+### ANGLE / ANGLEV
+S <ANGLE*degrees|NULL>
+S <ANGLEV*degrees|NULL>
+E <ANGLE*tap=45>
+E <ANGLEV*slidestar=(0,180,4:1,sineinout)>
+- Rotates artwork around each note's own center without changing position or judgement. Positive is counterclockwise. Global angle excludes slide paths, guide stars and blockareas; slide= and slidestar= are explicit targets. Blockareas are never rotated by ANGLE.
 ### SV — true scroll velocity
 S <SV*multiplier>
 S <SV*type=multiplier,type=multiplier>
@@ -1055,6 +1098,7 @@ S <SV*type=NULL>
 E <SV*1.5> / <SV*tap=2,hold=0.75> / <SV*tap=NULL>
 - Global SV accepts positive, zero, and negative values. Typed NULL makes that type inherit global SV again.
 - Global SV affects Tap, Hold, Star heads, Touch, and TouchHold. `slide=` controls Slide, Wifi, and TouchSlide motion within the authored duration: positive net motion is normalized to finish on time, while zero/negative motion can pause or rewind and is cut off at the authored end. Without `slide=`, Slide paths keep their original time progress.
+- SV*NULL resets global SV to 1. SV*tap=NULL clears only the Tap override.
 ### HS — traditional fall speed
 S <HS*multiplier>
 S <HS*type=multiplier,type=multiplier>
@@ -1066,7 +1110,7 @@ E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*slide=999> / <HS*hold=NULL>
 ### SPAWN — ring-note visual spawn radius
 S <SPAWN*radius>
 S <SPAWN*type=radius,type=radius>
-S <SPAWN*NULL> / <SPAWN*type=NULL>
+S <SPAWN*NULL>
 E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
 E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
 - Radius accepts any finite number: 1.225 is the original position, 0 is center, 4.8 is the near judge line, and -4.8 is the opposite judge line. Values outside the judgement ring are supported.
@@ -1083,7 +1127,7 @@ E <SPAWNMODE*Once> / <SPAWNMODE*tap=Once,hold=Rewind>
 ### DESTROY — ring-note visual endpoint
 S <DESTROY*radius>
 S <DESTROY*type=radius,type=radius>
-S <DESTROY*NULL> / <DESTROY*type=NULL>
+S <DESTROY*NULL>
 E <DESTROY*4.8> / <DESTROY*tap=1.225,hold=-4.8>
 - Changes only the visual endpoint of Tap, Star, Each, Hold, and Break ring notes; judgment time and key remain unchanged.
 - The authored radius is always preserved, including values below SPAWN, negative values, and outer radii. NULL restores 4.8.
@@ -1139,51 +1183,51 @@ S <ALPHAV*0..1> / <ALPHAV*type=0..1>
 E <ALPHAV*0.5> / <ALPHAV*star=0.4,slidestar=0.6,slide=0.8>
 - Applies opacity immediately to already loaded notes, with separate star, slidestar, and slide targets.
 ## 5  Display Alpha commands
-### JLINE — judge-line color
-S <JLINE*RRGGBB> / <JLINE*(RRGGBB[,transition])> / <JLINE*NULL>
-E <JLINE*00FF00> / <JLINE*(FF6699,0.3)> / <JLINE*(FFFFFF,8:1)> / <JLINE*NULL>
-- NULL restores the skin color. This changes the judge line during playback.
-### TEXT — caption
-S <TEXT*("content"[,duration][,x=0][,y=0][,size=32][,font=Default][,index=0][,style=Fade][,transition=0.3])>
-E <TEXT*("Chorus")> / <TEXT*("Watch the double",2,index=1)> / <TEXT*("Typing",3,font=Allerta,index=2,style=Typewriter,transition=1)>
-- Text must be inside double quotes. Without duration it remains until the next TEXT with the same index. Indices 0-4 are independent and can coexist.
-- font accepts Default, CascadiaMono, CascadiaCode, MicrosoftYaHei, NotoSansSC, SimSun, DengXian, NotoSerifSC, GlobalMonospace, Aileron, and Allerta. Default preserves the original caption font instead of following the player font.
-- With style=Fade, transition is the fade-in time. With style=Typewriter, transition is the total typing time. Durations accept seconds or beat notation such as 8:1.
-### JUDGELINEEXPAND — additional judge line
-S <JUDGELINEEXPAND*(True[,duration,1|-1])>
-S <JUDGELINEEXPAND*(False)>
-E <JUDGELINEEXPAND*(True,0.5,1)> / <JUDGELINEEXPAND*(True,8:1,-1)> / <JUDGELINEEXPAND*(False)>
-- True adds a white judge line rotated 22.5 degrees. False immediately removes only the added line.
-- Duration defaults to 0 seconds and accepts seconds or beats. Direction defaults to 1/CW; -1/CCW is counterclockwise. The old (duration,direction) syntax remains valid.
-- Seeking restores the on/off state and angle; enabling again starts from the original position.
-### Restore configured display — Default
-S <INNERBRIGHTNESS*(Default[,transition])> / <OUTERBRIGHTNESS*(Default[,transition])>
-S <COMBODISPLAY*(Default[,transition])>
-S <SHOWJUDGETEXT*(Default[,transition])> / <SHOWJUDGEINFO*(Default[,transition])> / <SHOWCOMBOINFO*(Default[,transition])>
-S <JUDGELINE*(Default[,transition])>
-E <INNERBRIGHTNESS*(0.8)> / <INNERBRIGHTNESS*(Default,0.5)>
-E <COMBODISPLAY*(None)> / <COMBODISPLAY*(Default)>
-- Default restores the current View settings without changing those settings. It does not force full brightness, visibility or Combo mode.
-- Parameter 1 is case-insensitive Default. Parameter 2 optionally sets a transition in seconds or beats; omit it for an immediate reset. Combo mode and line style switch immediately; line opacity follows the transition.
-- Seeking before or after these commands restores the corresponding state.
-### Visibility switches
-S <JUDGELINE*(0|1|2|3|4[,transition])>
-S <ShowJudgeText*(True|False[,transition])>
-S <ShowJudgeInfo*(True|False[,transition])>
-S <ShowComboInfo*(True|False[,transition])>
-E <JUDGELINE*(False,8:1)>
-E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
-- Omitting transition switches immediately. The commands control the line style, judgment text, left statistics, and right combo panel respectively.
-- JUDGELINE: 1 = Classic; 2 = Classic full; 3 = MAGiCAL; 0 / False = Off. 4+ reserved for additional styles.
-### ComboDisplay — center indicator
-S <ComboDisplay*(mode[,transition])>
-E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
-- Common modes: None/Off, Combo, Score, Achievement/Acc, AccDown, DxAcc, DxAccDown, DxScore, CScore, CScoreDedxDown.
-### Brightness
-S <OuterBrightness*(0..1[,transition])>
-S <InnerBrightness*(0..1[,transition])>
-E <OuterBrightness*(0.8,8:1)> / <InnerBrightness*(0.45,1)>
-- Values are clamped to 0–1: 0 is fully bright and 1 is darkest.
+### JLINE — Judge-line color
+S <JLINE*(RRGGBB|RRGGBBAA|NULL[,transition])>
+E <JLINE*(00BBFF,8:1)> / <JLINE*(NULL)>
+- NULL restores the skin color. Omit transition for an immediate change.
+### TEXT — Captions
+S <TEXT*("content"[,duration][,x][,y][,size][,font][,index][,Fade|Typewriter][,transition][,color][,TopLeft|Center])>
+E <TEXT*("Caption",2,font=Allerta-Regular.ttf)>
+- font accepts a built-in name or TTF/OTF/TTC path. Relative paths search the chart, then application Fonts; absolute paths are accepted. Omitted duration holds until the next caption with the same index. Omit transition for immediate display.
+E <TEXT*("RGB",2,color=00BBFF)>
+- color: six-digit hexadecimal RGB. Omit it for white; use positional parameter 10 or color=00BBFF.
+- origin: parameter 11 or origin=TopLeft/Center. TopLeft is the default screen origin and text alignment; Center centers both. x/y are signed screen-width/height fractions, positive right/down.
+E <TEXT*("Centered caption",2,origin=Center)>
+
+### JUDGELINEEXPAND — Additional judge line
+S <JUDGELINEEXPAND*(True|False[,transition][,1|-1|CW|CCW])>
+E <JUDGELINEEXPAND*(True,8:1,-1)> / <JUDGELINEEXPAND*(False)>
+- True adds a line rotated by 22.5 degrees; False removes only that line. Defaults: zero transition, CW direction.
+### JUDGELINE — Judge-line style
+S <JUDGELINE*(0|1|2|3|4|Default[,transition])>
+E <JUDGELINE*(3,8:1)> / <JUDGELINE*(Default)>
+- 0/False hides, 1 default, 2 sensor areas, 3 Magical; 4 is reserved. Default restores the View setting. Omit transition for an immediate change.
+### SHOWJUDGETEXT — Judgment text
+S <SHOWJUDGETEXT*(True|False|Default[,transition])>
+E <SHOWJUDGETEXT*(False,8:1)> / <SHOWJUDGETEXT*(Default)>
+- True shows and False hides. Default restores the View setting. Omit transition for an immediate change.
+### SHOWJUDGEINFO — Left judgment counts
+S <SHOWJUDGEINFO*(True|False|Default[,transition])>
+E <SHOWJUDGEINFO*(False,8:1)> / <SHOWJUDGEINFO*(Default)>
+- True shows and False hides. Default restores the View setting. Omit transition for an immediate change.
+### SHOWCOMBOINFO — Right information
+S <SHOWCOMBOINFO*(True|False|Default[,transition])>
+E <SHOWCOMBOINFO*(False,8:1)> / <SHOWCOMBOINFO*(Default)>
+- True shows and False hides. Default restores the View setting. Omit transition for an immediate change.
+### COMBODISPLAY — Center display
+S <COMBODISPLAY*(mode|Default[,transition])>
+E <COMBODISPLAY*(DxScore,8:1)> / <COMBODISPLAY*(Default)>
+- Modes: None/Off, Combo, Score, Achievement/Acc, AccDown, DxAcc, DxAccDown, DxScore, CScore, CScoreDedxDown. Default restores View settings. Omitted transition changes immediately.
+### OUTERBRIGHTNESS — Outer darkness
+S <OUTERBRIGHTNESS*(darkness|Default[,transition])>
+E <OUTERBRIGHTNESS*(0.5,8:1)> / <OUTERBRIGHTNESS*(Default)>
+- 0 is fully bright; 1 darkest. Default restores the View setting. Omit transition for an immediate change.
+### INNERBRIGHTNESS — Inner darkness
+S <INNERBRIGHTNESS*(darkness|Default[,transition])>
+E <INNERBRIGHTNESS*(0.5,8:1)> / <INNERBRIGHTNESS*(Default)>
+- 0 is fully bright; 1 darkest. Default restores the View setting. Omit transition for an immediate change.
 ## 6  Filter Alpha commands
 > Common rule: True enables and holds; False disables. The final transition is optional. Instant reaches the target immediately, holds it for the requested duration, then restores immediately. Different filters can layer, and another True transitions from the current value.
 S <Effect*(False[,transition])>
@@ -1273,6 +1317,9 @@ S <Hue*(True,degrees[,transition])>
 S <Tint*(True,RRGGBB,strength[,transition])>
 E <Hue*(True,180,1)> / <Tint*(True,000000,1,0.5)> / <Tint*(False,8:1)>
 - Hue rotates color in degrees. Tint strength 0 preserves the frame and 1 fully blends to the target.
+### FLIP
+S <FLIP*(Instant,45,0.5)>
+- Reflection across an axis through the center. 0 degrees is horizontal and 90 degrees is vertical. The duration is in seconds or beats. Switching is immediate.
 ### Move / Rotate / Shake
 S <Move*(True,dx,dy[,transition])>
 S <Rotate*(True,degrees[,transition])>
@@ -1300,6 +1347,7 @@ E (160){16}<COLOR*star=FF66CC><SIZE*star=1.15>1-5[8:1],2,3,4,
 E <TEXT*("Interlude",2)><Fade*(True,0.65,8:1)><PVOVERLAY*(True,media/cutin.mp4)>,,
 E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
 - Multiple Alpha commands may share one timestamp and consume no extra commas. Keeping Note → Display → Filter → Media order makes charts easier to read and matches completion.
+
 ]]></value></data>
   <data name="BackgroundFitMode" xml:space="preserve"><value>Background / PV scaling</value></data>
   <data name="BackgroundFitHeight" xml:space="preserve"><value>Fit height, preserve aspect</value></data>
@@ -1316,4 +1364,10 @@ E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
   <data name="StarDisplayModeLegacy" xml:space="preserve"><value>Legacy</value></data>
   <data name="StarDisplayModeModern" xml:space="preserve"><value>Modern</value></data>
   <data name="DisableAutomaticSongDetailRefresh" xml:space="preserve"><value>Disable automatic cover refresh</value></data>
+  <data name="ViewTopLeftDisplay" xml:space="preserve"><value>Top-left display</value></data>
+  <data name="ViewTopLeftOff" xml:space="preserve"><value>Off</value></data>
+  <data name="ViewTopLeftFps" xml:space="preserve"><value>Frame rate (FPS)</value></data>
+  <data name="ViewTopLeftBpm" xml:space="preserve"><value>Current BPM</value></data>
+  <data name="ViewTopLeftMeter" xml:space="preserve"><value>Current meter</value></data>
+  <data name="ViewTopLeftSubdivision" xml:space="preserve"><value>Current subdivision</value></data>
 </root>

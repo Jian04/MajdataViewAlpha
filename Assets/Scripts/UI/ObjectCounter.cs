@@ -9,8 +9,7 @@ using static NoteEffectManager;
 public class ObjectCounter : MonoBehaviour
 {
     public Font DisplayFont => rate != null ? rate.font : defaultDisplayFont;
-    private readonly HashSet<NoteDrop> dynamicMuriNotes = new();
-    private readonly List<string> dynamicMuriDetails = new();
+    public TMPro.TMP_FontAsset DisplayFileFont { get; private set; }
     public Color AchievementDudColor; // = new Color32(63, 127, 176, 255);
     public Color AchievementBronzeColor; // = new Color32(127, 48, 32, 255);
     public Color AchievementSilverColor; // = new Color32(160, 160, 160, 255);
@@ -46,6 +45,7 @@ public class ObjectCounter : MonoBehaviour
     private readonly Dictionary<int, Font> displayFontCache = new();
     private readonly Dictionary<int, float> judgeCountOffsetCache = new();
     private int selectedDisplayFontPreset;
+    private string selectedDisplayFontFile = "";
     private int appliedDisplayFontPreset = int.MinValue;
     private bool displayInitializationPending = true;
     private Text[] displayTexts;
@@ -279,18 +279,39 @@ public class ObjectCounter : MonoBehaviour
         Canvas.preWillRenderCanvases += PrepareDisplayTexts;
     }
 
-    public void SetDisplayFont(int preset)
+    public void SetDisplayFont(int preset, string fontFile = null)
     {
-        selectedDisplayFontPreset = preset;
+        if (fontFile != null) selectedDisplayFontFile = fontFile;
+        selectedDisplayFontPreset = string.IsNullOrEmpty(selectedDisplayFontFile) ? preset : 11;
+        preset = selectedDisplayFontPreset;
         if (judgeResultText == null || judgeResultCount == null)
             return;
         var font = ResolveDisplayFont(preset);
+        var displayTexts = GetDisplayTexts();
+        var fileName = !string.IsNullOrEmpty(selectedDisplayFontFile) ? selectedDisplayFontFile : preset switch
+        {
+            4 => "NotoSansSC-VF.ttf", 9 => "Aileron-Regular.otf", 10 => "Allerta-Regular.ttf", _ => null
+        };
+        var fileFont = fileName != null ? RuntimeFontFiles.Load(fileName) : null;
+        if (DisplayFileFont != fileFont)
+        {
+            appliedDisplayFontPreset = -1;
+            judgeCountOffsetCache.Remove(preset);
+        }
+        DisplayFileFont = fileFont;
+        foreach (var text in displayTexts)
+        {
+            if (text == null) continue;
+            var fileText = text.GetComponent<FileFontText>();
+            if (fileFont != null)
+                (fileText ?? text.gameObject.AddComponent<FileFontText>()).Use(fileFont);
+            else if (fileText != null) fileText.Use(null);
+        }
         if (font == null)
             font = defaultDisplayFont;
         if (font == null)
             return;
 
-        var displayTexts = GetDisplayTexts();
         if (appliedDisplayFontPreset == preset &&
             displayTexts.All(text => text == null || text.font == font))
         {
@@ -303,6 +324,7 @@ public class ObjectCounter : MonoBehaviour
             if (text != null && text.font != font)
                 text.font = font;
 
+        judgeCountOffsetCache.Remove(preset);
         ConfigureJudgeColumnOverflow();
         AlignRateLabels(preset == 0);
         foreach (var text in displayTexts)
@@ -388,6 +410,7 @@ public class ObjectCounter : MonoBehaviour
 
     private Font ResolveDisplayFont(int preset)
     {
+        if (!string.IsNullOrEmpty(selectedDisplayFontFile)) return defaultDisplayFont;
         if (displayFontCache.TryGetValue(preset, out var cached) && cached != null)
             return cached;
 
@@ -478,6 +501,8 @@ public class ObjectCounter : MonoBehaviour
 
     private static float MeasureText(Text text, string value)
     {
+        var fileText = text.GetComponent<FileFontText>();
+        if (fileText != null && fileText.UsesFileFont) return fileText.Measure(value);
         var pixelsPerUnit = Mathf.Max(0.001f, text.pixelsPerUnit);
         var pixelSize = Mathf.Max(1, Mathf.RoundToInt(text.fontSize * pixelsPerUnit));
         text.font.RequestCharactersInTexture(value, pixelSize, text.fontStyle);
@@ -567,10 +592,7 @@ public class ObjectCounter : MonoBehaviour
 
     public void ResetForChart()
     {
-        dynamicMuriNotes.Clear();
-        dynamicMuriDetails.Clear();
-        AlphaInstanceBadge.DynamicMuriDetails = new string[0];
-        AlphaInstanceBadge.DynamicMuriCount = 0;
+        AlphaInstanceBadge.ResetDynamicMuri();
         tapCount = holdCount = slideCount = touchCount = breakCount = 0;
         tapSum = holdSum = slideSum = touchSum = breakSum = 0;
         cPerfectCount = perfectCount = greatCount = goodCount = missCount = 0;
@@ -782,13 +804,12 @@ public class ObjectCounter : MonoBehaviour
     {
         // MaiMuriDX treats failure to achieve Critical Perfect with the normal
         // simulated action as dynamic muri. Count actual judgements, never previews.
-        if (InputManager.Mode == AutoPlayMode.DJAuto && result != JudgeType.Perfect && dynamicMuriNotes.Add(note))
+        if (InputManager.Mode == AutoPlayMode.DJAuto && result != JudgeType.Perfect && !note.dynamicMuriReported)
         {
+            note.dynamicMuriReported = true;
             var message = $"{note.sourceContent} · {result} · {note.sourceTime:F3}s";
-            dynamicMuriDetails.Add(note.sourceLine + "\t" + note.sourceColumn + "\t" +
+            AlphaInstanceBadge.AddDynamicMuri(note.sourceLine + "\t" + note.sourceColumn + "\t" +
                 Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(message)));
-            AlphaInstanceBadge.DynamicMuriDetails = dynamicMuriDetails.ToArray();
-            AlphaInstanceBadge.DynamicMuriCount = dynamicMuriNotes.Count;
         }
         var noteType = GetNoteType(note);
         switch(noteType)

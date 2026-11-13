@@ -17,6 +17,8 @@ public class RecordVideoOptions
     public bool RevealOutput = true;
     public string UtageLabel = "\u5bb4";
     public bool UtageCoop;
+    internal bool UseRangeSelection;
+    internal MediaRange? Range;
 }
 
 /// <summary>
@@ -26,23 +28,69 @@ public class RecordVideoOptions
 public partial class RecordVideoWindow : Window
 {
     private readonly MainWindow main;
+    private readonly bool exportGif;
+    private readonly ExportRangeSelector rangeSelector = new();
     private bool running;
     private bool stopRequested;
     private bool windowLoaded;
+    private bool metadataDirty;
+    private string chartDirectory = "";
+    private int chartDifficulty = -1;
+    private int previewRevision;
     private CancellationTokenSource? cancelSource;
     private readonly ChartListEntry[]? batchEntries;
     private readonly System.Windows.Controls.ComboBox batchMode = new();
     private readonly System.Windows.Threading.DispatcherTimer metadataSave = new() { Interval=TimeSpan.FromMilliseconds(600) };
+    internal bool IsRecording => running;
+    internal void FlushPendingInformation()
+    {
+        if (!metadataSave.IsEnabled) return;
+        metadataSave.Stop();
+        if (windowLoaded && batchEntries == null) SyncSettingsToMain();
+    }
 
-    internal RecordVideoWindow(MainWindow main, ChartListEntry[]? batchEntries = null)
+    internal RecordVideoWindow(MainWindow main, ChartListEntry[]? batchEntries = null, bool exportGif = false)
     {
         InitializeComponent();
         this.main = main;
         this.batchEntries = batchEntries;
+        this.exportGif = exportGif;
+        Title = exportGif ? "导出 GIF" : "导出视频";
+        StartButton.Content = exportGif ? "导出 GIF" : "导出视频";
+        if (exportGif)
+        {
+            // GIF delays are in centiseconds; 60 fps produces 10 ms frames that
+            // browsers stretch. Keep simulation at 60 fps and encode at 30 fps.
+            FrameRateBox.Items.Clear();
+            FrameRateBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = "30 fps" });
+            FrameRateBox.SelectedIndex = 0;
+            var currentResolution = ResolutionBox.Items[0];
+            var customResolution = ResolutionBox.Items[ResolutionBox.Items.Count - 1];
+            ResolutionBox.Items.Clear();
+            ResolutionBox.Items.Add(currentResolution);
+            foreach (var size in new[] { 240, 320, 480, 512 })
+                ResolutionBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = $"{size} × {size}" });
+            ResolutionBox.Items.Add(customResolution);
+            ResolutionBox.SelectedIndex = 2;
+        }
+        if (batchEntries == null)
+        {
+            var options = (System.Windows.Controls.StackPanel)SongDetailBox.Parent;
+            options.Children.Insert(0, rangeSelector);
+            rangeSelector.PreviewRequested += async time =>
+            {
+                if (!running) await main.PreviewExportTimeAsync(time);
+            };
+            rangeSelector.SelectionChanged += () =>
+            {
+                SongDetailBox.IsEnabled = AllPerfectBox.IsEnabled = rangeSelector.Selection == null;
+            };
+        }
         metadataSave.Tick += (_, _) => { metadataSave.Stop(); if (windowLoaded && batchEntries == null) SyncSettingsToMain(); };
         foreach (var input in new[]{TitleBox, ArtistBox, DesignerBox, LevelBox, BpmBox, ClockBox, UtageLabelBox})
             input.TextChanged += (_, _) => {
                 if (!windowLoaded || batchEntries != null) return;
+                metadataDirty = true;
                 metadataSave.Stop(); metadataSave.Start();
             };
         UtageCoopBox.Checked += (_, _) => { if (windowLoaded && batchEntries == null) SyncSettingsToMain(); };
@@ -106,8 +154,18 @@ public partial class RecordVideoWindow : Window
     }
 
     private void RecordVideoWindow_Loaded(object sender, RoutedEventArgs e)
+        => ReloadChartInformation();
+
+    internal void ReloadChartInformation()
     {
+        metadataDirty = false;
         if (batchEntries != null) { windowLoaded = true; UtageOptionsPanel.Visibility = Visibility.Collapsed; return; }
+        metadataSave.Stop();
+        windowLoaded = false;
+        var resetRange = chartDirectory != MainWindow.maidataDir || chartDifficulty != main.SelectedDifficulty;
+        chartDirectory = MainWindow.maidataDir;
+        chartDifficulty = main.SelectedDifficulty;
+        UtageOptionsPanel.Visibility = main.IsOriginalDifficulty ? Visibility.Visible : Visibility.Collapsed;
         var info = main.GetRecordSongInfo();
         DifficultyText.Text = info.difficulty;
         TitleBox.Text = info.title;
@@ -120,17 +178,27 @@ public partial class RecordVideoWindow : Window
         UtageLabelBox.Text = utage.label;
         UtageCoopBox.IsChecked = utage.coop;
         windowLoaded = true;
+        RefreshExportRange(resetRange);
         LoadSelectedPreview();
     }
 
-    private void LoadSelectedPreview()
+    internal void RefreshExportRange(bool reset)
+    {
+        if (running) return;
+        var selection = main.GetExportRangeData();
+        rangeSelector.Load(selection.Duration, selection.Measures, selection.InitialRange, reset);
+    }
+
+    private async void LoadSelectedPreview()
     {
         if (batchEntries != null) return;
+        var revision = ++previewRevision;
         if (SongDetailStyleBox.SelectedIndex == 1)
         {
-            var cachedPreview = main.PrepareSongDetailPreview(
+            var cachedPreview = await main.PrepareSongDetailPreview(
                 TitleBox.Text, ArtistBox.Text, DesignerBox.Text, LevelBox.Text, BpmBox.Text,
                 NormalizeUtageLabel(), UtageCoopBox.IsChecked == true);
+            if (revision != previewRevision || !windowLoaded) return;
             if (!string.IsNullOrWhiteSpace(cachedPreview))
             {
                 LoadCoverPreview(cachedPreview, false);
@@ -146,30 +214,20 @@ public partial class RecordVideoWindow : Window
 
     private void LoadCoverPreview(string? preferredPath = null, bool allowCoverFallback = true)
     {
-        var png = Path.Combine(MainWindow.maidataDir, "bg.png");
-        var jpg = Path.Combine(MainWindow.maidataDir, "bg.jpg");
         var path = !string.IsNullOrWhiteSpace(preferredPath) && File.Exists(preferredPath)
             ? preferredPath
             : allowCoverFallback
-                ? File.Exists(png) ? png : File.Exists(jpg) ? jpg : null
+                ? MajdataCore.ChartCover.Find(MainWindow.maidataDir)
                 : null;
         if (path == null)
+        {
+            CoverPreview.Source = null;
             return;
+        }
 
         try
         {
-            using var stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
-            var image = new BitmapImage();
-            image.BeginInit();
-            image.CacheOption = BitmapCacheOption.OnLoad;
-            image.StreamSource = stream;
-            image.EndInit();
-            image.Freeze();
-            CoverPreview.Source = image;
+            CoverPreview.Source = MainWindow.ReadChartThumbnail(path, 512);
             RenderOptions.SetBitmapScalingMode(CoverPreview, BitmapScalingMode.HighQuality);
         }
         catch (Exception exception)
@@ -186,6 +244,12 @@ public partial class RecordVideoWindow : Window
     {
         if (running)
             return;
+
+        if (main.pendingRecordOptions != null)
+        {
+            StatusText.Text = "已有视频或 GIF 正在导出，请等待完成。";
+            return;
+        }
 
         if (batchEntries == null && string.IsNullOrEmpty(MainWindow.maidataDir))
         {
@@ -232,6 +296,7 @@ public partial class RecordVideoWindow : Window
             return;
         }
         SyncSettingsToMain();
+        if (!rangeSelector.Validate(out var rangeError)) { StatusText.Text = rangeError; return; }
 
         var runs = new List<RecordVideoOptions>
         {
@@ -240,7 +305,10 @@ public partial class RecordVideoWindow : Window
                 FrameRate = frameRate,
                 Width = width,
                 Height = height,
-                FileName = "out.mp4",
+                FileName = exportGif ? "out.gif" : "out.mp4",
+                RevealOutput = false,
+                UseRangeSelection = true,
+                Range = rangeSelector.Selection,
                 UtageLabel = NormalizeUtageLabel(),
                 UtageCoop = UtageCoopBox.IsChecked == true
             }
@@ -249,6 +317,7 @@ public partial class RecordVideoWindow : Window
         running = true;
         stopRequested = false;
         StartButton.IsEnabled = false;
+        rangeSelector.IsEnabled = false;
         CancelButton.Content = MainWindow.GetLocalizedString("Cancel");
         CancelButton.Visibility = Visibility.Visible;
         cancelSource = new CancellationTokenSource();
@@ -270,7 +339,7 @@ public partial class RecordVideoWindow : Window
                     System.Windows.Threading.DispatcherPriority.Background);
                 main.StartRecordRun(run);
                 StatusText.Text = L("RecordPreparing", prefix);
-                var outputPath = Path.Combine(MainWindow.maidataDir, run.FileName);
+                var outputPath = Path.Combine(chartDirectory, "outputs", run.FileName);
                 var ok = await WaitForOutput(outputPath, timeout, cancelSource.Token, (elapsed, size) =>
                     StatusText.Text = size < 0
                         ? L("RecordPreparingElapsed", prefix, elapsed.TotalSeconds)
@@ -284,6 +353,7 @@ public partial class RecordVideoWindow : Window
                         : L("RecordTimeout", run.FileName);
                     return;
                 }
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer", "/select,\"" + outputPath + "\"") { UseShellExecute = false });
             }
 
             StatusText.Text = L("RecordDone");
@@ -292,6 +362,7 @@ public partial class RecordVideoWindow : Window
         {
             running = false;
             StartButton.IsEnabled = true;
+            rangeSelector.IsEnabled = true;
             CancelButton.Content = L("Close");
             CancelButton.Visibility = Visibility.Collapsed;
             main.pendingRecordOptions = null;
@@ -328,13 +399,11 @@ public partial class RecordVideoWindow : Window
                Math.Min(width, height) <= maxShortSide;
     }
 
-    /// <summary>A run, including ffmpeg finalization, is complete when its output exists, is nonempty, and stays the same size for five seconds.</summary>
+    /// <summary>View writes the receipt only after ffmpeg closes the output successfully.</summary>
     private static async Task<bool> WaitForOutput(string path, TimeSpan timeout, CancellationToken token,
         Action<TimeSpan, long>? progress = null)
     {
         var startedAt = DateTime.Now;
-        long lastSize = -1;
-        var stableSince = DateTime.MinValue;
 
         while (DateTime.Now - startedAt < timeout)
         {
@@ -347,17 +416,10 @@ public partial class RecordVideoWindow : Window
             if (!info.Exists || info.Length <= 0)
                 continue;
 
-            if (info.Length == lastSize)
+            if (File.Exists(path + ".done"))
             {
-                if (stableSince == DateTime.MinValue)
-                    stableSince = DateTime.Now;
-                else if (DateTime.Now - stableSince > TimeSpan.FromSeconds(5))
-                    return true;
-            }
-            else
-            {
-                lastSize = info.Length;
-                stableSince = DateTime.MinValue;
+                File.Delete(path + ".done");
+                return true;
             }
         }
 
@@ -391,6 +453,7 @@ public partial class RecordVideoWindow : Window
         }
         metadataSave.Stop();
         if (batchEntries == null && windowLoaded) SyncSettingsToMain();
+        windowLoaded = false; previewRevision++;
         base.OnClosing(e);
     }
 
@@ -405,13 +468,19 @@ public partial class RecordVideoWindow : Window
 
     private void SyncSettingsToMain()
     {
-        main.ApplyRecordSongInfo(
-            TitleBox.Text,
-            ArtistBox.Text,
-            DesignerBox.Text,
-            LevelBox.Text,
-            BpmBox.Text,
-            ClockBox.Text);
+        if (!windowLoaded || chartDifficulty != main.SelectedDifficulty ||
+            !string.Equals(chartDirectory, MainWindow.maidataDir, StringComparison.OrdinalIgnoreCase)) return;
+        if (metadataDirty)
+        {
+            main.ApplyRecordSongInfo(
+                TitleBox.Text,
+                ArtistBox.Text,
+                DesignerBox.Text,
+                LevelBox.Text,
+                BpmBox.Text,
+                ClockBox.Text);
+            metadataDirty = false;
+        }
         main.ApplyRecordUtageInfo(NormalizeUtageLabel(), UtageCoopBox.IsChecked == true);
         main.ApplyRecordDisplaySettings(
             SongDetailStyleBox.SelectedIndex,
@@ -423,7 +492,7 @@ public partial class RecordVideoWindow : Window
     private string NormalizeUtageLabel() =>
         string.IsNullOrWhiteSpace(UtageLabelBox.Text) ? "\u5bb4" : UtageLabelBox.Text.Trim();
 
-    private void RefreshPreviewButton_Click(object sender, RoutedEventArgs e)
+    private async void RefreshPreviewButton_Click(object sender, RoutedEventArgs e)
     {
         main.ApplyRecordUtageInfo(NormalizeUtageLabel(), UtageCoopBox.IsChecked == true);
         if (SongDetailStyleBox.SelectedIndex != 1)
@@ -432,7 +501,8 @@ public partial class RecordVideoWindow : Window
             return;
         }
 
-        var path = main.PrepareSongDetailPreview(
+        var revision = ++previewRevision;
+        var path = await main.PrepareSongDetailPreview(
             TitleBox.Text,
             ArtistBox.Text,
             DesignerBox.Text,
@@ -441,6 +511,7 @@ public partial class RecordVideoWindow : Window
             NormalizeUtageLabel(),
             UtageCoopBox.IsChecked == true,
             forceRefresh: true);
+        if (revision != previewRevision || !windowLoaded) return;
         if (!string.IsNullOrWhiteSpace(path))
             LoadCoverPreview(path, false);
     }

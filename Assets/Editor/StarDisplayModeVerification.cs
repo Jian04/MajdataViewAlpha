@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using UnityEngine;
 
 public static class StarDisplayModeVerification
@@ -52,6 +52,29 @@ public static class StarDisplayModeVerification
             ExpectPixel(camera, target, pixels, Color.blue, "Modern head overlap");
             if (blue.sortingOrder != 0 || red.sortingOrder != -4 || ex.sortingOrder != -3)
                 throw new Exception("Original head layers were not restored");
+            UnityEngine.Object.DestroyImmediate(blue.gameObject);
+            UnityEngine.Object.DestroyImmediate(red.gameObject);
+            foreach (var initialMode in new[] { 0, 1 })
+            {
+                StarDisplayOrder.SetMode(initialMode);
+                var firstTrack = new GameObject("Earlier path"); firstTrack.transform.SetParent(root.transform);
+                var lastTrack = new GameObject("Later path"); lastTrack.transform.SetParent(root.transform);
+                var blueBars = new[] { Create(firstTrack, sprite, Color.blue, 0), Create(firstTrack, sprite, Color.blue, -1) };
+                var redBars = new[] { Create(lastTrack, sprite, Color.red, -24), Create(lastTrack, sprite, Color.red, -25), Create(lastTrack, sprite, Color.red, -26) };
+                foreach (var bar in blueBars) bar.sortingLayerName = "Slide";
+                foreach (var bar in redBars) bar.sortingLayerName = "Slide";
+                StarDisplayOrder.RegisterTrack(firstTrack, blueBars);
+                StarDisplayOrder.RegisterTrack(lastTrack, redBars);
+                StarDisplayOrder.Flush();
+                ExpectPixel(camera, target, pixels, initialMode == 0 ? Color.red : Color.blue, "Initial track mode " + initialMode);
+                StarDisplayOrder.SetMode(0);
+                ExpectPixel(camera, target, pixels, Color.red, "Legacy complete track overlap");
+                if (redBars[2].sortingOrder <= blueBars[0].sortingOrder) throw new Exception("Track arrow ranges overlap");
+                StarDisplayOrder.SetMode(1);
+                ExpectPixel(camera, target, pixels, Color.blue, "Modern complete track overlap");
+                if (blueBars[0].sortingOrder != 0 || redBars[2].sortingOrder != -26) throw new Exception("Track original order not restored");
+                UnityEngine.Object.DestroyImmediate(firstTrack); UnityEngine.Object.DestroyImmediate(lastTrack);
+            }
             Debug.Log("STAR DISPLAY MODE PASS: live blue/red overlap in both modes, guide/head layers and EX offset.");
         }
         finally

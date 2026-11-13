@@ -1,4 +1,5 @@
 using System.Windows.Media;
+using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Rendering;
 
@@ -6,6 +7,14 @@ namespace MajdataEdit.Editor;
 
 internal sealed class SimaiColorizer : DocumentColorizingTransformer
 {
+    internal SimaiColorizer(TextEditor editor)
+    {
+        editor.TextArea.TextEntered += (_, e) =>
+        {
+            // Completing *@ changes the opening marker on an earlier line too.
+            if (e.Text.Contains('@')) editor.TextArea.TextView.Redraw();
+        };
+    }
     private static readonly SolidColorBrush DarkBpmBrush = Brush("#86C88F");
     private static readonly SolidColorBrush DarkBeatBrush = Brush("#D9B84E");
     private static readonly SolidColorBrush DarkDurationBrush = Brush("#6F9FD8");
@@ -243,12 +252,23 @@ internal sealed class SimaiColorizer : DocumentColorizingTransformer
             Apply(line, start, end - start, brush);
     }
 
-    private void ApplyForegroundSpans(DocumentLine line, IEnumerable<TextSpan> spans, SolidColorBrush brush)
+    private void ApplyForegroundSpans(DocumentLine line, List<TextSpan> spans, SolidColorBrush brush)
     {
         var lineStart = line.Offset;
         var lineEnd = line.EndOffset;
-        foreach (var span in spans)
+        // Spans are collected in document order and do not overlap within a list.
+        var low = 0;
+        var high = spans.Count;
+        while (low < high)
         {
+            var middle = low + (high - low) / 2;
+            if (spans[middle].Start + spans[middle].Length <= lineStart) low = middle + 1;
+            else high = middle;
+        }
+        for (var index = low; index < spans.Count; index++)
+        {
+            var span = spans[index];
+            if (span.Start >= lineEnd) break;
             var start = Math.Max(lineStart, span.Start);
             var end = Math.Min(lineEnd, span.Start + span.Length);
             if (end > start)

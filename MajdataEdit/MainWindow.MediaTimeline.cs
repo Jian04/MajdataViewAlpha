@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Un4seen.Bass;
 
 namespace MajdataEdit;
@@ -10,6 +10,35 @@ public partial class MainWindow
     private readonly Dictionary<string, DecodedTimelineWave> timelineWaveCache = new(StringComparer.OrdinalIgnoreCase);
     private int timelineWaveBuildGeneration;
     private double waveformDisplayLength = double.NaN;
+    private string? waveformSourcePath;
+
+    private bool CommitChartMediaChanges()
+    {
+        if (MediaTimelinePanel.IsConfiguredFor(maidataDir)) return MediaTimelinePanel.CommitPendingChanges();
+        if (!MediaTimelineProject.HasTemporaryFile(maidataDir)) return true;
+        try
+        {
+            var path = Path.Combine(maidataDir, MediaTimelineProject.TemporaryFileName);
+            var project = Newtonsoft.Json.JsonConvert.DeserializeObject<MediaTimelineProject>(File.ReadAllText(path))
+                ?? throw new InvalidDataException("剪辑草稿为空：" + path);
+            project.Save(maidataDir);
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or Newtonsoft.Json.JsonException)
+        {
+            System.Windows.MessageBox.Show(this, error.Message, "保存剪辑", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+            return false;
+        }
+    }
+
+    private void DiscardChartMediaChanges()
+    {
+        if (MediaTimelinePanel.IsConfiguredFor(maidataDir)) { MediaTimelinePanel.DiscardPendingChanges(); return; }
+        if (!MediaTimelineProject.HasTemporaryFile(maidataDir)) return;
+        MediaTimelineProject.DeleteTemporary(maidataDir);
+        QueueTimelineAudioRefresh();
+        QueueMediaTimelineWaveformRefreshFromDisk();
+    }
 
     private List<MediaChange> GetEffectiveMediaTable()
     {
@@ -21,10 +50,8 @@ public partial class MainWindow
             return syntaxEvents;
 
         var defaultVideoPassThrough = IsDefaultVideoPassThrough(project);
-        var hasAudioTimeline = project.Clips.Any(clip => clip.Track == MediaTrackKind.Audio);
-        var events = syntaxEvents
-            .Where(item => item.kind != "audio" || !hasAudioTimeline)
-            .ToList();
+        // The timeline supplies BGM; AUDIO commands remain a separate overlay.
+        var events = syntaxEvents;
         foreach (var clip in project.Clips)
         {
             if (defaultVideoPassThrough && clip.Track == MediaTrackKind.Video)
@@ -69,10 +96,7 @@ public partial class MainWindow
 
         var clip = clips[0];
         var fullPath = project.ResolveSourcePath(maidataDir, clip);
-        var fileName = Path.GetFileName(fullPath);
-        var isDefaultFile = fileName.Equals("pv.mp4", StringComparison.OrdinalIgnoreCase) ||
-                            fileName.Equals("mv.mp4", StringComparison.OrdinalIgnoreCase) ||
-                            fileName.Equals("bg.mp4", StringComparison.OrdinalIgnoreCase);
+        var isDefaultFile = fullPath.Equals(MajdataCore.ChartCover.FindBackground(maidataDir), StringComparison.OrdinalIgnoreCase);
         return isDefaultFile && clip.TrackIndex == 0 && clip.TimelineStart <= 0.0001d &&
                clip.SourceOffset <= 0.0001d && clip.Duration + 0.02d >= clip.SourceDuration;
     }
@@ -104,6 +128,8 @@ public partial class MainWindow
         }
         catch
         {
+            // Playback awaits this same task and reports a failed mix instead
+            // of silently playing the unedited source.
             return;
         }
 
@@ -117,22 +143,16 @@ public partial class MainWindow
         });
     }
 
-    private void EnsureTimelineAudioReady()
+    private async Task<bool> EnsureTimelineAudioReadyAsync()
     {
         var task = timelineAudioBuildTask;
         if (task == null)
-            return;
+            return true;
 
-        try
-        {
-            var path = task.GetAwaiter().GetResult();
-            if (ReferenceEquals(task, timelineAudioBuildTask))
-                SwitchTimelineAudioSource(path);
-        }
-        catch
-        {
-            // Keep the original track playable when FFmpeg cannot build the cache.
-        }
+        var path = await task;
+        if (!ReferenceEquals(task, timelineAudioBuildTask)) return false;
+        SwitchTimelineAudioSource(path);
+        return true;
     }
 
     private void SwitchTimelineAudioSource(
@@ -148,7 +168,10 @@ public partial class MainWindow
 
         if (!string.IsNullOrWhiteSpace(loadedTrackPath) &&
             Path.GetFullPath(loadedTrackPath).Equals(Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
+        {
+            MediaTools.PruneTimelineAudioCache(maidataDir, targetPath);
             return;
+        }
 
         var position = preservedPosition ?? (bgmStream > 0
             ? Bass.BASS_ChannelBytes2Seconds(
@@ -174,6 +197,7 @@ public partial class MainWindow
             ? null
             : targetPath;
         ReloadCurrentTrack(position, volume, tempo);
+        MediaTools.PruneTimelineAudioCache(maidataDir, targetPath);
         MediaTimelinePanel.SyncPlayhead(position);
     }
 
@@ -185,46 +209,6 @@ public partial class MainWindow
         SimaiProcess.ClearNoteListPlayedState();
         if (FollowPlayCheck.IsChecked == true && request.Time >= 0d && request.Time <= songLength)
             SeekTextFromTime();
-        DrawWave();
-    }
-
-    private void MediaTimelinePanel_MarkerRequested(object? sender, MediaMarkerRequest request)
-    {
-        var marker = request.Name.Equals("end", StringComparison.OrdinalIgnoreCase) ? "end" : "start";
-        var source = GetRawFumenText();
-        source = System.Text.RegularExpressions.Regex.Replace(
-            source,
-            $@"(?im)^[\t ]*@{marker}[\t ]*(?:\r?\n|$)",
-            string.Empty);
-
-        if (request.Time.HasValue)
-        {
-            SimaiProcess.Serialize(source);
-            var targetTime = Math.Max(0d, request.Time.Value);
-            var timing = SimaiProcess.timinglist
-                .OrderBy(point => Math.Abs(point.time - targetTime))
-                .FirstOrDefault();
-            var offset = timing == null || targetTime <= SimaiProcess.first + 0.0001d
-                ? 0
-                : GetTextOffset(source, timing.rawTextPositionY, timing.rawTextPositionX);
-            var markerText = $"@{marker}";
-            if (offset <= 0)
-                source = markerText + Environment.NewLine + source;
-            else
-                source = source.Insert(offset, Environment.NewLine + markerText + Environment.NewLine);
-        }
-
-        SetRawFumenText(source);
-        isSaved = false;
-        SimaiProcess.Serialize(source);
-        BuildWaveBeatLines(GetTimelineMaximum(), out var strongBeats, out var weakBeats);
-        MediaTimelinePanel.RefreshChartState(
-            songLength,
-            strongBeats,
-            weakBeats,
-            GetCurrentBeatDuration(),
-            SimaiProcess.mediaTrimStart,
-            SimaiProcess.mediaTrimEnd);
         DrawWave();
     }
 
@@ -242,6 +226,7 @@ public partial class MainWindow
 
     private async void MediaTimelinePanel_ProjectChanged(object? sender, EventArgs e)
     {
+        if (string.IsNullOrEmpty(maidataDir) || !MediaTimelinePanel.IsConfiguredFor(maidataDir)) return;
         if (MediaTimelinePanel.HasPendingChanges)
             SetSavedState(false);
         var audioClips = MediaTimelinePanel.GetResolvedClips(MediaTrackKind.Audio);
@@ -285,22 +270,7 @@ public partial class MainWindow
         if (!File.Exists(projectPath) && !MediaTimelineProject.HasTemporaryFile(maidataDir))
         {
             waveformDisplayLength = songLength;
-            var sourcePath = GetCurrentTrackPath();
-            if (!string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath))
-            {
-                var clip = new MediaTimelineClip
-                {
-                    Track = MediaTrackKind.Audio,
-                    TrackIndex = 0,
-                    SourcePath = sourcePath,
-                    Name = Path.GetFileName(sourcePath),
-                    TimelineStart = 0d,
-                    SourceOffset = 0d,
-                    SourceDuration = songLength,
-                    Duration = songLength
-                };
-                _ = RebuildTimelineWaveformAsync(new[] { clip }, songLength);
-            }
+            MediaTools.PruneTimelineAudioCache(maidataDir, loadedTrackPath);
             return;
         }
 
@@ -329,6 +299,15 @@ public partial class MainWindow
     {
         var generation = Interlocked.Increment(ref timelineWaveBuildGeneration);
         var chartLength = Math.Max(0.1d, Math.Max(songLength, requestedLength ?? 0d));
+        if (clips.Count == 1 && waveformSourcePath != null && chartLength <= songLength &&
+            Path.GetFullPath(clips[0].SourcePath).Equals(Path.GetFullPath(waveformSourcePath), StringComparison.OrdinalIgnoreCase) &&
+            clips[0].TimelineStart <= 0.0001d && clips[0].SourceOffset <= 0.0001d &&
+            clips[0].Duration + 0.02d >= songLength && Math.Abs(clips[0].Volume - 1d) <= 0.0001d &&
+            clips[0].FadeIn <= 0.0001d && clips[0].FadeOut <= 0.0001d)
+        {
+            waveformDisplayLength = songLength;
+            return;
+        }
         TimelineWaveResult result;
         try
         {
@@ -345,10 +324,12 @@ public partial class MainWindow
         {
             if (generation != timelineWaveBuildGeneration)
                 return;
+            waveformSourcePath = null;
             waveRaws[0] = result.Full;
             waveRaws[1] = result.Medium;
             waveRaws[2] = result.Low;
             waveformDisplayLength = result.Duration;
+            UpdateWaveformBars(result.Duration);
             densityAudioEnvelopeSource = null;
             densityAudioEnvelope = Array.Empty<float>();
             DrawWave();

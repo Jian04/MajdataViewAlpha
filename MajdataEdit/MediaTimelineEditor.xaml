@@ -8,7 +8,7 @@
              Background="{DynamicResource EditorBackground}">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="38" />
+            <RowDefinition Height="34" />
             <RowDefinition Height="*" />
             <RowDefinition Height="28" />
         </Grid.RowDefinitions>
@@ -18,7 +18,7 @@
             <ScrollViewer x:Name="ToolbarButtonsScroll" HorizontalScrollBarVisibility="Hidden"
                           VerticalScrollBarVisibility="Disabled" ScrollChanged="ToolbarButtonsScroll_ScrollChanged"
                           Background="{DynamicResource ButtonsBackground}">
-            <DockPanel Margin="6,4" Height="30" LastChildFill="False">
+            <DockPanel Margin="6,3" Height="26" LastChildFill="False">
                 <Button Content="← 编辑" Width="62" Margin="0,0,8,0" Click="Close_Click"
                         Template="{DynamicResource DarkButton}" />
                 <CheckBox x:Name="SnapCheck" Content="吸附到一拍" IsChecked="True"
@@ -62,8 +62,8 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <Border Grid.Column="0" Background="{DynamicResource ButtonsBackground}"
-                    BorderBrush="{DynamicResource MenuSeparator}" BorderThickness="0,0,1,0">
-                <Canvas x:Name="TrackLabelCanvas" />
+                    BorderBrush="{DynamicResource MenuSeparator}" BorderThickness="0,0,1,0" ClipToBounds="True">
+                <Canvas x:Name="TrackLabelCanvas" ClipToBounds="True" />
             </Border>
             <ScrollViewer x:Name="TimelineScroll" Grid.Column="1"
                           HorizontalScrollBarVisibility="Visible" VerticalScrollBarVisibility="Auto"

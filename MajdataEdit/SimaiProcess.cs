@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -7,7 +7,7 @@ using MajdataCore;
 
 namespace MajdataEdit;
 
-internal static class SimaiProcess
+internal static partial class SimaiProcess
 {
     /// <summary>
     /// Tempo used when a chart reaches its first beat without declaring one.
@@ -24,6 +24,20 @@ internal static class SimaiProcess
     public static string[] fumens = new string[7];
     public static string[] levels = new string[7];
 
+    internal sealed record DocumentData(string? Title, string? Artist, string? Designer,
+        string? WholeBpm, string? ClockCount, string? OtherCommands, float First,
+        string[] Fumens, string[] Levels);
+
+    internal static DocumentData CaptureDocument() => new(title, artist, designer, wholeBpm,
+        clockCount, other_commands, first, (string[])fumens.Clone(), (string[])levels.Clone());
+
+    internal static void RestoreDocument(DocumentData data)
+    {
+        title = data.Title; artist = data.Artist; designer = data.Designer;
+        wholeBpm = data.WholeBpm; clockCount = data.ClockCount; other_commands = data.OtherCommands;
+        first = data.First; fumens = (string[])data.Fumens.Clone(); levels = (string[])data.Levels.Clone();
+    }
+
     /// <summary>
     ///     the timing points that contains notedata
     /// </summary>
@@ -33,6 +47,8 @@ internal static class SimaiProcess
     ///     the timing points made by "," in maidata
     /// </summary>
     public static List<SimaiTimingPoint> timinglist = new();
+    // The waveform includes empty slots from independent streams; the main clock does not.
+    public static List<SimaiTimingPoint> waveTimingList = new();
 
     public static List<SvPoint> svTable = new();
     public static List<SpeedChange> hsTable = new();
@@ -44,12 +60,14 @@ internal static class SimaiProcess
     public static List<ColorChange> colorTable = new();
     public static List<SizeChange> sizeTable = new();
     public static List<AlphaChange> alphaTable = new();
+    public static List<AngleChange> angleTable = new();
     public static List<DisplayChange> displayTable = new();
     public static List<SubtitleChange> subtitleTable = new();
     public static List<EffectChange> effectTable = new();
     public static List<MediaChange> mediaTable = new();
     // Editor-only time signature markers used by the waveform grid.
     public static List<MeterChange> meterTable = new();
+    public static List<BeatDisplayPoint> beatDisplayTable = new();
     public static double? mediaTrimStart;
     public static double? mediaTrimEnd;
 
@@ -81,6 +99,7 @@ internal static class SimaiProcess
     {
         notelist = new List<SimaiTimingPoint>();
         timinglist = new List<SimaiTimingPoint>();
+        waveTimingList = new List<SimaiTimingPoint>();
         svTable = new List<SvPoint>();
         hsTable = new List<SpeedChange>();
         spawnTable = new List<SpawnChange>();
@@ -91,11 +110,13 @@ internal static class SimaiProcess
         colorTable = new List<ColorChange>();
         sizeTable = new List<SizeChange>();
         alphaTable = new List<AlphaChange>();
+        angleTable = new List<AngleChange>();
         displayTable = new List<DisplayChange>();
         subtitleTable = new List<SubtitleChange>();
         effectTable = new List<EffectChange>();
         mediaTable = new List<MediaChange>();
         meterTable = new List<MeterChange>();
+        beatDisplayTable = new List<BeatDisplayPoint>();
         mediaTrimStart = null;
         mediaTrimEnd = null;
     }
@@ -262,7 +283,7 @@ internal static class SimaiProcess
             if (timing.currentBpm > 0f)
                 return FormatBpm(timing.currentBpm);
         }
-        return "";
+        return FormatBpm(DefaultBpm);
     }
 
     public static string GetDesignerText(int difficultyIndex)
@@ -283,7 +304,7 @@ internal static class SimaiProcess
             return clockCount.Trim();
 
         var commandValue = GetOtherCommandValue("clock_count");
-        return string.IsNullOrWhiteSpace(commandValue) ? "" : commandValue.Trim();
+        return string.IsNullOrWhiteSpace(commandValue) ? "4" : commandValue.Trim();
     }
 
     private static string BuildOtherCommandsForSave()
@@ -377,11 +398,13 @@ internal static class SimaiProcess
         var colorPoints  = new List<ColorChange>();
         var sizePoints   = new List<SizeChange>();
         var alphaPoints  = new List<AlphaChange>();
+        var anglePoints = new List<AngleChange>();
         var displayPoints = new List<DisplayChange>();
         var subtitlePoints = new List<SubtitleChange>();
         var effectPoints = new List<EffectChange>();
         var mediaPoints = new List<MediaChange>();
         var meterPoints = new List<MeterChange>();
+        var beatDisplayPoints = new List<BeatDisplayPoint>();
         double? trimStart = null;
         double? trimEnd = null;
         try
@@ -392,11 +415,24 @@ internal static class SimaiProcess
             double time = first; //in seconds
             double requestedTime = 0;
             var beats = 4;
+            var meterNumerator = 4;
+            var meterDenominator = 4;
             var haveNote = false;
             var noteTemp = "";
             int noteStartX = 0, noteStartY = 0;
             var nextOverlayStreamIndex = 1;
             int Ycount = 0, Xcount = 0;
+            var overlayTimings = new List<SimaiTimingPoint>();
+            void RecordBeatDisplayState()
+            {
+                if (bpm <= 0f) return;
+                if (beatDisplayPoints.Count > 0 && beatDisplayPoints[^1].bpm == bpm &&
+                    beatDisplayPoints[^1].subdivision == beats &&
+                    beatDisplayPoints[^1].meterNumerator == meterNumerator &&
+                    beatDisplayPoints[^1].meterDenominator == meterDenominator) return;
+                beatDisplayPoints.Add(new BeatDisplayPoint { time=time, bpm=bpm, subdivision=beats,
+                    meterNumerator=meterNumerator, meterDenominator=meterDenominator });
+            }
 
             for (var i = 0; i < text.Length; i++)
             {
@@ -430,9 +466,9 @@ internal static class SimaiProcess
                 if (text[i] == '@' && !haveNote &&
                     TryReadOverlayStream(
                         text, i, time, bpm, curHSpeed, Xcount, Ycount, position,
-                        nextOverlayStreamIndex++, overlayNotes, svPoints, hsPoints,
+                        nextOverlayStreamIndex++, overlayNotes, overlayTimings, svPoints, hsPoints,
                         spawnPoints, spawnModePoints, bouncePoints, destroyPoints, fakePoints,
-                        colorPoints, sizePoints, alphaPoints,
+                        colorPoints, sizePoints, alphaPoints, anglePoints,
                         displayPoints, subtitlePoints, effectPoints, mediaPoints,
                         out var overlayEnd, out var overlayCaretTime))
                 {
@@ -462,12 +498,15 @@ internal static class SimaiProcess
                             trimEnd = time;
                             break;
                         case MajdataCore.EditorDirectiveKind.Meter:
+                            meterNumerator = directive.numerator;
+                            meterDenominator = directive.denominator;
                             meterPoints.Add(new MeterChange
                             {
                                 time = time,
                                 numerator = directive.numerator,
                                 denominator = directive.denominator
                             });
+                            RecordBeatDisplayState();
                             break;
                     }
 
@@ -479,6 +518,17 @@ internal static class SimaiProcess
                 if (text[i] == '(')
                     //Get bpm
                 {
+                    var closing = text.IndexOf(')', i + 1);
+                    var boundary = text.IndexOfAny(new[] { ',', '\r', '\n', '{', '(' }, i + 1);
+                    if (closing < 0 || boundary >= 0 && closing > boundary ||
+                        !float.TryParse(text.Substring(i + 1, closing - i - 1), NumberStyles.Float,
+                            CultureInfo.InvariantCulture, out var nextBpm) || !IsFinite(nextBpm) || nextBpm <= 0f)
+                    {
+                        if (!haveNote) { noteStartX = Math.Max(0, Xcount - 1); noteStartY = Ycount; }
+                        haveNote = true;
+                        noteTemp += text[i];
+                        continue;
+                    }
                     haveNote = false;
                     noteTemp = "";
                     var bpm_s = "";
@@ -492,6 +542,7 @@ internal static class SimaiProcess
                     }
 
                     bpm = float.Parse(bpm_s);
+                    RecordBeatDisplayState();
                     //Console.WriteLine("BPM" + bpm);
                     continue;
                 }
@@ -523,23 +574,21 @@ internal static class SimaiProcess
                     }
 
                     beats = int.Parse(beats_s);
+                    RecordBeatDisplayState();
                     //Console.WriteLine("BEAT" + beats);
                     continue;
                 }
 
                 if (text[i] == '<' && haveNote)
                 {
-                    var misplacedEnd = text.IndexOf('>', i + 1);
-                    var misplacedNewline = text.IndexOfAny(
-                        new[] { '\r', '\n' }, i + 1);
-                    if (misplacedEnd >= 0 &&
-                        (misplacedNewline < 0 || misplacedEnd < misplacedNewline))
+                    var misplacedEnd = AlphaCommandBoundary.FindClose(text, i);
+                    if (misplacedEnd >= 0)
                     {
                         var misplacedToken = text.Substring(
                             i + 1, misplacedEnd - i - 1);
                         if (NamesKnownAlphaCommand(misplacedToken))
                         {
-                            Xcount += misplacedEnd - i;
+                            AdvanceSourcePosition(text, i + 1, misplacedEnd + 1, ref Xcount, ref Ycount);
                             i = misplacedEnd;
                             continue;
                         }
@@ -547,23 +596,34 @@ internal static class SimaiProcess
                 }
                 if (text[i] == '<' && AlphaCommandBoundary.IsPotentialStart(text, i))
                 {
-                    var tokenEnd = text.IndexOf('>', i + 1);
+                    var tokenEnd = AlphaCommandBoundary.FindClose(text, i);
                     var looksLikeAlphaCommand = true;
                     if (tokenEnd >= 0)
                     {
+                        AdvanceSourcePosition(text, i + 1, tokenEnd + 1, ref Xcount, ref Ycount);
                         var token = text.Substring(i + 1, tokenEnd - i - 1);
+                        if (!AlphaCommandGrammar.TryValidate(token, bpm, out _))
+                        {
+                            i = tokenEnd;
+                            continue;
+                        }
+                        if (TryParseNoteTransition(token, time, bpm, 0, i, ref curHSpeed,
+                            svPoints, hsPoints, spawnPoints, bouncePoints, destroyPoints,
+                            sizePoints, alphaPoints, anglePoints))
+                        {
+                            i = tokenEnd;
+                            continue;
+                        }
                         if (TryParseGlobalTimelineChange(
                                 token, time, bpm,
                                 displayPoints, subtitlePoints, effectPoints, mediaPoints,
                                 colorPoints))
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
                         if (TryParseTypedSvChange(token, time, svPoints, i))
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
@@ -580,38 +640,32 @@ internal static class SimaiProcess
                                 sourcePosition = i,
                                 multiplier = svMultiplier
                             });
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
                         if (TryParseTypedSpeedChange(token, time, hsPoints, i))
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
                         if (TryParseSpawnChange(token, time, spawnPoints, i))
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
                         if (TryParseSpawnModeChange(token, time, spawnModePoints, i))
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
                         if (TryParseBounceChange(token, time, bpm, bouncePoints, i))
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
                         if (TryParseDestroyChange(token, time, destroyPoints, i) ||
                             TryParseFakeChange(token, time, fakePoints, i))
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
@@ -629,15 +683,13 @@ internal static class SimaiProcess
                                 sourcePosition = i,
                                 multiplier = curHSpeed
                             });
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
-                        if (TryParseColorChange(token, time, colorPoints, i) ||
+                        if (TryParseColorChange(token, time, bpm, colorPoints, i) ||
                             TryParseSizeChange(token, time, sizePoints, i) ||
                             TryParseAlphaChange(token, time, alphaPoints, i))
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
@@ -647,7 +699,6 @@ internal static class SimaiProcess
                         // it here prevents malformed preview/playback notes at position zero.
                         if (looksLikeAlphaCommand)
                         {
-                            Xcount += tokenEnd - i;
                             i = tokenEnd;
                             continue;
                         }
@@ -753,7 +804,7 @@ internal static class SimaiProcess
                                     noteStartX,
                                     noteStartY,
                                     fakeEachGroup, bpm,
-                                    curHSpeed, i));
+                                    curHSpeed, i, _subdivision: beats));
                                 fakeTime += timeInterval;
                             }
                         }
@@ -763,14 +814,24 @@ internal static class SimaiProcess
                                 time,
                                 noteStartX,
                                 noteStartY,
-                                noteTemp, bpm, curHSpeed, i));
+                                noteTemp, bpm, curHSpeed, i, _subdivision: beats));
                         }
                         //Console.WriteLine("Note:" + noteTemp);
 
                         noteTemp = "";
                     }
 
-                    _timinglist.Add(new SimaiTimingPoint(time, Xcount, Ycount, "", bpm));
+                    _timinglist.Add(new SimaiTimingPoint(time, Xcount, Ycount, "", bpm, _sourcePosition: i, _subdivision: beats));
+                    if (beatDisplayPoints.Count == 0 ||
+                        beatDisplayPoints[^1].bpm != bpm ||
+                        beatDisplayPoints[^1].subdivision != beats ||
+                        beatDisplayPoints[^1].meterNumerator != meterNumerator ||
+                        beatDisplayPoints[^1].meterDenominator != meterDenominator)
+                        beatDisplayPoints.Add(new BeatDisplayPoint
+                        {
+                            time = time, bpm = bpm, subdivision = beats,
+                            meterNumerator = meterNumerator, meterDenominator = meterDenominator
+                        });
 
 
                     time += 1d / (bpm / 60d) * 4d / beats;
@@ -785,6 +846,8 @@ internal static class SimaiProcess
             ApplyFakeState(_notelist, fakePoints);
             notelist  = _notelist;
             timinglist = _timinglist;
+            waveTimingList = overlayTimings.Count == 0 ? _timinglist :
+                _timinglist.Concat(overlayTimings).OrderBy(point => point.time).ToList();
             svTable    = svPoints;
             hsTable    = hsPoints;
             spawnTable = spawnPoints;
@@ -795,11 +858,13 @@ internal static class SimaiProcess
             colorTable = colorPoints;
             sizeTable  = sizePoints;
             alphaTable = alphaPoints;
+            angleTable = anglePoints;
             displayTable = displayPoints;
             subtitleTable = subtitlePoints;
             effectTable = effectPoints;
             mediaTable = mediaPoints;
             meterTable = meterPoints;
+            beatDisplayTable = beatDisplayPoints;
             mediaTrimStart = trimStart;
             mediaTrimEnd = trimEnd;
             return requestedTime;
@@ -809,6 +874,7 @@ internal static class SimaiProcess
             Console.WriteLine(e.Message);
             notelist = new List<SimaiTimingPoint>();
             timinglist = new List<SimaiTimingPoint>();
+            waveTimingList = new List<SimaiTimingPoint>();
             svTable = new List<SvPoint>();
             hsTable = new List<SpeedChange>();
             spawnTable = new List<SpawnChange>();
@@ -819,11 +885,13 @@ internal static class SimaiProcess
             colorTable = new List<ColorChange>();
             sizeTable = new List<SizeChange>();
             alphaTable = new List<AlphaChange>();
+            angleTable = new List<AngleChange>();
             displayTable = new List<DisplayChange>();
             subtitleTable = new List<SubtitleChange>();
             effectTable = new List<EffectChange>();
             mediaTable = new List<MediaChange>();
             meterTable = new List<MeterChange>();
+            beatDisplayTable = new List<BeatDisplayPoint>();
             mediaTrimStart = null;
             mediaTrimEnd = null;
             return 0;
@@ -882,6 +950,7 @@ internal static class SimaiProcess
         long caretPosition,
         int streamIndex,
         ICollection<SimaiTimingPoint> output,
+        ICollection<SimaiTimingPoint> timingOutput,
         List<SvPoint> svChanges,
         List<SpeedChange> speedChanges,
         List<SpawnChange> spawnChanges,
@@ -892,6 +961,7 @@ internal static class SimaiProcess
         List<ColorChange> colorChanges,
         List<SizeChange> sizeChanges,
         List<AlphaChange> alphaChanges,
+        List<AngleChange> angleChanges,
         List<DisplayChange> displayChanges,
         List<SubtitleChange> subtitleChanges,
         List<EffectChange> effectChanges,
@@ -908,7 +978,7 @@ internal static class SimaiProcess
         var contentStart = markerIndex + (block ? 2 : 1);
         if (block)
         {
-            var close = text.IndexOf("*@", contentStart, StringComparison.Ordinal);
+            var close = EditorDirectiveScanner.FindOverlayClose(text, contentStart);
             if (close < 0)
                 return false;
             streamEnd = close + 2;
@@ -922,8 +992,17 @@ internal static class SimaiProcess
                 streamEnd = text.Length;
         }
 
-        while (contentStart < streamEnd && char.IsWhiteSpace(text[contentStart]))
-            contentStart++;
+        while (contentStart < streamEnd)
+        {
+            if (char.IsWhiteSpace(text[contentStart]))
+                contentStart++;
+            else if (text[contentStart] == '|' && contentStart + 1 < streamEnd && text[contentStart + 1] == '|')
+            {
+                var newline = text.IndexOf('\n', contentStart + 2);
+                contentStart = newline < 0 ? streamEnd : newline + 1;
+            }
+            else break;
+        }
         if (contentStart >= streamEnd || text[contentStart] != '{')
             return false;
 
@@ -945,6 +1024,9 @@ internal static class SimaiProcess
 
         bool TryParseScopedState(string token, double eventTime, int sourcePosition)
         {
+            if (TryParseNoteTransition(token, eventTime, localBpm, streamIndex, sourcePosition,
+                ref localHSpeed, svChanges, speedChanges, spawnChanges, bounceChanges,
+                destroyChanges, sizeChanges, alphaChanges, angleChanges)) return true;
             var start = svChanges.Count;
             if (TryParseTypedSvChange(
                     token, eventTime, svChanges, sourcePosition))
@@ -1005,7 +1087,7 @@ internal static class SimaiProcess
                 return true;
             }
             start = colorChanges.Count;
-            if (TryParseColorChange(token, eventTime, colorChanges, sourcePosition))
+            if (TryParseColorChange(token, eventTime, localBpm, colorChanges, sourcePosition))
             {
                 SetStreamIndex(colorChanges, start, streamIndex);
                 return true;
@@ -1025,18 +1107,21 @@ internal static class SimaiProcess
             return false;
         }
 
+        var sourceCursor = markerIndex + 1;
+        var sourceLine = line;
+        var sourceColumn = markerColumn;
         (int Column, int Line) SourceCoordinates(int index)
         {
-            var sourceLine = line;
-            var sourceColumn = markerColumn;
-            for (var cursor = markerIndex + 1; cursor <= index; cursor++)
+            // Slots arrive in source order; advance once instead of rescanning
+            // the entire overlay prefix for every comma.
+            for (; sourceCursor <= index; sourceCursor++)
             {
-                if (text[cursor] == '\n')
+                if (text[sourceCursor] == '\n')
                 {
                     sourceLine++;
                     sourceColumn = 0;
                 }
-                else if (text[cursor] != '\r')
+                else if (text[sourceCursor] != '\r')
                 {
                     sourceColumn++;
                 }
@@ -1053,6 +1138,8 @@ internal static class SimaiProcess
                 markerIndex,
                 commaIndex - rawContent.Length + leadingWhitespace);
             var source = SourceCoordinates(sourceIndex);
+            timingOutput.Add(new SimaiTimingPoint(slotTime, source.Column, source.Line, "",
+                localBpm, localHSpeed, commaIndex, streamIndex, localDivision));
             if (content.Length > 0 && content != "E")
             {
                 if (content.Contains('`'))
@@ -1063,7 +1150,7 @@ internal static class SimaiProcess
                         if (!string.IsNullOrWhiteSpace(fakeEachGroup))
                             output.Add(new SimaiTimingPoint(
                                 fakeTime, Math.Max(0, source.Column - 1), source.Line,
-                                fakeEachGroup, localBpm, localHSpeed, commaIndex, streamIndex));
+                                fakeEachGroup, localBpm, localHSpeed, commaIndex, streamIndex, localDivision));
                         fakeTime += 1.875d / localBpm;
                     }
                 }
@@ -1071,7 +1158,7 @@ internal static class SimaiProcess
                 {
                     output.Add(new SimaiTimingPoint(
                         slotTime, Math.Max(0, source.Column - 1), source.Line,
-                        content, localBpm, localHSpeed, commaIndex, streamIndex));
+                        content, localBpm, localHSpeed, commaIndex, streamIndex, localDivision));
                 }
             }
 
@@ -1086,6 +1173,11 @@ internal static class SimaiProcess
         var contentEnd = block ? streamEnd - 2 : streamEnd;
         for (var index = closeBrace + 1; index < contentEnd; index++)
         {
+            if (text[index] == '|' && index + 1 < contentEnd && text[index + 1] == '|')
+            {
+                while (index < contentEnd && text[index] != '\n') index++;
+                continue;
+            }
             if (text[index] == '<' && AlphaCommandBoundary.IsPotentialStart(text, index))
             {
                 var commandEnd = text.IndexOf('>', index + 1);
@@ -1095,6 +1187,11 @@ internal static class SimaiProcess
                         caretPosition <= commandEnd)
                         localCaretTime = slotTime;
                     var token = text.Substring(index + 1, commandEnd - index - 1);
+                    if (!AlphaCommandGrammar.TryValidate(token, localBpm, out _))
+                    {
+                        index = commandEnd;
+                        continue;
+                    }
                     if (TryParseGlobalTimelineChange(
                             token, slotTime, localBpm,
                             displayChanges, subtitleChanges, effectChanges, mediaChanges,
@@ -1238,7 +1335,8 @@ internal static class SimaiProcess
         var materialized = notes.ToList();
         static int CountHeads(IEnumerable<SimaiTimingPoint> points) =>
             points.Sum(point => point.getNotes().Count(note =>
-                note.noteType != SimaiNoteType.NoiseZone && EachRule.CountsTowardEach(note.isSlideNoHead)));
+                note.noteType != SimaiNoteType.NoiseZone && !note.isMineHead && !note.isMineSlide &&
+                EachRule.CountsTowardEach(note.isSlideNoHead)));
 
         // Rendering and waveform use the chart-wide Each state.
         foreach (var group in materialized.GroupBy(note => Math.Round(note.time, 7)))
@@ -1303,7 +1401,8 @@ internal static class SimaiProcess
             }
             if (note.noteType == SimaiNoteType.Slide)
             {
-                note.isFakeHead = Resolve(timing, "star", note.isBreak);
+                var headType = note.isTouchSlide && note.touchArea != 'K' ? "touch" : "star";
+                note.isFakeHead = Resolve(timing, headType, note.isBreak);
                 note.isFakeSlide = Resolve(timing, "slide", note.isSlideBreak);
                 note.isFake = note.isFakeHead && note.isFakeSlide;
                 continue;
@@ -1393,9 +1492,8 @@ internal static class SimaiProcess
                 continue;
 
             var isBoundary = AlphaCommandBoundary.IsPotentialStart(source, i);
-            var end = source.IndexOf('>', i + 1);
-            var newline = source.IndexOf('\n', i + 1);
-            if (end < 0 || newline >= 0 && newline < end)
+            var end = AlphaCommandBoundary.FindClose(source, i);
+            if (end < 0)
             {
                 if (isBoundary)
                     errors.Add(new AlphaCommandError(
@@ -1417,6 +1515,12 @@ internal static class SimaiProcess
                 continue;
             else if (!TryValidateAlphaCommand(token, out var message))
                 errors.Add(new AlphaCommandError(i - lineStart, line, message));
+            for (var j = i + 1; j <= end; j++)
+                if (source[j] == '\n')
+                {
+                    line++;
+                    lineStart = j + 1;
+                }
             i = end;
         }
         return errors;
@@ -1457,7 +1561,7 @@ internal static class SimaiProcess
 
     public static void ClearNoteListPlayedState()
     {
-        notelist.Sort((x, y) => x.time.CompareTo(y.time));
+        // Serialize already sorts the merged streams. Scrubbing only resets playback flags.
         for (var i = 0; i < notelist.Count; i++) notelist[i].havePlayed = false;
     }
 
@@ -1478,7 +1582,7 @@ internal static class SimaiProcess
         return true;
     }
 
-    private static bool TryParseMediaChange(string token, double time, float bpm, out MediaChange change)
+    internal static bool TryParseMediaChange(string token, double time, float bpm, out MediaChange change)
     {
         change = new MediaChange();
         if (!TryReadCommand(token, AlphaCommandKind.Media, out var descriptor, out var body))
@@ -1966,7 +2070,7 @@ internal static class SimaiProcess
 
         static bool TryValue(string text, out bool enabled, out bool reset)
         {
-            var value = text.Trim();
+            var value = AlphaCommandGrammar.Unwrap(text.Trim());
             reset = false;
             enabled = string.Equals(value, "TRUE", StringComparison.OrdinalIgnoreCase) || value == "1";
             var disabled = string.Equals(value, "FALSE", StringComparison.OrdinalIgnoreCase) || value == "0";
@@ -2013,12 +2117,30 @@ internal static class SimaiProcess
     }
 
     private static bool TryParseColorChange(
-        string token, double time, List<ColorChange> into, int sourcePosition = 0)
+        string token, double time, float bpm, List<ColorChange> into, int sourcePosition = 0)
     {
         var live = token.StartsWith("COLORV*", StringComparison.OrdinalIgnoreCase);
         if (!live && !token.StartsWith("COLOR*", StringComparison.OrdinalIgnoreCase))
             return false;
-        var body = token.Substring(live ? 7 : 6).Trim();
+        var rawBody = token.Substring(live ? 7 : 6).Trim();
+        var body = AlphaCommandGrammar.Unwrap(rawBody);
+        AlphaCommandGrammar.TryFind(live ? "COLORV" : "COLOR", out var command);
+        if (!AlphaCommandGrammar.TryValidate(token, bpm, out _)) return true;
+        bool AddColor(string type, string value)
+        {
+            NoteValueTransition.TryParse(value,bpm,command!.scalar!,out var transition);
+            var color=AlphaCommandGrammar.Unwrap(value).TrimStart('#');
+            if (transition!=null)
+            {
+                var rgb=transition.EvaluateColor(transition.duration);
+                color=$"{(int)MathF.Round(rgb.R*255):X2}{(int)MathF.Round(rgb.G*255):X2}{(int)MathF.Round(rgb.B*255):X2}";
+            }
+            else if (!string.Equals(color,"NULL",StringComparison.OrdinalIgnoreCase) &&
+                (color.Length!=6 || !color.All(Uri.IsHexDigit))) return false;
+            into.Add(new ColorChange {time=time,sourcePosition=sourcePosition,noteType=type,
+                color=color,live=live,transition=transition});
+            return true;
+        }
         if (string.Equals(body, "NULL", StringComparison.OrdinalIgnoreCase))
         {
             into.Add(new ColorChange
@@ -2032,16 +2154,7 @@ internal static class SimaiProcess
         }
         else if (!body.Contains('='))
         {
-            var color = body.TrimStart('#');
-            if (color.Length == 6 && color.All(Uri.IsHexDigit))
-                into.Add(new ColorChange
-                {
-                    time = time,
-                    sourcePosition = sourcePosition,
-                    noteType = string.Empty,
-                    color = color,
-                    live = live
-                });
+            AddColor(string.Empty,rawBody);
         }
         else
         {
@@ -2059,18 +2172,10 @@ internal static class SimaiProcess
                     return true;
                 }
                 var noteType = AlphaCommandGrammar.NormalizeTarget(kv[0]);
-                var colorStr = kv[1].Trim();
-                if (string.Equals(colorStr, "NULL", StringComparison.OrdinalIgnoreCase))
-                    into.Add(new ColorChange { time = time, sourcePosition = sourcePosition, noteType = noteType, color = "NULL", live = live });
-                else
+                if (!AddColor(noteType,kv[1].Trim()))
                 {
-                    var color = colorStr.TrimStart('#');
-                    if (color.Length != 6 || !color.All(Uri.IsHexDigit))
-                    {
-                        into.RemoveRange(start, into.Count - start);
-                        return true;
-                    }
-                    into.Add(new ColorChange { time = time, sourcePosition = sourcePosition, noteType = noteType, color = color, live = live });
+                    into.RemoveRange(start, into.Count - start);
+                    return true;
                 }
             }
         }
@@ -2176,6 +2281,7 @@ internal static class SimaiProcess
         if (!live && !token.StartsWith("ALPHA*", StringComparison.OrdinalIgnoreCase))
             return false;
         var body = token.Substring(live ? 7 : 6).Trim();
+        AlphaCommandGrammar.TryFind(live ? "ALPHAV" : "ALPHA", out var descriptor);
         if (body.Contains('='))
         {
             var start = into.Count;
@@ -2185,7 +2291,7 @@ internal static class SimaiProcess
             {
                 var kv = pair.Split('=', 2, StringSplitOptions.TrimEntries);
                 if (kv.Length != 2 ||
-                    !VisualStateNoteTypes.Contains(
+                    !descriptor!.targets.Contains(
                         AlphaCommandGrammar.NormalizeTarget(kv[0]), StringComparer.OrdinalIgnoreCase))
                 {
                     into.RemoveRange(start, into.Count - start);
@@ -2353,7 +2459,7 @@ internal static class SimaiProcess
     /// Caption text is quoted. This makes commas unambiguous and keeps syntax
     /// completion, validation and playback on one grammar.
     /// </remarks>
-    private static bool TryParseSubtitleChange(string token, double time, float bpm, out SubtitleChange change)
+    internal static bool TryParseSubtitleChange(string token, double time, float bpm, out SubtitleChange change)
     {
         change = new SubtitleChange();
         if (!token.StartsWith("TEXT*", StringComparison.OrdinalIgnoreCase))
@@ -2366,6 +2472,8 @@ internal static class SimaiProcess
         var y = 0f;
         var size = 0f;
         var font = string.Empty;
+        var color = "FFFFFF";
+        var origin = "TopLeft";
         var subtitleIndex = 0;
         var style = "Fade";
         var transition = 0f;
@@ -2390,10 +2498,10 @@ internal static class SimaiProcess
                 duration = Math.Max(0f, duration);
             }
             if (values.Count > 2 && values[2].Length > 0 &&
-                !TryParseSubtitleNumber(values[2], 0f, 1f, out x))
+                !TryParseSubtitleNumber(values[2], float.MinValue, float.MaxValue, out x))
                 return false;
             if (values.Count > 3 && values[3].Length > 0 &&
-                !TryParseSubtitleNumber(values[3], 0f, 1f, out y))
+                !TryParseSubtitleNumber(values[3], float.MinValue, float.MaxValue, out y))
                 return false;
             if (values.Count > 4 && values[4].Length > 0 &&
                 !TryParseSubtitleNumber(values[4], 8f, 200f, out size))
@@ -2415,6 +2523,9 @@ internal static class SimaiProcess
                     return false;
                 transition = Math.Max(0f, transition);
             }
+            if(values.Count>9 && values[9].Length>0) color=values[9].TrimStart('#');
+            if (values.Count > 10 && values[10].Length > 0 &&
+                !AlphaCommandGrammar.TryNormalizeSubtitleOrigin(values[10], out origin)) return false;
         }
         else
         for (var index = 1; index < values.Count; index++)
@@ -2424,7 +2535,7 @@ internal static class SimaiProcess
                 continue;
             if (TryParseSubtitleOption(
                     value, bpm, ref font, ref subtitleIndex,
-                    ref style, ref transition))
+                    ref style, ref transition, ref color, ref origin))
                 continue;
             if (duration < 0f &&
                 TryParseCommandDuration(value, bpm, out var parsedDuration))
@@ -2444,6 +2555,8 @@ internal static class SimaiProcess
             y = y,
             size = size,
             font = font,
+            color = color,
+            origin = origin,
             index = subtitleIndex,
             style = style,
             transition = transition
@@ -2482,10 +2595,10 @@ internal static class SimaiProcess
         switch (key)
         {
             case "x":
-                x = Math.Clamp(value, 0f, 1f);
+                x = value;
                 return true;
             case "y":
-                y = Math.Clamp(value, 0f, 1f);
+                y = value;
                 return true;
             case "size":
                 size = Math.Clamp(value, 8f, 200f);
@@ -2501,7 +2614,9 @@ internal static class SimaiProcess
         ref string font,
         ref int index,
         ref string style,
-        ref float transition)
+        ref float transition,
+        ref string color,
+        ref string origin)
     {
         var equals = text.IndexOf('=');
         if (equals <= 0)
@@ -2510,6 +2625,11 @@ internal static class SimaiProcess
         var value = text.Substring(equals + 1).Trim();
         switch (key)
         {
+            case "origin":
+                return AlphaCommandGrammar.TryNormalizeSubtitleOrigin(value, out origin);
+            case "color":
+                color=value.TrimStart('#');
+                return color.Length==6 && color.All(Uri.IsHexDigit);
             case "font":
                 if (!AlphaCommandGrammar.TryNormalizeSubtitleFont(value, out font))
                     return false;
@@ -2546,8 +2666,11 @@ internal static class SimaiProcess
             return true;
 
         var values = body.Substring(1, body.Length - 2).Split(',');
+        var flipNotesOnly = true;
+        if (effect == "Flip" && values.Length > 1 && bool.TryParse(values[^1].Trim(), out var onlyNotes))
+        { flipNotesOnly = onlyNotes; Array.Resize(ref values, values.Length - 1); }
         var rotatePV = false;
-        if (effect == "Rotate" && values.Length > 1 && bool.TryParse(values[^1].Trim(), out rotatePV))
+        if ((effect == "Rotate" || effect == "Move") && values.Length > 1 && bool.TryParse(values[^1].Trim(), out rotatePV))
             Array.Resize(ref values, values.Length - 1);
         var gradient = effect == "Vignette";
         if (effect == "Vignette" && values.Length >= 3 &&
@@ -2567,13 +2690,20 @@ internal static class SimaiProcess
                 time = time,
                 effect = effect,
                 gradient = gradient,
-                rotatePV = rotatePV,
+                rotatePV = effect == "Rotate" && rotatePV,
+                flipNotesOnly = flipNotesOnly,
+                movePV = effect == "Move" && rotatePV,
                 attack = 0f,
                 release = 0f
             };
             var durationIndex = -1;
             switch (effect)
             {
+                case "Flip":
+                    instant.intensity = 1f;
+                    instant.paramA = F(1);
+                    durationIndex = 2;
+                    break;
                 case "Move":
                     if (values.Length != 4)
                         return true;
@@ -2596,7 +2726,7 @@ internal static class SimaiProcess
                         return true;
                     instant.intensity = F(1);
                     instant.paramA = F(2);
-                    if (values.Length == 5)
+                    if (values.Length == 5 && !string.IsNullOrWhiteSpace(values[3]))
                     {
                         instant.hasDirection = true;
                         instant.paramB = F(3) * (float)Math.PI / 180f;
@@ -2632,7 +2762,9 @@ internal static class SimaiProcess
                 time = time,
                 effect = effect,
                 gradient = gradient,
-                rotatePV = rotatePV,
+                rotatePV = effect == "Rotate" && rotatePV,
+                flipNotesOnly = flipNotesOnly,
+                movePV = effect == "Move" && rotatePV,
                 stateful = true,
                 enabled = enabled
             };
@@ -2653,6 +2785,10 @@ internal static class SimaiProcess
             var transitionIndex = -1;
             switch (effect)
             {
+                case "Flip":
+                    state.intensity = 1f;
+                    state.paramA = F(1);
+                    break;
                 case "Move":
                 {
                     if (values.Length is < 3 or > 4)
@@ -2744,7 +2880,8 @@ internal static class SimaiProcess
                 time = time,
                 effect = effect,
                 gradient = gradient,
-                rotatePV = rotatePV,
+                rotatePV = effect == "Rotate" && rotatePV,
+                movePV = effect == "Move" && rotatePV,
                 duration = Math.Max(0f, duration),
                 intensity = negated ? -Math.Abs(intensity) : intensity
             };
@@ -2779,7 +2916,8 @@ internal static class SimaiProcess
             effect = effect,
             gradient = gradient,
             attack = attack,
-            rotatePV = rotatePV,
+            rotatePV = effect == "Rotate" && rotatePV,
+                movePV = effect == "Move" && rotatePV,
             holdTime = holdFor,
             release = release,
             duration = attack + holdFor + release
@@ -2873,6 +3011,7 @@ internal class SimaiTimingPoint
 {
     private bool notesParsed;
     public float currentBpm = -1;
+    [Newtonsoft.Json.JsonIgnore] public int subdivision = 4;
     public bool havePlayed;
     public bool isEach;
     public bool? isEachInStream;
@@ -2887,7 +3026,7 @@ internal class SimaiTimingPoint
     public double time;
 
     public SimaiTimingPoint(double _time, int textposX = 0, int textposY = 0, string _content = "", float bpm = 0f,
-        float _hspeed = 1f, int _sourcePosition = 0, int _streamIndex = 0)
+        float _hspeed = 1f, int _sourcePosition = 0, int _streamIndex = 0, int _subdivision = 4)
     {
         time = _time;
         rawTextPositionX = textposX;
@@ -2897,6 +3036,7 @@ internal class SimaiTimingPoint
         notesContent = _content.Replace("\n", "").Replace(" ", "");
         currentBpm = bpm;
         HSpeed = _hspeed;
+        subdivision = _subdivision;
     }
 
     public List<SimaiNote> getNotes()
@@ -2967,7 +3107,9 @@ internal class SimaiTimingPoint
                     simaiNotes.AddRange(parsed);
             }
 
-            noteList = simaiNotes;
+            // A comma-delimited slot is the playback unit. Keep its diagnostic,
+            // but do not send its partially parsed notes or hit sounds to View.
+            noteList = string.IsNullOrEmpty(noteParseError) ? simaiNotes : new List<SimaiNote>();
             notesParsed = true;
             return noteList;
         }
@@ -3045,6 +3187,7 @@ internal class SimaiTimingPoint
             // borrow is defined by not producing: no arc, no head, no judgement.
             // The path is followed exactly as written, so it brings its own start
             // and its own timing with it.
+            simaiNote.holdTime = expression.IsHold && !expression.isZeroLengthHold ? getTimeFromBeats(expression.duration) : 0d;
             var borrowed = expression.trajectory;
             var borrowedEnd = borrowed.segments[^1].end;
             simaiNote.trajectoryCarrierPosition = expression.position.position;
@@ -3274,4 +3417,13 @@ internal class MeterChange
     public double time;
     public int numerator;
     public int denominator;
+}
+
+internal class BeatDisplayPoint
+{
+    public double time;
+    public float bpm;
+    public int meterNumerator;
+    public int meterDenominator;
+    public int subdivision;
 }

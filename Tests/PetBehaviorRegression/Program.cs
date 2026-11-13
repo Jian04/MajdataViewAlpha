@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,6 +14,23 @@ internal static class Program
         var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         var window = new MainWindow();
         var type = typeof(MainWindow);
+        var settingsPath = Path.Combine(AppContext.BaseDirectory, "launcher.json");
+        var previousSettings = File.Exists(settingsPath) ? File.ReadAllText(settingsPath) : null;
+        try
+        {
+            File.WriteAllText(settingsPath, "{\"pet\":\"03\",\"followEditWindow\":false,\"custom\":\"keep\"}");
+            Activator.CreateInstance(type.Assembly.GetType("MajdataLauncher.LauncherService")!, true);
+            using var migrated = System.Text.Json.JsonDocument.Parse(File.ReadAllText(settingsPath));
+            Check(migrated.RootElement.GetProperty("pet").GetString() == "乙姬" &&
+                  !migrated.RootElement.GetProperty("followEditWindow").GetBoolean() &&
+                  migrated.RootElement.GetProperty("custom").GetString() == "keep",
+                "renaming Otohime must migrate the selected id and preserve other launcher settings");
+        }
+        finally
+        {
+            if (previousSettings == null) File.Delete(settingsPath);
+            else File.WriteAllText(settingsPath, previousSettings);
+        }
         Check(window.Topmost && !window.ShowActivated, "pet must stay above normal windows without stealing focus");
         object? Field(string name) => type.GetField(name, Flags)!.GetValue(window);
         void Set(string name, object value) => type.GetField(name, Flags)!.SetValue(window, value);
@@ -222,6 +239,30 @@ internal static class Program
         File.Delete(Path.Combine(motionRoot,"motion.json")); Directory.Delete(motionRoot);
         animatorType.GetMethod("ShowLookDirection")!.Invoke(animator, new object?[] { 45d, 1000, null });
         Check((bool)animatorType.GetProperty("IsGesturePlaying")!.GetValue(animator)!, "cursor look reserves the animation until completion");
+        var appearanceType = type.Assembly.GetType("MajdataCollaboration.PetAppearance")!;
+        var appearance = appearanceType.GetMethod("Read", BindingFlags.Public | BindingFlags.Static)!.Invoke(null,
+            new object[] { Path.GetFullPath("MajdataLauncher/Pets/乙姬") })!;
+        Check((bool)appearanceType.GetProperty("IsImage")!.GetValue(appearance)! &&
+            (string)appearanceType.GetProperty("Category")!.GetValue(appearance)! == "单图类", "pet 3 must be a single-image pet");
+        animatorType.GetMethod("LoadStaticImage")!.Invoke(animator, new[] { appearanceType.GetProperty("Path")!.GetValue(appearance) });
+        Check((bool)animatorType.GetProperty("HasAppearance")!.GetValue(animator)! && !(bool)animatorType.GetProperty("HasAtlas")!.GetValue(animator)!, "static pet is ready without a sprite atlas");
+        var staticTarget = (Image)animatorType.GetField("target", Flags)!.GetValue(animator)!;
+        var still = staticTarget.Source; var completions = 0;
+        Check((string)appearanceType.GetProperty("Name")!.GetValue(appearance)! == "乙姬" &&
+            System.Windows.Media.RenderOptions.GetBitmapScalingMode(staticTarget) == System.Windows.Media.BitmapScalingMode.HighQuality &&
+            ((System.Windows.Media.Imaging.BitmapSource)still!).PixelWidth == 1024,
+            "Otohime name, full-resolution image and high-quality downsampling must be retained");
+        var petAnimation = type.Assembly.GetType("MajdataLauncher.PetAnimation")!;
+        foreach (var state in Enum.GetValues(petAnimation))
+            animatorType.GetMethod("Play")!.Invoke(animator, new object?[] { state, false, (Action)(() => completions++), false });
+        animatorType.GetMethod("ShowLookDirection")!.Invoke(animator, new object?[] { 90d, 100, (Action)(() => completions++) });
+        Check(ReferenceEquals(still, staticTarget.Source) && completions == Enum.GetValues(petAnimation).Length + 1 &&
+            Visible((System.Windows.Media.Imaging.BitmapSource)still!), "static WebP never changes expressions, is visible, and completes startup/docking callbacks");
+        using (var imageMotion = System.Text.Json.JsonDocument.Parse(File.ReadAllText("MajdataLauncher/Pets/乙姬/motion.json")))
+            Check(imageMotion.RootElement.GetProperty("breathingUpSeconds").GetDouble() == .1 &&
+                  imageMotion.RootElement.GetProperty("breathingIntervalSeconds").GetDouble() == .5,
+                "Otohime must retain the restored .5 second rest and .1 second rise");
+        Console.WriteLine("STATIC PET PASS: exact WebP loaded, stable image across all states, readiness callbacks and .1s rise.");
         animatorType.GetMethod("Dispose")!.Invoke(animator, null);
         Call("Window_Closed", window, EventArgs.Empty);
         window = new MainWindow();

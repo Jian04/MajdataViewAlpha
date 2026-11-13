@@ -4,7 +4,7 @@ using UnityEngine;
 #nullable enable
 public class StarDrop : TapBase
 {
-    private static readonly Color PinkStarExColor = new(1f, 0.6745283f, 0.8829237f, 1f);
+    internal static readonly Color PinkStarExColor = new(1f, 0.6745283f, 0.8829237f, 1f);
 
     public float rotateSpeed = 1f;
 
@@ -21,6 +21,21 @@ public class StarDrop : TapBase
 
     public GameObject slide;
     private float slideAppearanceStartOffset;
+    public void RefreshSkin(CustomSkin skin)
+    {
+        if (!string.IsNullOrEmpty(customSkin)) return;
+        tapSpr = skin.Star; eachSpr = isMine ? skin.Star : skin.Star_Each;
+        breakSpr = isMine ? skin.Star : skin.Star_Break; exSpr = skin.Star_Ex;
+        tapSpr_Double = skin.Star_Double; eachSpr_Double = isMine ? skin.Star_Double : skin.Star_Each_Double;
+        breakSpr_Double = isMine ? skin.Star_Double : skin.Star_Break_Double; exSpr_Double = skin.Star_Ex_Double;
+        usePinkStarExColor = skin.PinkStarEnabled;
+        if (spriteRenderer == null) return; // Future notes still initialise in Start.
+        spriteRenderer.sprite = isDouble ? isBreak ? breakSpr_Double : isEach ? eachSpr_Double : tapSpr_Double :
+            isBreak ? breakSpr : isEach ? eachSpr : tapSpr;
+        exSpriteRender.sprite = isDouble ? exSpr_Double : exSpr;
+        if (isEX && !isBreak && !isEach) exSpriteRender.color = usePinkStarExColor ? PinkStarExColor : exEffectTap;
+        InvalidateLiveVisual();
+    }
     private void Start()
     {
         PreLoad();
@@ -84,12 +99,13 @@ public class StarDrop : TapBase
             }
         }
 
-        // ALPHA: apply color override to star circle and guide arc.
+        // Share the optional tint, then set the guide's own opacity.
         if (colorOverrideMaterial != null)
         {
             spriteRenderer.sharedMaterial = colorOverrideMaterial;
             lineSpriteRender.sharedMaterial = colorOverrideMaterial;
         }
+        InitializeTapLineAlpha(lineSpriteRender);
         ApplyExAlpha();
 
         spriteRenderer.forceRenderingOff = true;
@@ -97,12 +113,13 @@ public class StarDrop : TapBase
 
         if(!isNoHead)
         {
-            sensor = GameObject.Find("Sensors")
+            var sensorRoot = manager != null ? manager.gameObject : GameObject.Find("Sensors");
+            sensor = sensorRoot
                                    .transform.GetChild(SensorChildIndex)
                                    .GetComponent<Sensor>();
-            manager = GameObject.Find("Sensors")
+            manager = sensorRoot
                                     .GetComponent<SensorManager>();
-            inputManager = GameObject.Find("Input")
+            if (inputManager == null) inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
             sensorPos = (SensorType)SensorChildIndex;
             if (!JudgmentDisabled)

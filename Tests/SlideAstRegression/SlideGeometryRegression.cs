@@ -15,6 +15,7 @@ internal static class SlideGeometryRegression
     public static void Run()
     {
         CheckSlideCodeMirrors();
+        CheckSlideCodeEndpoints();
         CheckSensorQueue();
         CheckTouchSlideZones();
         foreach (var t in new[] { -.1f, .1f })
@@ -88,7 +89,7 @@ internal static class SlideGeometryRegression
                         if (orbit == 9 && start == end) continue;
                         CheckCode($"{start}{direction}{orbit}K{end}", ref count);
                     }
-        foreach (var code in new[] { "8P91K1", "8P9A7P91K1", "1P99K1", "2B4K6", "6B8K2", "1P333K4", "5P77CQ33K1", "5Q9A1P98CQ49K5", "1A3571P0K1" })
+        foreach (var code in new[] { "1A3B5K7", "8P91K1", "8P9A7P91K1", "1P99K1", "2B4K6", "6B8K2", "1P333K4", "5P77CQ33K1", "5Q9A1P98CQ49K5", "1A3571P0K1" })
             CheckCode(code, ref count);
         for (var start = 1; start <= 8; start++)
         for (var orbit = 1; orbit <= 8; orbit++)
@@ -180,7 +181,7 @@ internal static class SlideGeometryRegression
 
     private static void CheckSlideCodeMirrors()
     {
-        foreach (var source in new[] { "8P91K1", "8P9A7P91K1", "1P333K4", "5Q9A1P98CQ49K5", "5P77CQ33K1", "1A3571P0K1" })
+        foreach (var source in new[] { "8P91K1", "8P9A7P91K1", "1P333K4", "5Q9A1P98CQ49K5", "5P77CQ33K1", "1A3571P0K1", "1dA3K5d", "A1A3KB4", "B1CKE5" })
         foreach (var type in new[] { Mirror.HandleType.LRMirror, Mirror.HandleType.UDMirror })
         {
             var mirrored = Mirror.NoteMirrorHandle(source + "[8:1]", type);
@@ -197,6 +198,49 @@ internal static class SlideGeometryRegression
                 Check(flipped.Any(q => (q - expected).sqrMagnitude < 0.01f), $"SlideCode reflection differs: {source} -> {mirrored}");
             }
         }
+    }
+
+    private static void CheckSlideCodeEndpoints()
+    {
+        foreach (var source in new[] { "1dA3K5d", "A1A3KB4", "B1CKE5", "D1P0KE5", "1dK2d", "E1KE2", "A1P0KB4", "1A1P1KC" })
+        {
+            Check(SlideCodeParser.TryParse(source, out var code, out var error), source + ": " + error);
+            Check(code.HasExtendedEndpoints, "Extended endpoint flag missing");
+            Check(NoteExpressionParser.TryParse(source + "[8:1]", out var note, out error), source + ": " + error);
+            var segment = note.path.segments.Single();
+            Check(segment.start.ToExpression() == code.instructions[0].endpoint.ToExpression() &&
+                segment.end.ToExpression() == code.instructions[^1].endpoint.ToExpression(), "Endpoint kind was lost by path parsing");
+            SimaiProcess.ClearData(); SimaiProcess.Serialize("(120){4}" + source + "[8:1],");
+            var serialized = SimaiProcess.notelist.Single().getNotes().Single();
+            Check(serialized.slidePath.Count == 1 && serialized.isTouchSlide &&
+                serialized.slidePath[0].start.ToExpression() == segment.start.ToExpression() &&
+                serialized.slidePath[0].end.ToExpression() == segment.end.ToExpression(), "Editor-to-View data lost extended SlideCode endpoints");
+            var points = new List<Vector3>();
+            Check(SlideCodePathGeometry.TryBuild(source, points), "Extended endpoint geometry failed: " + source);
+            var start = SlideCodeParser.EndpointPosition(code.instructions[0].endpoint);
+            var end = SlideCodeParser.EndpointPosition(code.instructions[^1].endpoint);
+            Check(Complex.Abs(new Complex(points[0].x, points[0].y) - start) < 0.00001 &&
+                Complex.Abs(new Complex(points[^1].x, points[^1].y) - end) < 0.00001, "Geometry endpoint differs from Touch/D coordinate formula");
+            var route = points.ToArray();
+            var distances = SlideGuideGeometry.Distances(route);
+            var length = distances[^1];
+            Complex At(double progress)
+            {
+                var point = SlideGuideGeometry.Evaluate(route, distances, (float)progress).Position;
+                return new Complex(point.x, point.y);
+            }
+            var areas = SlideCodeJudgment.BuildForEndpoints(length, At, SlideCodeParser.EndsWithLine(code),
+                code.instructions[0].endpoint, code.instructions[^1].endpoint);
+            Check(areas[0].SensorA == SlideCodeParser.EndpointSensor(code.instructions[0].endpoint) &&
+                areas[^1].SensorA == SlideCodeParser.EndpointSensor(code.instructions[^1].endpoint), "Endpoint judgement area differs from its authored position");
+            Check(areas.All(area => area.SensorA is >= 0 and <= 32 && area.SensorB is >= -1 and <= 32), "Invalid extended sensor index");
+            Check(Math.Abs(areas[^1].LengthAfterFinish - length) < 0.0001, "Final judgement must match route end");
+            if (source is "A1P0KB4" or "1A1P1KC")
+                Check(SlideCodeParser.EndsWithLine(code) == (source == "A1P0KB4"), "Orbit exit classification ignores actual Touch endpoint");
+            Console.WriteLine($"ENDPOINT PASS {source}: " + string.Join(",", areas.Select(area => ((SensorType)area.SensorA).ToString() + (area.SensorB >= 0 ? "/" + (SensorType)area.SensorB : ""))));
+        }
+        foreach (var invalid in new[] { "1A3dK5", "A1D2K3", "B1P9KC", "1A3KB9" })
+            Check(!SlideCodeParser.TryParse(invalid, out _, out _), "Invalid body node or unreachable orbit was accepted: " + invalid);
     }
 
     private static void CheckCode(string expression, ref int count)
@@ -222,6 +266,7 @@ internal static class SlideGeometryRegression
             return new Complex(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
         }
         var last = code.instructions[^2];
+        Check(SlideCodeParser.EndsWithLine(code) == !(last.IsOrbit && last.parameter == 9), "Native orbit exit classification changed: " + expression);
         SlideAreaRawData[] areas;
         try { areas = SlideCodeJudgment.Build(total, PointAt, !(last.IsOrbit && last.parameter == 9)); }
         catch (Exception ex) { throw new InvalidOperationException($"{expression}: {ex.Message}", ex); }

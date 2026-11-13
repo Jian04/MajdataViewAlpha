@@ -456,13 +456,19 @@ namespace MajdataCore
             switch (segment.shape)
             {
                 case "^":
-                case "v":
                     if (GetInterval(start, end) is 0 or 4)
                     {
                         error = Diagnose(
                             $"「{segment.shape}」星星的起终点不能是同键或对键",
                             $"'{segment.shape}' SLIDE ENDPOINTS MAY NOT BE THE SAME OR OPPOSITE KEY",
                             Describe(segment));
+                        return false;
+                    }
+                    break;
+                case "v":
+                    if (GetInterval(start, end) == 4)
+                    {
+                        error = Diagnose("「v」星星的终点不能是对键", "'v' SLIDE MAY NOT END AT THE OPPOSITE KEY", Describe(segment));
                         return false;
                     }
                     break;

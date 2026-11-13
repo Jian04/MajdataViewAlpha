@@ -61,7 +61,7 @@ public static class TimelineRestoreVerification
             display.SetImmediateDisplay(1,false,false,false,0,0);
             var lines=(SpriteRenderer[])typeof(DisplayTimelineController).GetField("judgeLines",Fields).GetValue(display);
             Require(lines.Length>0,"Standby line was never resolved before first playback");
-            Require(!lines[0].forceRenderingOff,"Standby line did not update immediately");
+            Require(!lines[0].forceRenderingOff,"Stopped screen lost its selected judge line");
             Debug.Log("TIMELINE RESTORE PASS: Hold/TouchHold head state, one queue commit, consumed slide regions, untouched mine and standby judge line.");
         } finally {
             // These are test objects, not scored notes.

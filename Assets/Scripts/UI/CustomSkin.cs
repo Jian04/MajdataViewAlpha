@@ -68,20 +68,21 @@ public class CustomSkin : MonoBehaviour
     }
 
     public void LoadSkin(string skinName, string tapSkinName = null, string holdSkinName = null,
-        string starSkinName = null, bool pinkStar = false)
+        string starSkinName = null, bool pinkStar = false, string slideSkinName = null)
     {
         var bundled = Path.Combine(Application.streamingAssetsPath, "Skin");
         var roots = SkinPaths.Roots(new DirectoryInfo(Application.dataPath).Parent.FullName, bundled, true);
         var path = SkinPaths.Folder(roots, SanitizeSkinName(skinName), SkinPaths.Folder(roots, "dx", bundled));
         var tapPath = SkinPaths.Folder(roots, tapSkinName, path);
         var holdPath = SkinPaths.Folder(roots, holdSkinName, path);
+        var slidePath = SkinPaths.Folder(roots, slideSkinName, path);
         var starBaseSkinName = starSkinName;
         var legacyPinkStar = SkinPaths.Folder(roots, starSkinName, null) == null &&
             TryGetPinkStarBase(starSkinName, out starBaseSkinName);
         pinkStar |= legacyPinkStar;
         PinkStarEnabled = pinkStar;
         var starPath = SkinPaths.Folder(roots, starBaseSkinName, path);
-        var skinKey = string.Join("|", path, tapPath, holdPath, starPath, pinkStar);
+        var skinKey = string.Join("|", path, tapPath, holdPath, starPath, pinkStar, slidePath);
         if (string.Equals(loadedSkinKey, skinKey, System.StringComparison.OrdinalIgnoreCase))
             return;
         loadedSkinKey = skinKey;
@@ -97,9 +98,9 @@ public class CustomSkin : MonoBehaviour
         Tap_Break = LoadPart(tapPath, path, "tap_break.png");
         Tap_Ex = LoadPart(tapPath, path, "tap_ex.png");
 
-        Slide = SpriteLoader.LoadSpriteFromFile(path + "/slide.png");
-        Slide_Each = SpriteLoader.LoadSpriteFromFile(path + "/slide_each.png");
-        Slide_Break = SpriteLoader.LoadSpriteFromFile(path + "/slide_break.png");
+        Slide = LoadPart(slidePath, path, "slide.png");
+        Slide_Each = LoadPart(slidePath, path, "slide_each.png");
+        Slide_Break = LoadPart(slidePath, path, "slide_break.png");
         for (var i = 0; i < 11; i++)
         {
             Wifi[i] = SpriteLoader.LoadSpriteFromFile(path + "/wifi_" + i + ".png");

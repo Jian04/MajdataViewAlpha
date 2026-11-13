@@ -6,6 +6,7 @@ internal static class Program
     [STAThread]
     static void Main()
     {
+        FontLibraryRegression.Run();
         var checks = 0;
         {
             var editor = new TextEditor { FontSize = 16, Text = "{4}1,2," };

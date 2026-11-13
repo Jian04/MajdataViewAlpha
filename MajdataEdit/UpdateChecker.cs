@@ -1,4 +1,4 @@
-﻿using System.Net.Http;
+using System.Net.Http;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -19,7 +19,7 @@ public partial class MainWindow
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("MajdataEditAlpha/0.6.0");
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("MajdataEditAlpha/0.6.2");
             http.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
             http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
             using var deadline = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(25));
@@ -42,6 +42,10 @@ public partial class MainWindow
                 $"当前版本：v{current.Major}.{current.Minor}.{current.Build} · GitHub 最新发行：{tag}"));
             var link = SessionTheme.Button("在 GitHub 查看发行版本");
             link.Click += (_, _) => MajnetPanel.OpenUrl(latest.Url); panel.Children.Add(link);
+            var notes = SessionTheme.Text("记得给项目点点star!\n更新的测试版以及内容交流可以添加QQ群：1061971812", size: 12);
+            notes.Margin = new Thickness(0, 12, 0, 0);
+            notes.SetResourceReference(TextBlock.ForegroundProperty, "MutedForeground");
+            panel.Children.Add(notes);
             var window = new UpdateResultPanel { Content = panel };
             if (toolTabs.TryGetValue(typeof(UpdateResultPanel), out var old)) old.Window.Close();
             ShowTool(window, "检查更新");

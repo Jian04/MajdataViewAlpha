@@ -8,6 +8,7 @@ public partial class App : Application
 {
     public App()
     {
+        MajdataSessionUi.SessionTheme.DisableWheelSelection();
         // The desktop pet previously disappeared silently, likely from an unhandled exception terminating the process.
         // Log every exception and handle dispatcher exceptions so the pet stays alive and launcher-error.log can diagnose the cause.
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>

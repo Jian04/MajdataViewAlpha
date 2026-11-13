@@ -1,4 +1,4 @@
-using Assets.Scripts.Types;
+﻿using Assets.Scripts.Types;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -103,6 +103,7 @@ public class NoteDrop : MonoBehaviour
     public string scrollType;
     public bool previewOnly;
     public bool isFake;
+    internal NotePropertyAnimation propertyAnimation;
     internal bool timelineRestorePending;
     internal virtual void RestoreTimelineState(float at) { timelineRestorePending = false; }
 
@@ -156,18 +157,20 @@ public class NoteDrop : MonoBehaviour
     public float bounceDirection = 1f;
 
     private static Material liveVisualMaterial;
+    private MaterialPropertyBlock liveVisualProperties;
     private readonly Dictionary<SpriteRenderer, LiveRendererDefaults> liveRendererDefaults = new();
 
-    protected AudioTimeProvider timeProvider;
+    protected internal AudioTimeProvider timeProvider;
 
     public NoteStatus State { get; protected set; } = NoteStatus.Start;
     protected SensorType sensorPos;
     protected Sensor sensor;
-    protected SensorManager manager;
-    protected InputManager inputManager;
+    protected internal SensorManager manager;
+    protected internal InputManager inputManager;
     protected NoteManager noteManager;
     protected Guid guid = Guid.NewGuid();
     protected bool isJudged = false;
+    internal bool dynamicMuriReported;
     protected JudgeType judgeResult;
     protected ObjectCounter objectCounter;
 
@@ -279,13 +282,9 @@ public class NoteDrop : MonoBehaviour
         double targetScrollPos,
         ref SpawnCrossingMemo memo)
     {
-        var isPastSpawnNow = SvController.IsPastSpawnNow(
-            targetScrollPos,
-            speed,
-            timeProvider.AudioTime,
-            spawnRadius,
-            scrollType,
-            destroyRadius);
+        var isPastSpawnNow = AlphaVisualTiming.GetPathPosition(
+            distance, spawnRadius, destroyRadius) >=
+            -(float)AlphaVisualTiming.Epsilon;
         // Only SPAWNMODE=once cares whether the note was ever past the ring; the
         // default mode asks the note where it is right now. Working it out either
         // way meant every chart paid for a search of its whole elapsed scroll
@@ -406,14 +405,18 @@ public class NoteDrop : MonoBehaviour
         return Quaternion.Euler(0, 0, -22.5f + -45f * (position - 1));
     }
 
+    private string visualStreamSource;
+    private int visualStreamIndex;
     public int VisualStreamIndex
     {
         get
         {
+            if (visualStreamSource == scrollType) return visualStreamIndex;
+            visualStreamSource = scrollType;
             var separator = scrollType?.IndexOf('|') ?? -1;
-            return separator > 0 && int.TryParse(scrollType.Substring(0, separator), out var stream)
-                ? stream
-                : 0;
+            visualStreamIndex = separator > 0 && int.TryParse(scrollType.Substring(0, separator), out var stream)
+                ? stream : 0;
+            return visualStreamIndex;
         }
     }
 
@@ -431,13 +434,15 @@ public class NoteDrop : MonoBehaviour
         _ => string.Empty
     };
 
-    public double VisualStateTime => this switch
+    // Keep the authored timestamp: rounding to float can move a note before its own command.
+    internal double? authoredVisualStateTime;
+    public double VisualStateTime => authoredVisualStateTime ?? (this switch
     {
         SlideDrop slide => slide.timeStart,
         WifiDrop wifi => wifi.timeStart,
         TouchSlideDrop touchSlide => touchSlide.timeStart,
         _ => time
-    };
+    });
 
     public bool MatchesLiveVisual(int stream, string requestedType)
     {
@@ -516,6 +521,7 @@ public class NoteDrop : MonoBehaviour
     }
 
     private int appliedLiveVisualVersion;
+    internal LiveNoteVisualController.VisualState appliedLiveVisualState;
 
     /// <summary>
     /// Every note asks, once a frame, whether the live look it is wearing is still
@@ -539,7 +545,17 @@ public class NoteDrop : MonoBehaviour
     /// Says the renderers this note is wearing its live look on have changed, so
     /// the look has to be put on again.
     /// </summary>
-    protected void InvalidateLiveVisual() => appliedLiveVisualVersion = 0;
+    protected void InvalidateLiveVisual()
+    {
+        appliedLiveVisualVersion = 0;
+        appliedLiveVisualState = null;
+        propertyAnimation?.InvalidateAngleTargets();
+    }
+
+    internal virtual void CollectAngleTargets(List<Transform> body, List<Transform> guide)
+        => body.Add(transform);
+
+    internal virtual float AngleHeadOffset => 0f;
 
     public void ApplyLiveColor(Color? color)
     {
@@ -556,11 +572,11 @@ public class NoteDrop : MonoBehaviour
         }
     }
 
-    public void ApplyLiveAlpha(float? alpha)
+    public virtual void ApplyLiveAlpha(float? alpha)
     {
         foreach (var renderer in GetLiveVisualRenderers())
         {
-            if (renderer == null ||
+            if (renderer == null || renderer == TapLineRenderer ||
                 (!alpha.HasValue && !liveRendererDefaults.ContainsKey(renderer)))
                 continue;
             var state = CaptureRendererDefaults(renderer);
@@ -607,6 +623,27 @@ public class NoteDrop : MonoBehaviour
     public virtual void ApplyLiveGuideStarAlpha(float? alpha)
     {
     }
+
+    internal SpriteRenderer TapLineRenderer { get; private set; }
+
+    protected void InitializeTapLineAlpha(SpriteRenderer renderer)
+    {
+        TapLineRenderer = renderer;
+        var alpha = renderReporter?.ResolveTapLineAlpha(this) ?? 1f;
+        var material = renderer.sharedMaterial;
+        if (material != null && material.HasProperty("_NoteAlpha"))
+        {
+            if (material.GetFloat("_NoteAlpha") == alpha) return;
+            var properties = liveVisualProperties ??= new MaterialPropertyBlock();
+            renderer.GetPropertyBlock(properties);
+            properties.SetFloat("_NoteAlpha", alpha);
+            renderer.SetPropertyBlock(properties);
+        }
+        else if (alpha != 1f)
+            SetInitialRendererAlpha(renderer, alpha);
+    }
+
+    internal void ApplyLiveTapLineAlpha(float? alpha) => ApplyLiveRendererAlpha(TapLineRenderer, alpha);
 
     public virtual void ApplyLiveGuideStarScale(Vector2? scale)
     {
@@ -672,7 +709,7 @@ public class NoteDrop : MonoBehaviour
     /// asked for would make COLOR*mine parse and then do nothing visible.
     /// </summary>
     private float GrayscaleFor(LiveRendererDefaults state) =>
-        state.HasColorOverride && IsVisualMine ? 0f : state.Grayscale;
+        state.HasColorOverride && IsVisualMine ? state.Grayscale * (1f - state.CurrentColor.a) : state.Grayscale;
 
     public bool IsVisualMine => this switch
     {
@@ -716,6 +753,16 @@ public class NoteDrop : MonoBehaviour
         return tail > 0f ? tail : MissWindow;
     }
 
+    protected void SetInitialRendererAlpha(SpriteRenderer renderer, float alpha)
+    {
+        // Keep the EX vertex opacity intact: ALPHAV must be able to reveal it later.
+        EnsureLiveVisualMaterial();
+        renderer.sharedMaterial = liveVisualMaterial;
+        var properties = new MaterialPropertyBlock();
+        properties.SetFloat("_NoteAlpha", alpha);
+        renderer.SetPropertyBlock(properties);
+    }
+
     private LiveRendererDefaults CaptureRendererDefaults(SpriteRenderer renderer)
     {
         if (liveRendererDefaults.TryGetValue(renderer, out var defaults))
@@ -731,9 +778,8 @@ public class NoteDrop : MonoBehaviour
             Color = material != null && material.HasProperty("_NoteColor")
                 ? material.GetColor("_NoteColor")
                 : new Color(1f, 1f, 1f, 0f),
-            Alpha = material != null && material.HasProperty("_NoteAlpha")
-                ? material.GetFloat("_NoteAlpha")
-                : 1f,
+            Alpha = properties.HasFloat("_NoteAlpha") ? properties.GetFloat("_NoteAlpha") :
+                material != null && material.HasProperty("_NoteAlpha") ? material.GetFloat("_NoteAlpha") : 1f,
             Grayscale = material != null && material.HasProperty("_Grayscale")
                 ? material.GetFloat("_Grayscale")
                 : 0f
@@ -763,7 +809,7 @@ public class NoteDrop : MonoBehaviour
         if (liveVisualMaterial == null)
             return;
 
-        var properties = new MaterialPropertyBlock();
+        var properties = liveVisualProperties ??= new MaterialPropertyBlock();
         renderer.GetPropertyBlock(properties);
         if (color.HasValue)
             properties.SetColor("_NoteColor", color.Value);

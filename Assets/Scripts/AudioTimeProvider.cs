@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using UnityEngine;
 
+[DefaultExecutionOrder(-10000)]
 public class AudioTimeProvider : MonoBehaviour
 {
     // Playback runs at 120 fps in builds and 60 in the Unity editor, where fixed per-frame
@@ -15,23 +16,29 @@ public class AudioTimeProvider : MonoBehaviour
     private bool scheduledStart;
     private long synchronizedStartUtcTicks;
 
-    private float startTime;
+    private double startTime;
+    private double lastPlaybackFrameTime;
+    private float lastPlaybackAudioTime;
     private long ticks;
     private int recordingFrameRate = 60;
+    private int recordingFirstFrame;
+    private float recordingIntroDuration;
+    private float RecordingTime => (float)(offset - recordingIntroDuration +
+        (Time.frameCount - recordingFirstFrame) * (double)speed / recordingFrameRate);
 
     public float CurrentSpeed => speed;
     public bool IsPreview => previewFixedTime;
     public bool IsScheduled => scheduledStart;
     public bool IsPaused { get; private set; }
     public bool PlaybackStarted => isStart && (isRecord
-        ? Time.time >= startTime
+        ? RecordingTime >= offset
         : synchronizedStartUtcTicks != 0
             ? DateTime.UtcNow.Ticks >= synchronizedStartUtcTicks
-            : Time.realtimeSinceStartup >= startTime);
+            : Time.realtimeSinceStartupAsDouble >= startTime);
 
     private float PlaybackElapsed => synchronizedStartUtcTicks != 0
         ? (float)TimeSpan.FromTicks(DateTime.UtcNow.Ticks - synchronizedStartUtcTicks).TotalSeconds
-        : Time.realtimeSinceStartup - startTime;
+        : (float)(Time.realtimeSinceStartupAsDouble - startTime);
 
     // Continuous timeline for visuals such as the intro background: negative during the cover
     // transition and smooth across zero. AudioTime is clamped to prevent reverse playback during
@@ -39,7 +46,7 @@ public class AudioTimeProvider : MonoBehaviour
     public float TimelineTime => !isStart || previewFixedTime
         ? AudioTime
         : isRecord
-            ? Time.time - startTime + offset
+            ? RecordingTime
         : PlaybackElapsed * speed + offset;
 
     private void Awake()
@@ -66,12 +73,26 @@ public class AudioTimeProvider : MonoBehaviour
         if (isStart)
         {
             if (isRecord)
-                AudioTime = Time.time - startTime + offset;
+                AudioTime = RecordingTime;
             else
+            {
                 // When startAt is in the future for Edit's 0.2s preload, freeze at the start
                 // instead of playing backward. Preload time for requests and loading is not visible.
                 AudioTime = Mathf.Max(offset, PlaybackElapsed * speed + offset);
+                lastPlaybackFrameTime = Time.unscaledTimeAsDouble;
+                lastPlaybackAudioTime = AudioTime;
+            }
         }
+    }
+
+    private void FixedUpdate()
+    {
+        if (!isStart || isRecord || previewFixedTime || InputManager.Mode != Assets.Scripts.Types.AutoPlayMode.DJAuto)
+            return;
+
+        // Catch-up steps after a slow render each simulate a different input time.
+        var elapsed = Math.Max(0d, Time.fixedUnscaledTimeAsDouble - lastPlaybackFrameTime);
+        AudioTime = lastPlaybackAudioTime + (float)(elapsed * speed);
     }
 
     public float GetFrame()
@@ -110,7 +131,9 @@ public class AudioTimeProvider : MonoBehaviour
         }
         else
         {
-            startTime = Time.realtimeSinceStartup + (float)seconds;
+            startTime = Time.realtimeSinceStartupAsDouble + seconds;
+            lastPlaybackFrameTime = Time.unscaledTimeAsDouble;
+            lastPlaybackAudioTime = offset;
             scheduledStart = PlaybackElapsed < 0f;
             Application.targetFrameRate = PlaybackFrameRate;
             Time.captureFramerate = 0;
@@ -141,7 +164,9 @@ public class AudioTimeProvider : MonoBehaviour
         Time.captureFramerate = recordingFrameRate;
         Application.targetFrameRate = -1;
         startTime = Time.time + introDuration;
-        AudioTime = offset - introDuration;
+        recordingFirstFrame = Time.frameCount;
+        recordingIntroDuration = introDuration;
+        AudioTime = RecordingTime;
         isStart = true;
         scheduledStart = false;
         synchronizedStartUtcTicks = 0;

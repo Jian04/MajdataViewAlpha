@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -455,8 +455,6 @@ namespace MajdataCore
             path = new SlidePathData { source = expression ?? string.Empty };
             if (string.IsNullOrEmpty(expression))
                 return false;
-            if (TryParseSlideCodePath(expression, path, tokens))
-                return true;
             if (!TryReadPosition(
                     expression, 0, out var current, out var offset))
                 return false;
@@ -479,23 +477,23 @@ namespace MajdataCore
             while (offset < expression.Length)
             {
                 var shapeStart = offset;
-                if (!TryReadShape(expression, ref offset, out var shape))
+                var isCode = TryReadSlideCode(expression, current, ref offset, out var segment);
+                var shape = string.Empty;
+                if (!isCode && !TryReadShape(expression, ref offset, out shape))
                     return false;
+                else if (!isCode)
+                    segment = new SlidePathSegmentData { shape = shape };
                 if (tokens != null)
                     tokens.Add(
                         shapeStart, offset - shapeStart, ChartTokenKind.Shape);
 
-                var segment = new SlidePathSegmentData
-                {
-                    start = current,
-                    startPosition = current.position,
-                    startIsDZone = current.isDZone,
-                    shape = shape
-                };
-                if (shape is "V" or "P" or "Q")
+                segment.start = current;
+                segment.startPosition = current.position;
+                segment.startIsDZone = current.isDZone;
+                if (!isCode && segment.shape is ("V" or "P" or "Q"))
                 {
                     var middleStart = offset;
-                    var readMiddle = shape is "P" or "Q"
+                    var readMiddle = segment.shape is "P" or "Q"
                         ? TryReadOrbitSelector(
                             expression, offset, out var middle, out offset)
                         : TryReadPosition(
@@ -514,10 +512,11 @@ namespace MajdataCore
                 }
 
                 var endStart = offset;
-                if (!TryReadPosition(
-                        expression, offset, out var end, out offset))
+                var end = segment.end;
+                if (!isCode && !TryReadPosition(
+                        expression, offset, out end, out offset))
                     return false;
-                if (tokens != null)
+                if (tokens != null && !isCode)
                     tokens.Add(
                         endStart, offset - endStart, ChartTokenKind.Position);
                 segment.end = end;
@@ -579,6 +578,7 @@ namespace MajdataCore
             path.isTouchPath =
                 path.head.IsTouch ||
                 path.segments.Exists(segment =>
+                    segment.shape == "SC" ||
                     segment.start.IsTouch ||
                     segment.end.IsTouch ||
                     segment.hasMiddle && segment.middle.IsTouch);
@@ -731,97 +731,27 @@ namespace MajdataCore
             return true;
         }
 
-        private static bool TryParseSlideCodePath(
-            string expression,
-            SlidePathData path,
-            ChartTokenList? tokens)
+        private static bool TryReadSlideCode(
+            string expression, SlidePositionData start, ref int offset,
+            out SlidePathSegmentData segment)
         {
-            if (!SlideCodeParser.LooksLikeSlideCode(expression) ||
-                !TryReadPosition(expression, 0, out var head, out var offset) ||
-                !head.IsKey || head.isDZone)
+            segment = new SlidePathSegmentData();
+            var cursor = offset;
+            while (cursor < expression.Length &&
+                   (expression[cursor] is >= '0' and <= '9' or 'A' or 'B' or 'C' or 'P' or 'Q'))
+                cursor++;
+            if (cursor >= expression.Length || expression[cursor] != 'K' ||
+                !TryReadPosition(expression, cursor + 1, out var end, out var next))
                 return false;
-
-            var headModifierStart = offset;
-            while (offset < expression.Length &&
-                   Modifiers.IndexOf(expression[offset]) >= 0)
-                offset++;
-            var headModifiers = expression.Substring(
-                headModifierStart, offset - headModifierStart);
-
-            var durationStart = expression.IndexOf('[', offset);
-            var bodyEnd = durationStart < 0 ? expression.Length : durationStart;
-            var tailModifierStart = bodyEnd;
-            while (tailModifierStart > offset &&
-                   Modifiers.IndexOf(expression[tailModifierStart - 1]) >= 0)
-                tailModifierStart--;
-            var codeText = expression.Substring(0, headModifierStart) +
-                           expression.Substring(offset, tailModifierStart - offset);
-            if (!SlideCodeParser.TryParse(codeText, out var code, out _))
+            var codeText = start.ToExpression() + expression.Substring(offset, next - offset);
+            if (!SlideCodeParser.TryParse(codeText, out _, out _))
                 return false;
-
-            var duration = string.Empty;
-            var suffixModifiers = string.Empty;
-            if (durationStart >= 0)
-            {
-                var close = expression.IndexOf(']', durationStart + 1);
-                if (close < 0)
-                    return false;
-                duration = expression.Substring(durationStart, close - durationStart + 1);
-                var suffixStart = close + 1;
-                var suffixEnd = suffixStart;
-                while (suffixEnd < expression.Length &&
-                       Modifiers.IndexOf(expression[suffixEnd]) >= 0)
-                    suffixEnd++;
-                if (suffixEnd != expression.Length)
-                    return false;
-                suffixModifiers = expression.Substring(suffixStart, suffixEnd - suffixStart);
-            }
-
-            var tailModifiers = expression.Substring(
-                tailModifierStart, bodyEnd - tailModifierStart) + suffixModifiers;
-            var endInstruction = code.instructions[^1];
-            var end = new SlidePositionData
-            {
-                area = 'K',
-                position = endInstruction.parameter,
-                source = endInstruction.parameter.ToString(CultureInfo.InvariantCulture)
-            };
-            path.head = head;
-            path.headModifiers = headModifiers;
-            path.isTouchPath = true;
-            path.segments.Add(new SlidePathSegmentData
-            {
-                start = head,
-                startPosition = head.position,
-                end = end,
-                endPosition = end.position,
-                shape = "SC",
-                modifiers = tailModifiers,
-                duration = duration,
-                slideCode = codeText
-            });
-            if (tokens != null)
-            {
-                tokens.Add(0, headModifierStart, ChartTokenKind.Position);
-                tokens.Add(
-                    headModifierStart,
-                    headModifiers.Length,
-                    ChartTokenKind.Modifier);
-                tokens.Add(
-                    offset,
-                    tailModifierStart - offset,
-                    ChartTokenKind.Shape);
-                tokens.Add(
-                    tailModifierStart,
-                    bodyEnd - tailModifierStart,
-                    ChartTokenKind.Modifier);
-                if (durationStart >= 0)
-                    tokens.Add(
-                        durationStart,
-                        duration.Length,
-                        ChartTokenKind.Duration);
-            }
+            segment.shape = "SC";
+            segment.slideCode = codeText;
+            segment.end = end;
+            offset = next;
             return true;
         }
+
     }
 }

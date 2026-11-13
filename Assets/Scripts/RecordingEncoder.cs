@@ -28,4 +28,9 @@ internal static class RecordingEncoder
     }
     internal static string UseStandardInput(string arguments) =>
         arguments.Replace(@"\\.\pipe\" + MajdataCore.AlphaSession.PipeName, "pipe:0");
+
+    internal static string BuildGifArguments(int width, int height, int frameRate, string outputName) =>
+        $"-hide_banner -y -f rawvideo -pix_fmt rgb24 -s {width}x{height} -r {frameRate} -i pipe:0 " +
+        $"-filter_complex \"fps={Math.Min(30, frameRate)},vflip,split[a][b];[a]palettegen=stats_mode=single[p];" +
+        "[b][p]paletteuse=new=1:dither=sierra2_4a\" -loop 0 \"" + outputName + "\"";
 }

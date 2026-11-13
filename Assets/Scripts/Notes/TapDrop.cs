@@ -29,17 +29,25 @@ public class TapDrop : TapBase
             spriteRenderer.sharedMaterial = breakMaterial;
         }
 
-        // The note and its guide share the same optional tint material.
+        // Share the optional tint, then set the guide's own opacity.
         if (colorOverrideMaterial != null)
         {
             spriteRenderer.sharedMaterial = colorOverrideMaterial;
             lineSpriteRender.sharedMaterial = colorOverrideMaterial;
         }
+        InitializeTapLineAlpha(lineSpriteRender);
         ApplyExAlpha();
+
+        // 4.3.1 orients ordinary Tap artwork to the key. Inherited pictures
+        // intentionally remain upright so chart-authored images are readable.
+        transform.rotation = string.IsNullOrEmpty(customSkin)
+            ? Quaternion.Euler(0f, 0f,
+                -22.5f - 45f * (startPosition - 1) + (isDZone ? 22.5f : 0f))
+            : Quaternion.identity;
 
         spriteRenderer.forceRenderingOff = true;
         exSpriteRender.forceRenderingOff = true;
-        var sensorRoot = GameObject.Find("Sensors");
+        var sensorRoot = manager != null ? manager.gameObject : GameObject.Find("Sensors");
         if (sensorRoot == null || SensorChildIndex < 0 || SensorChildIndex >= sensorRoot.transform.childCount)
         {
             Debug.LogError(
@@ -51,7 +59,7 @@ public class TapDrop : TapBase
 
         sensor = sensorRoot.transform.GetChild(SensorChildIndex).GetComponent<Sensor>();
         manager = sensorRoot.GetComponent<SensorManager>();
-        inputManager = GameObject.Find("Input")
+        if (inputManager == null) inputManager = GameObject.Find("Input")
                                  .GetComponent<InputManager>();
         sensorPos = (SensorType)SensorChildIndex;
         if (!JudgmentDisabled)

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -25,7 +25,12 @@ public partial class MainWindow
     public int holdRiserStream = -114514;
     private bool isPlan2Stop; // Defers stopping when All Perfect cannot finish before the BGM ends.
 
-    private bool isPlaying; // Supports automatic stopping at the end of playback.
+    private volatile bool isPlaying; // Shared with the audio scheduler.
+    private Thread? soundEffectThread;
+    private readonly AutoResetEvent soundEffectWake = new(false);
+    private volatile bool soundEffectShutdown;
+    private SoundEffectTiming? pendingTextFollow;
+    private int textFollowQueued;
     public int judgeBreakSlideStream = -114514; // Break Slide judgment sound
     public int judgeBreakStream = -114514; // Break judgment sound, not the cheer.
     public int judgeExStream = -114514;
@@ -110,44 +115,58 @@ public partial class MainWindow
     [DllImport("winmm")]
     private static extern void timeEndPeriod(int t);
 
+    private volatile bool renderingOffline;
     private void StartSELoop()
     {
-        var thread = new Thread(() =>
+        if (soundEffectThread != null)
         {
-            timeBeginPeriod(1);
-            var lasttime = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
-            while (isPlaying)
+            soundEffectWake.Set();
+            return;
+        }
+        Closed += (_, _) => { soundEffectShutdown = true; soundEffectWake.Set(); };
+        // One scheduler per editor: a quick pause/resume must not leave an older
+        // thread consuming the new schedule alongside the next playback.
+        soundEffectThread = new Thread(() =>
+        {
+            while (!soundEffectShutdown)
             {
-                //sw.Reset();
-                //sw.Start();
-                SoundEffectUpdate();
-                Thread.Sleep(1);
-                //sw.Stop();
-                //if(sw.Elapsed.TotalMilliseconds>1.5)
-                //    Console.WriteLine(sw.Elapsed);
+                soundEffectWake.WaitOne();
+                if (soundEffectShutdown) break;
+                Bass.BASS_SetDevice(editorAudioDevice);
+                timeBeginPeriod(1);
+                try
+                {
+                    while (isPlaying && !renderingOffline && !soundEffectShutdown)
+                    {
+                        SoundEffectUpdate();
+                        Thread.Sleep(1);
+                    }
+                }
+                finally { timeEndPeriod(1); }
             }
-
-            timeEndPeriod(1);
         })
         {
-            Priority = ThreadPriority.Highest
+            Priority = ThreadPriority.Highest, IsBackground = true, Name = "Majdata sound effects"
         };
-        thread.Start();
+        soundEffectThread.Start();
+        soundEffectWake.Set();
     }
 
     private void SoundEffectUpdate()
     {
+        if (renderingOffline) return;
         try
         {
             var currentTime = Bass.BASS_ChannelBytes2Seconds(bgmStream, Bass.BASS_ChannelGetPosition(bgmStream));
             //var waitToBePlayed = SimaiProcess.notelist.FindAll(o => o.havePlayed == false && o.time > currentTime);
-            if (waitToBePlayed!.Count < 1) return;
-            var nearestTime = waitToBePlayed[0].time;
+            var schedule = waitToBePlayed;
+            if (schedule == null || schedule.Count == 0) return;
+            var nearestTime = schedule[0].time;
             //Console.WriteLine(nearestTime - currentTime);
             if (nearestTime - currentTime <= 0.0545) //dont touch this!!!!! this related to delay
             {
-                var se = waitToBePlayed[0];
-                waitToBePlayed.RemoveAt(0);
+                var se = schedule[0];
+                schedule.RemoveAt(0);
 
                 foreach (var type in se.NormalSounds)
                     PlayScheduledSound(type, isMine: false);
@@ -161,19 +180,25 @@ public partial class MainWindow
                         Bass.BASS_ChannelStop(mineHoldRiser);
                 }
                 //
-                Dispatcher.Invoke(() =>
+                if (editorSetting?.TextFollow == true)
                 {
-                    if ((bool)FollowPlayCheck.IsChecked!)
-                    {
-                        ghostCusorPositionTime = (float)nearestTime;
-                        SeekTextFromIndex(se.noteGroupIndex);
-                    }
-                });
+                    Interlocked.Exchange(ref pendingTextFollow, se);
+                    if (Interlocked.Exchange(ref textFollowQueued, 1) == 0)
+                        Dispatcher.BeginInvoke(FollowLatestScheduledSound,
+                            System.Windows.Threading.DispatcherPriority.Background);
+                }
             }
         }
-        catch
-        {
-        }
+        catch (Exception error) { Trace.TraceError("音效调度失败：" + error); }
+    }
+
+    private void FollowLatestScheduledSound()
+    {
+        Interlocked.Exchange(ref textFollowQueued, 0);
+        var timing = Interlocked.Exchange(ref pendingTextFollow, null);
+        if (timing == null || !isPlaying || renderingOffline || FollowPlayCheck.IsChecked != true) return;
+        ghostCusorPositionTime = (float)timing.time;
+        SeekTextFromIndex(timing.noteGroupIndex);
     }
 
     private void PlayScheduledSound(SoundDataType type, bool isMine)
@@ -253,7 +278,7 @@ public partial class MainWindow
     private void generateSoundEffectList(double startTime, bool isOpIncluded)
     {
         waitToBePlayed = new List<SoundEffectTiming>();
-        if (isOpIncluded)
+        if (isOpIncluded || startTime <= 0.001d)
         {
             var clockCountText = SimaiProcess.GetClockCountText();
             if (!string.IsNullOrWhiteSpace(clockCountText) && SimaiProcess.notelist.Count > 0)
@@ -265,7 +290,8 @@ public partial class MainWindow
                     for (var i = 0; i < clock_cnt; i++)
                     {
                         var clockTime = i * clock_int;
-                        if (!waitToBePlayed.Any(item => Math.Abs(item.time - clockTime) < 0.001d))
+                        if (clockTime >= startTime - 0.001d &&
+                            !waitToBePlayed.Any(item => Math.Abs(item.time - clockTime) < 0.001d))
                             waitToBePlayed.Add(new SoundEffectTiming(clockTime, _hasClock: true));
                     }
                 }
@@ -597,7 +623,7 @@ public partial class MainWindow
         return timing;
     }
 
-    private void renderSoundEffect(double delaySeconds, bool includeMusic = true)
+    private void renderSoundEffect(double delaySeconds, bool includeMusic = true, MediaRange? range = null)
     {
         // TODO: Make this asynchronous and add a prompt window.
         var path = Environment.CurrentDirectory + "/SFX";
@@ -775,9 +801,11 @@ public partial class MainWindow
 
         var trackOps = new List<SoundDataRange>();
         var typeSamples = new Dictionary<SoundDataType, short[]>();
+        var usedTypes = waitToBePlayed!.SelectMany(timing => timing.NormalSounds).ToHashSet();
+        if (waitToBePlayed!.Any(timing => timing.hasTouchHoldEnd)) usedTypes.Add(SoundDataType.TouchHold);
         foreach (SoundDataType sType in Enum.GetValues(SoundDataType.None.GetType()))
         {
-            if (sType == 0) continue;
+            if (sType == 0 || !usedTypes.Contains(sType)) continue;
             typeSamples[sType] = new short[sampleCount];
         }
         var mineSamples = new short[sampleCount];
@@ -895,7 +923,7 @@ public partial class MainWindow
 
         foreach (var trackEvents in GetEffectiveMediaTable()
                      .Where(item => item.kind == "audio")
-                     .GroupBy(item => item.track))
+                     .GroupBy(item => (item.timelineClip, item.track)))
         {
             MediaChange? activeMedia = null;
             foreach (var media in trackEvents.OrderBy(item => item.time))
@@ -916,9 +944,15 @@ public partial class MainWindow
                 WriteMediaClip(activeMedia, null);
         }
 
-        var filedata = new List<byte>();
         var delayEmpty = new short[(int)(delaySeconds * freq * 2)];
-        var filehead = CreateWaveFileHeader(bgmRaw.Length * 2 + delayEmpty.Length * 2, 2, freq, 16).ToList();
+        var firstSample = range.HasValue ? Math.Clamp((long)Math.Round(range.Value.Start * freq) * 2, 0, sampleCount) : 0;
+        var lastSample = range.HasValue ? Math.Clamp((long)Math.Round(range.Value.End * freq) * 2, firstSample, sampleCount) : sampleCount;
+        var dataLength = checked((int)((lastSample - firstSample) * 2 + delayEmpty.Length * 2));
+        var filehead = CreateWaveFileHeader(dataLength, 2, freq, 16);
+        var filedata = new byte[checked(filehead.Length + dataLength)];
+        filehead.CopyTo(filedata, 0);
+        var writeOffset = filehead.Length;
+        var mixTracks = typeSamples.Select(pair => (Samples: pair.Value, Volume: GetSoundVolume(pair.Key))).ToArray();
 
         //if (trackStartRAW.Length > delayEmpty.Length)
         //    throw new Exception("track_start is too long; keep it under five seconds.");
@@ -927,10 +961,11 @@ public partial class MainWindow
         {
             if (includeMusic && i < trackStartRaw.Length)
                 delayEmpty[i] = trackStartRaw[i];
-            filehead.AddRange(BitConverter.GetBytes(delayEmpty[i]));
+            System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(filedata.AsSpan(writeOffset, 2), delayEmpty[i]);
+            writeOffset += 2;
         }
 
-        for (var i = 0; i < sampleCount; i++)
+        for (var i = firstSample; i < lastSample; i++)
         {
             // Apply BGM Data
             var sampleValue = timelineAudioReplacesBgm
@@ -938,13 +973,8 @@ public partial class MainWindow
                 : bgmRaw[i] * bgmVol + mediaSamples[i];
             if (!includeMusic) sampleValue = 0;
 
-            foreach (var sampleTuple in typeSamples)
-            {
-                var type = sampleTuple.Key;
-                var track = sampleTuple.Value;
-                var volume = GetSoundVolume(type);
-                sampleValue += track[i] * volume;
-            }
+            foreach (var track in mixTracks)
+                sampleValue += track.Samples[i] * track.Volume;
             sampleValue += mineSamples[i] + mineTouchHoldSamples[i];
 
             var value = (long)sampleValue;
@@ -952,11 +982,11 @@ public partial class MainWindow
                 value = short.MaxValue;
             if (value < short.MinValue)
                 value = short.MinValue;
-            filedata.AddRange(BitConverter.GetBytes((short)value));
+            System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(filedata.AsSpan(writeOffset, 2), (short)value);
+            writeOffset += 2;
         }
 
-        filehead.AddRange(filedata);
-        File.WriteAllBytes(MajdataCore.AlphaSession.ChartWorkFile(maidataDir, "out.wav"), filehead.ToArray());
+        File.WriteAllBytes(MajdataCore.AlphaSession.ChartWorkFile(maidataDir, "out.wav"), filedata);
 
         typeSamples.Clear();
         Array.Clear(mineSamples);

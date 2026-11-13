@@ -13,7 +13,7 @@ using System.Text.RegularExpressions;
 using Assets.Scripts;
 using MajdataCore;
 
-public class JsonDataLoader : MonoBehaviour
+public partial class JsonDataLoader : MonoBehaviour
 {
     public float noteSpeed = 7f;
     public float starSpeed;
@@ -38,8 +38,11 @@ public class JsonDataLoader : MonoBehaviour
     public NoteLoaderStatus State { get; private set; } = NoteLoaderStatus.Idle;
     NoteManager noteManager;
     AudioTimeProvider timeProvider;
+    private SensorManager inputSensors;
+    private InputManager chartInput;
     Task<Majson> jsonLoaderTask = null;
     Majson loadedData = null;
+    internal System.Collections.Generic.IReadOnlyList<BeatDisplayPoint> BeatDisplayTable => loadedData?.beatDisplayTable;
     float ignoreOffset = 0;
     bool previewOnly = false;
     bool includeActiveSustainsAtOffset = false;
@@ -592,6 +595,7 @@ public class JsonDataLoader : MonoBehaviour
                 BuildColorTimeline(loadedData.colorTable);
                 BuildSizeTimeline(loadedData.sizeTable);
                 BuildAlphaTimeline(loadedData.alphaTable);
+                BuildNoteAnimations();
 
                 noteParserTask = StartCoroutine(LoadNotes(loadedData.timingList, ignoreOffset, lastNoteTime));
 
@@ -649,11 +653,12 @@ public class JsonDataLoader : MonoBehaviour
     {
         if (timeProvider == null)
             timeProvider = FindAnyObjectByType<AudioTimeProvider>();
+        inputSensors = GameObject.Find("Sensors").GetComponent<SensorManager>();
+        chartInput = GameObject.Find("Input").GetComponent<InputManager>();
         var noise = GetComponent<NoiseZoneController>() ?? gameObject.AddComponent<NoiseZoneController>();
-        noise.Configure(timingList, notes.transform, timeProvider, timing =>
-            SvController.GetTouchWarningLead(timing.time,
-                touchSpeed * GetHSpeedAt("blockarea", timing.time, timing.HSpeed, false, false, timing.streamIndex),
-                SvController.MakeCurveKey(timing.streamIndex, "blockarea")), ResolveNoiseVisual, ResolveNoiseWarningProgress);
+        noise.Configure(timingList, notes.transform, timeProvider,
+            timing => Math.Max(0d,timing.time-GetNoiseMotion(timing).Appearance),
+            ResolveNoiseVisual, ResolveNoiseWarningProgress);
 
         if (!previewOnly)
             noteManager.Refresh();
@@ -681,12 +686,9 @@ public class JsonDataLoader : MonoBehaviour
             // until every note path is built. Constructing D-zone routes during audio
             // playback causes a visible one-frame partial route and a main-thread hitch.
             //
-            // Yielding this often stretches the build to roughly eight times its own
-            // cost in wall-clock time, which is the wait before a paused preview
-            // starts following the drag. Nothing is playing during a preview, so
-            // there is no audio to protect and the author is sitting there waiting:
-            // take most of the frame instead of a sliver of it.
-            if (sw.ElapsedMilliseconds >= (previewOnly ? 12 : 2))
+            // Playback is scheduled only after all notes are ready. Use the same
+            // frame budget as preview instead of stretching each 2ms batch over a frame.
+            if (sw.ElapsedMilliseconds >= 12)
             {
                 yield return 0;
                 sw.Restart();
@@ -1003,10 +1005,10 @@ public class JsonDataLoader : MonoBehaviour
                         Array.Copy(customSkin.TouchBorder, NDCompo.multTouchNormalSprite, 2);
                         Array.Copy(customSkin.TouchBorder_Each, NDCompo.multTouchEachSprite, 2);
 
-                        if (timingIsEach)
+                        if (timingIsEach && !note.isMineHead)
                         {
                             NDCompo.isEach = true;
-                            members.Add(NDCompo);
+                            if (!NDCompo.isFake) members.Add(NDCompo);
                         }
                         var touchIsEach = timingStateIsEach;
                         var touchIsMine = note.isMineHead;
@@ -1083,12 +1085,12 @@ public class JsonDataLoader : MonoBehaviour
                         sensorGroups.Add(newGroup);
                     }
                     List<TouchGroup> touchGroups = new();
-                    var memberMapping = members.ToDictionary(x => x.GetSensor());
+                    var memberMapping = members.ToLookup(x => x.GetSensor());
                     foreach (var group in sensorGroups)
                     {
                         touchGroups.Add(new TouchGroup()
                         {
-                            Members = group.Select(x => memberMapping[x]).ToArray()
+                            Members = group.SelectMany(x => memberMapping[x]).ToArray()
                         });
                     }
                     foreach (var member in members)
@@ -1197,9 +1199,10 @@ public class JsonDataLoader : MonoBehaviour
     /// </remarks>
     private static bool BeatIsEach(SimaiTimingPoint timing) =>
         EachRule.IsEach(
-            timing.isEach,
+            timing.isEach && timing.noteList.Any(note => !note.isMineHead && !note.isMineSlide),
             timing.noteList.Count(
-                note => note.noteType != SimaiNoteType.NoiseZone && EachRule.CountsTowardEach(note.isSlideNoHead)));
+                note => note.noteType != SimaiNoteType.NoiseZone && !note.isMineHead && !note.isMineSlide &&
+                        EachRule.CountsTowardEach(note.isSlideNoHead)));
 
     /// <summary>
     /// Whether this beat's slide trails are drawn yellow, which is a different question
@@ -1208,7 +1211,7 @@ public class JsonDataLoader : MonoBehaviour
     /// </summary>
     private static bool BeatTrailsAreEach(SimaiTimingPoint timing) =>
         EachRule.TrailsAreEach(
-            timing.noteList.Count(note => note.noteType == SimaiNoteType.Slide));
+            timing.noteList.Count(note => note.noteType == SimaiNoteType.Slide && !note.isMineSlide));
 
     /// <summary>
     /// How many of this beat's slides leave <paramref name="startPosition"/>. More than
@@ -1216,7 +1219,7 @@ public class JsonDataLoader : MonoBehaviour
     /// </summary>
     private static int BeatSlidesFrom(SimaiTimingPoint timing, int startPosition) =>
         timing.noteList.Count(
-            note => note.noteType == SimaiNoteType.Slide &&
+            note => note.noteType == SimaiNoteType.Slide && !note.isMineSlide &&
                     note.startPosition == startPosition);
 
     private T PrepareNote<T>(
@@ -1227,13 +1230,21 @@ public class JsonDataLoader : MonoBehaviour
         var isFake = fakeOverride ?? note.isFake;
         var component = noteObject.GetComponent<T>();
         component.BindSceneContext(timeProvider, ObjectCounter, noteManager);
+        component.manager = inputSensors;
+        component.inputManager = chartInput;
         component.isFake = isFake;
         component.renderReporter = this;
         component.sourceLine = currentBeatLine;
         component.sourceColumn = currentBeatColumn;
         component.sourceTime = currentBeatTime;
+        component.authoredVisualStateTime = currentBeatTime;
         component.sourceContent = currentBeatContent;
         component.customSkin = note.noteSkin ?? string.Empty;
+        if (HasNoteAnimations)
+        {
+            component.propertyAnimation = noteObject.AddComponent<NotePropertyAnimation>();
+            component.propertyAnimation.Configure(component, this, timeProvider);
+        }
         // Fake notes disable judgement, but they are still live-chart objects and
         // must expire normally. Only timeline/standby previews are reversible.
         component.previewOnly = previewOnly;
@@ -1366,6 +1377,7 @@ public class JsonDataLoader : MonoBehaviour
         BuildColorTimeline(loadedData.colorTable);
         BuildSizeTimeline(loadedData.sizeTable);
         BuildAlphaTimeline(loadedData.alphaTable);
+        BuildNoteAnimations();
 
         var loader = LoadNotes(loadedData.timingList, ignoreOffset, loadedData.timingList.Last().time);
         while (loader.MoveNext())
@@ -1730,6 +1742,9 @@ public class JsonDataLoader : MonoBehaviour
         note.isFakeSlide = true;
         note.isSlideNoHead = true;
         note.noteType = SimaiNoteType.Slide;
+        if (expression.IsHold && !expression.isZeroLengthHold &&
+            SlideSyntaxValidator.TryGetLengthSeconds(expression.duration, timing.currentBpm, out var holdSeconds))
+            note.holdTime = holdSeconds;
         note.trajectoryCarrierPosition = expression.position.position;
         note.trajectoryCarrierIsDZone = expression.position.isDZone;
         note.trajectoryCarrierType = expression.kind switch
@@ -1839,6 +1854,7 @@ public class JsonDataLoader : MonoBehaviour
         for (var i = 0; i < subSlide.Count; i++)
         {
             var o = subSlide[i];
+            o.noteSkin = i == 0 ? note.noteSkin : string.Empty;
             o.isBreak = note.isBreak;
             o.isEx = note.isEx;
             o.isHanabi = i == 0 && note.isHanabi; // Fireworks belong only to the Star head
@@ -1941,6 +1957,40 @@ public class JsonDataLoader : MonoBehaviour
         var carrier = PrepareNote<TrajectoryCarrierDrop>(
             carrierObject, note, fakeOverride: false);
         carrier.carrierVisualType = GetTrajectoryCarrierVisualType(note);
+        carrier.isFakeStarRotate = note.isFakeRotate;
+        if (carrier.carrierVisualType == "tap")
+            carrier.tapBaseScale = tapPrefab.GetComponent<TapBase>().noteScale;
+        else if (carrier.carrierVisualType == "star")
+            carrier.tapBaseScale = starPrefab.GetComponent<TapBase>().noteScale;
+        else if (carrier.carrierVisualType == "hold")
+            carrier.tapBaseScale = holdPrefab.GetComponent<HoldDrop>().noteScale;
+        else if (carrier.carrierVisualType == "touch")
+            carrier.tapBaseScale = touchPrefab.transform.localScale.x * touchPrefab.GetComponent<TouchDrop>().noteScale;
+        else if (carrier.carrierVisualType == "touchhold")
+            carrier.tapBaseScale = touchHoldPrefab.transform.localScale.x * touchHoldPrefab.GetComponent<TouchHoldDrop>().noteScale;
+        var visual = carrier.carrierVisualType == "star" ? starPrefab.GetComponent<TapBase>() :
+            carrier.carrierVisualType == "hold" ? null : tapPrefab.GetComponent<TapBase>();
+        var hold = holdPrefab.GetComponent<HoldDrop>();
+        if (carrier.carrierVisualType == "hold")
+        {
+            var scroll = ResolveSvType("hold", note.isBreak, isEach, timing.streamIndex, note.isMineHead);
+            carrier.holdLength = Mathf.Abs((float)(SvController.GetCumulativeScroll(timing.time + note.holdTime, scroll) -
+                SvController.GetCumulativeScroll(timing.time, scroll)) * noteSpeed *
+                GetHSpeedAt("hold", timing.time, timing.HSpeed, note.isBreak, isEach, timing.streamIndex, note.isMineHead));
+            carrier.holdDrawMode = holdPrefab.GetComponent<SpriteRenderer>().drawMode;
+        }
+        if (note.isEx)
+        {
+            carrier.exSprite = carrier.carrierVisualType == "star" ? customSkin.Star_Ex :
+                carrier.carrierVisualType == "hold" ? customSkin.Hold_Ex : customSkin.Tap_Ex;
+            var template = carrier.carrierVisualType == "hold" ? holdPrefab.transform.GetChild(0) :
+                (carrier.carrierVisualType == "star" ? starPrefab : tapPrefab).transform.GetChild(0);
+            carrier.exTemplate = template.GetComponent<SpriteRenderer>();
+            carrier.exColor = note.isBreak ? (visual != null ? visual.exEffectBreak : hold.exEffectBreak) :
+                isEach ? (visual != null ? visual.exEffectEach : hold.exEffectEach) :
+                carrier.carrierVisualType == "star" && customSkin.PinkStarEnabled ? StarDrop.PinkStarExColor :
+                visual != null ? visual.exEffectTap : hold.exEffectTap;
+        }
         carrier.bodyBreak = note.isBreak;
         carrier.bodyMine = note.isMineHead;
         carrier.isEach = isEach;
@@ -1966,7 +2016,8 @@ public class JsonDataLoader : MonoBehaviour
             (float)timing.time,
             (float)timing.time,
             (float)note.slideTime,
-            slideLayer--);
+            slideLayer--,
+            customSkin);
     }
 
     private void InstantiateTouchSlide(
@@ -2101,7 +2152,7 @@ public class JsonDataLoader : MonoBehaviour
         star.isDZone = note.isDZone;
         star.rotateSpeed = Mathf.Max(0.01f, (float)note.slideTime);
         star.isEach = isEach;
-        star.isDouble = BeatSlidesFrom(timing, note.startPosition) > 1;
+        star.isDouble = !note.isMineHead && BeatSlidesFrom(timing, note.startPosition) > 1;
         star.isBreak = note.isBreak;
         star.isEX = note.isEx;
         star.isFirework = note.isHanabi;
@@ -2169,11 +2220,11 @@ public class JsonDataLoader : MonoBehaviour
         touch.justSprite = customSkin.TouchJust;
         Array.Copy(customSkin.TouchBorder, touch.multTouchNormalSprite, 2);
         Array.Copy(customSkin.TouchBorder_Each, touch.multTouchEachSprite, 2);
-        touch.isEach = isEach;
+        touch.isEach = isEach && !note.isMineHead;
         touch.isBreak = note.isBreak;
         touch.isFirework = note.isHanabi;
         touch.isMine = note.isMineHead;
-        if (isEach)
+        if (touch.isEach && !touch.isFake)
             touchMembers.Add(touch);
         touch.speed = touchSpeed * GetHSpeedAt(
             "touch", timing.time, timing.HSpeed, note.isBreak, stateIsEach,
@@ -2286,7 +2337,7 @@ public class JsonDataLoader : MonoBehaviour
         if (BeatTrailsAreEach(timing))
             WifiCompo.isEach = true;
         NDCompo.isEach = BeatIsEach(timing);
-        NDCompo.isDouble = BeatSlidesFrom(timing, note.startPosition) > 1;
+        NDCompo.isDouble = !note.isMineHead && BeatSlidesFrom(timing, note.startPosition) > 1;
 
         WifiCompo.isBreak = note.isSlideBreak;
         WifiCompo.isMine = note.isMineSlide;
@@ -2459,7 +2510,7 @@ public class JsonDataLoader : MonoBehaviour
             slideStarRenderer.sprite = customSkin.Star_Each;
         }
         NDCompo.isEach = BeatIsEach(timing);
-        NDCompo.isDouble = BeatSlidesFrom(timing, note.startPosition) > 1;
+        NDCompo.isDouble = !note.isMineHead && BeatSlidesFrom(timing, note.startPosition) > 1;
 
         SliCompo.ConnectInfo = info;
         SliCompo.isBreak = note.isSlideBreak;
@@ -2584,9 +2635,14 @@ public class JsonDataLoader : MonoBehaviour
                 return customSkin.Hold_Break;
             return isEach ? customSkin.Hold_Each : customSkin.Hold;
         }
-        if (note.trajectoryCarrierType is
-            SimaiNoteType.Touch or SimaiNoteType.TouchHold)
+        if (note.trajectoryCarrierType == SimaiNoteType.TouchHold)
+            return note.isBreak && !note.isMineHead
+                ? customSkin.TouchHold_Break[0]
+                : customSkin.TouchHold[0];
+        if (note.trajectoryCarrierType == SimaiNoteType.Touch)
         {
+            if (note.isMineHead)
+                return customSkin.Touch;
             if (note.isBreak)
                 return customSkin.Touch_Break;
             return isEach ? customSkin.Touch_Each : customSkin.Touch;
@@ -2640,7 +2696,8 @@ public class JsonDataLoader : MonoBehaviour
     public bool TryGetSlideRoute(
         string content,
         out List<SensorType> path,
-        out List<Vector3> positions)
+        out List<Vector3> positions,
+        List<SlideAreaRawData> codeAreas = null)
     {
         path = new List<SensorType>();
         positions = new List<Vector3>();
@@ -2648,6 +2705,28 @@ public class JsonDataLoader : MonoBehaviour
         {
             if (!TryGetSlideVisualRoute(content, out positions))
                 return false;
+            if (SlideCodeParser.LooksLikeSlideCode(content))
+            {
+                SlidePathParser.TryParsePath(content, out var parsed);
+                var code = parsed.segments[0].slideCode;
+                SlideCodeParser.TryParse(code, out var instructions, out _);
+                var distances = new float[positions.Count];
+                for (var index = 1; index < positions.Count; index++)
+                    distances[index] = distances[index - 1] + Vector3.Distance(positions[index - 1], positions[index]);
+                var points = positions;
+                var segmentIndex = 0;
+                var areas = SlideCodeJudgment.BuildForEndpoints(distances[^1], progress =>
+                {
+                    var at = (float)progress * distances[^1];
+                    while (segmentIndex + 2 < points.Count && distances[segmentIndex + 1] < at) segmentIndex++;
+                    var fraction = (at - distances[segmentIndex]) / (distances[segmentIndex + 1] - distances[segmentIndex]);
+                    var point = Vector3.Lerp(points[segmentIndex], points[segmentIndex + 1], fraction);
+                    return new System.Numerics.Complex(point.x, point.y);
+                }, SlideCodeParser.EndsWithLine(instructions), parsed.head, parsed.segments[0].end);
+                codeAreas?.AddRange(areas);
+                foreach (var area in areas) path.Add((SensorType)area.SensorA);
+                return path.Count > 0;
+            }
             var sensorRoot = GameObject.Find("Sensors")?.transform;
             if (sensorRoot == null)
                 return false;
@@ -2693,6 +2772,8 @@ public class JsonDataLoader : MonoBehaviour
                 path.segments.Count != 1)
                 return false;
             var parsed = path.segments[0];
+            if (!string.IsNullOrEmpty(parsed.slideCode))
+                return SlideCodePathGeometry.TryBuild(parsed.slideCode, positions);
             var shape = DetectShape(parsed);
             var isMirror = shape.StartsWith("-", StringComparison.Ordinal);
             if (isMirror)
@@ -2756,10 +2837,12 @@ public class JsonDataLoader : MonoBehaviour
         StateKey(streamIndex, noteType) + (live ? ":live" : ":note");
 
     private readonly Dictionary<string, List<(double time, ColorChange value)>> _colorTimeline = new();
+    private readonly Dictionary<ColorChange, Color> parsedNoteColors = new();
 
     private void BuildColorTimeline(List<ColorChange> colorTable)
     {
         _colorTimeline.Clear();
+        parsedNoteColors.Clear();
         if (colorTable == null) return;
         foreach (var ev in colorTable)
         {
@@ -2767,6 +2850,8 @@ public class JsonDataLoader : MonoBehaviour
             if (!_colorTimeline.ContainsKey(key))
                 _colorTimeline[key] = new List<(double, ColorChange)>();
             _colorTimeline[key].Add((ev.time, ev));
+            if (ColorUtility.TryParseHtmlString("#" + ev.color.TrimStart('#'), out var color))
+                parsedNoteColors[ev] = color;
         }
         foreach (var kv in _colorTimeline)
             kv.Value.Sort((a, b) => a.time != b.time
@@ -2781,16 +2866,27 @@ public class JsonDataLoader : MonoBehaviour
         var hex = GetColorAt("blockarea", timing.time, timing.streamIndex, liveTime: liveTime);
         var color = Color.red;
         if (!string.IsNullOrEmpty(hex)) ColorUtility.TryParseHtmlString("#" + hex.TrimStart('#'), out color);
-        color.a *= ResolveAlphaAt("blockarea", timing.time, timing.streamIndex, liveTime: liveTime) ?? 1f;
-        var size = ResolveSizeAt("blockarea", timing.time, streamIndex: timing.streamIndex, liveTime: liveTime) ?? Vector2.one;
+        var appearance=GetNoiseMotion(timing).Appearance;
+        var state=FindColorState("blockarea",timing.time,timing.streamIndex,liveTime:liveTime);
+        if (state?.transition != null)
+        {
+            var tint = EvaluateNoteColor(state, liveTime - (state.live ? state.time : appearance));
+            if (state.transition.fromUntinted)
+                color = tint.HasValue ? Color.Lerp(Color.red, new Color(tint.Value.r, tint.Value.g, tint.Value.b), tint.Value.a) : Color.red;
+            else if (tint.HasValue)
+                color = tint.Value;
+        }
+        color.a *= ResolveAlphaAt("blockarea", timing.time, timing.streamIndex, liveTime: liveTime,appearanceTime:appearance) ?? 1f;
+        var size = ResolveSizeAt("blockarea", timing.time, streamIndex: timing.streamIndex, liveTime: liveTime,appearanceTime:appearance) ?? Vector2.one;
         return new NoiseZoneVisual(color, size, !string.IsNullOrEmpty(hex));
     }
 
     private float ResolveNoiseWarningProgress(SimaiTimingPoint timing, double liveTime)
     {
-        var speed = touchSpeed * GetHSpeedAt("blockarea", timing.time, timing.HSpeed, false, false, timing.streamIndex);
+        var motion=GetNoiseMotion(timing);
+        var speed = motion.Speed;
         if (liveTime >= timing.time) return -1f;
-        var key = SvController.MakeCurveKey(timing.streamIndex, "blockarea");
+        var key = motion.Key;
         return AlphaVisualTiming.GetTouchWarningProgress(SvController.GetCumulativeScroll(timing.time, key),
             SvController.GetCumulativeScroll(liveTime, key), speed);
     }
@@ -2804,44 +2900,33 @@ public class JsonDataLoader : MonoBehaviour
         double? liveTime = null,
         bool liveOnly = false)
     {
+        var state = FindColorState(noteType, noteTime, streamIndex, isBreak, isEach, liveTime, liveOnly);
+        return state?.transition?.fromUntinted == true ? null : state?.color;
+    }
+
+    private ColorChange FindColorState(string noteType,double noteTime,int streamIndex=0,
+        bool isBreak=false,bool isEach=false,double? liveTime=null,bool liveOnly=false,bool isMine=false)
+    {
         ColorChange Lookup(string type, bool live, double time)
         {
-            if (!_colorTimeline.TryGetValue(VisualStateKey(streamIndex, type, live), out var values))
+            if (!_colorTimeline.TryGetValue(AnimationKey(streamIndex, type, live), out var values))
                 return null;
             var index = FindTimelineIndex(values, time);
-            return index >= 0 ? values[index].value : null;
+            var value=index >= 0 ? values[index].value : null;
+            return value == null || string.Equals(value.color,"NULL",StringComparison.OrdinalIgnoreCase) ? null : value;
         }
 
-        string ResolveTyped(bool live, double time)
+        ColorChange ResolveTyped(bool live, double time)
         {
-            // Mines are not here on purpose: they take their colour from the mine key
-            // alone, through GetMineColorAt, so that colouring taps leaves the mines
-            // among them alone.
-            IEnumerable<string> Types()
-            {
-                if (isBreak) yield return "break";
-                if (isEach) yield return "each";
-                yield return noteType;
-                if (string.Equals(noteType, "star", StringComparison.OrdinalIgnoreCase))
-                    yield return "tap";
-            }
-
-            foreach (var type in Types().Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                var value = Lookup(type, live, time);
-                if (value != null && !string.Equals(value.color, "NULL", StringComparison.OrdinalIgnoreCase))
-                    return value.color;
-            }
-            return null;
+            if (isMine) return Lookup("mine",live,time);
+            return (isBreak ? Lookup("break",live,time) : null) ??
+                (isEach ? Lookup("each",live,time) : null) ?? Lookup(noteType,live,time) ??
+                (noteType=="star" ? Lookup("tap",live,time) : null);
         }
 
-        string ResolveGlobal(bool live, double time)
+        ColorChange ResolveGlobal(bool live, double time)
         {
-            if (string.Equals(noteType, "blockarea", StringComparison.OrdinalIgnoreCase)) return null;
-            var value = Lookup(string.Empty, live, time);
-            return value == null || string.Equals(value.color, "NULL", StringComparison.OrdinalIgnoreCase)
-                ? null
-                : value.color;
+            return isMine || noteType=="blockarea" ? null : Lookup(string.Empty,live,time);
         }
 
         // The live answer on its own, for the override layer: what the note is
@@ -2889,7 +2974,7 @@ public class JsonDataLoader : MonoBehaviour
         int streamIndex = 0,
         double? liveTime = null,
         bool isMine = false,
-        bool liveOnly = false)
+        bool liveOnly = false,double? appearanceTime = null)
     {
         Vector2? Lookup(string type, bool live, double time)
         {
@@ -2899,6 +2984,11 @@ public class JsonDataLoader : MonoBehaviour
             if (index < 0) return null;
             var value = list[index].value;
             if (value.reset) return null;
+            if (value.transition != null)
+            {
+                var elapsed=liveTime.HasValue ? liveTime.Value-(live ? value.time : appearanceTime ?? noteTime) : 0d;
+                return new Vector2(value.transition.Evaluate(elapsed),value.transition.EvaluateY(elapsed));
+            }
             var x = value.scaleX == 0f ? value.scale : value.scaleX;
             var y = value.scaleY == 0f ? value.scale : value.scaleY;
             return new Vector2(x == 0f ? 1f : x, y == 0f ? 1f : y);
@@ -2989,7 +3079,7 @@ public class JsonDataLoader : MonoBehaviour
             var index = FindTimelineIndex(values, time);
             if (index < 0 || values[index].value.reset)
                 return null;
-            return values[index].value.radius;
+            return values[index].value.transition?.from ?? values[index].value.radius;
         }
 
         float? typed = null;
@@ -3010,7 +3100,7 @@ public class JsonDataLoader : MonoBehaviour
         {
             var index = FindTimelineIndex(values, time);
             if (index >= 0 && !values[index].value.reset)
-                return values[index].value.multiplier;
+                return values[index].value.transition?.from ?? values[index].value.multiplier;
         }
         return 1f;
     }
@@ -3113,7 +3203,7 @@ public class JsonDataLoader : MonoBehaviour
         }
         float? Resolve(int stream)
         {
-            float? Value(SpawnChange value) => value == null || value.reset ? null : value.radius;
+            float? Value(SpawnChange value) => value == null || value.reset ? null : value.transition?.from ?? value.radius;
             if (isMine)
             {
                 var value = Value(Lookup(stream, "mine"));
@@ -3216,7 +3306,7 @@ public class JsonDataLoader : MonoBehaviour
                 return null;
             var index = FindTimelineIndex(values, time);
             if (index < 0 || values[index].value.reset) return null;
-            return values[index].value.multiplier;
+            return values[index].value.transition?.from ?? values[index].value.multiplier;
         }
         float? Resolve(int stream)
         {
@@ -3303,7 +3393,7 @@ public class JsonDataLoader : MonoBehaviour
         bool isEach = false,
         double? liveTime = null,
         bool isMine = false,
-        bool liveOnly = false)
+        bool liveOnly = false,double? appearanceTime = null)
     {
         float? Lookup(string type, bool live, double time)
         {
@@ -3311,11 +3401,15 @@ public class JsonDataLoader : MonoBehaviour
                 return null;
             var index = FindTimelineIndex(list, time);
             if (index < 0 || list[index].value.reset) return null;
-            return list[index].value.alpha;
+            var value=list[index].value;
+            var elapsed=liveTime.HasValue ? liveTime.Value-(live ? value.time : appearanceTime ?? noteTime) : 0d;
+            return value.transition?.Evaluate(elapsed) ?? value.alpha;
         }
 
         float? ResolveTyped(bool live, double time)
         {
+            if (noteType == "tapline")
+                return Lookup(noteType, live, time);
             if (isMine)
             {
                 var value = Lookup("mine", live, time);
@@ -3337,13 +3431,21 @@ public class JsonDataLoader : MonoBehaviour
         if (liveOnly)
             return liveTime.HasValue
                 ? ResolveTyped(true, liveTime.Value) ??
-                  (noteType == "blockarea" ? null : Lookup(string.Empty, true, liveTime.Value))
+                  (noteType is "blockarea" or "tapline" ? null : Lookup(string.Empty, true, liveTime.Value))
                 : null;
         return (liveTime.HasValue ? ResolveTyped(true, liveTime.Value) : null) ??
                ResolveTyped(false, noteTime) ??
-               (noteType != "blockarea" && liveTime.HasValue ? Lookup(string.Empty, true, liveTime.Value) : null) ??
-               (noteType == "blockarea" ? null : Lookup(string.Empty, false, noteTime));
+               (noteType is not ("blockarea" or "tapline") && liveTime.HasValue ? Lookup(string.Empty, true, liveTime.Value) : null) ??
+               (noteType is "blockarea" or "tapline" ? null : Lookup(string.Empty, false, noteTime));
     }
+
+    internal float? ResolveTapLineAlpha(NoteDrop note, double? liveTime = null,
+        bool liveOnly = false, double? appearanceTime = null) =>
+        ResolveAlphaAt("tapline", note.VisualStateTime, note.VisualStreamIndex,
+            liveTime: liveTime, appearanceTime: appearanceTime) ??
+        ResolveAlphaAt(note.VisualNoteType, note.VisualStateTime, note.VisualStreamIndex,
+            note.IsVisualBreak, note.isEachInStream, liveTime, note.IsVisualMine,
+            liveOnly: liveOnly, appearanceTime: appearanceTime);
 
     private float GetAlphaAt(
         string noteType,
@@ -3405,6 +3507,7 @@ public class JsonDataLoader : MonoBehaviour
         if (renderingMaterialsWarmed)
             return;
 
+        var previousTarget = RenderTexture.active;
         RenderTexture target = null;
         Material tintWarmup = null;
         Material breakWarmup = null;
@@ -3433,6 +3536,7 @@ public class JsonDataLoader : MonoBehaviour
         }
         finally
         {
+            RenderTexture.active = previousTarget;
             if (target != null)
                 RenderTexture.ReleaseTemporary(target);
             if (tintWarmup != null)

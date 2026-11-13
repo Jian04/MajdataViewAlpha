@@ -28,6 +28,7 @@ internal sealed class PetAnimator : IDisposable
     private readonly Image target;
     private readonly DispatcherTimer frameTimer = new();
     private BitmapSource? atlas;
+    private BitmapSource? staticImage;
     private BitmapSource[][] frames = Array.Empty<BitmapSource[]>();
     private int[][] durations = Array.Empty<int[]>();
     private BitmapSource[] lookFrames = Array.Empty<BitmapSource>();
@@ -40,6 +41,8 @@ internal sealed class PetAnimator : IDisposable
     private int animationGeneration;
 
     public bool HasAtlas => atlas != null;
+    public bool HasAppearance => atlas != null || staticImage != null;
+    public bool IsStatic => staticImage != null;
     public bool IsGesturePlaying => frameTimer.IsEnabled && !loop;
 
     public PetAnimator(Image previous, Image target)
@@ -47,6 +50,36 @@ internal sealed class PetAnimator : IDisposable
         this.previous = previous;
         this.target = target;
         frameTimer.Tick += FrameTimer_Tick;
+    }
+
+    public void LoadStaticImage(string path)
+    {
+        using Stream stream = Path.GetExtension(path).Equals(".webp", StringComparison.OrdinalIgnoreCase)
+            ? DecodeWebp(path) : File.OpenRead(path);
+        var image = new BitmapImage();
+        image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.StreamSource = stream; image.EndInit(); image.Freeze();
+        frameTimer.Stop(); animationGeneration++; completed = null;
+        atlas = null; frames = Array.Empty<BitmapSource[]>(); durations = Array.Empty<int[]>(); lookFrames = Array.Empty<BitmapSource>();
+        RenderOptions.SetBitmapScalingMode(target, BitmapScalingMode.HighQuality);
+        staticImage = image; showingLookDirection = false; loop = false; holdFinalFrame = false;
+        ApplySource(image);
+    }
+
+    private static MemoryStream DecodeWebp(string path)
+    {
+        var ffmpeg = Path.Combine(MajdataCore.AlphaSession.InstallRoot, "App", "MajdataView", "MajdataView_Data", "StreamingAssets", "ffmpeg.exe");
+        if (!File.Exists(ffmpeg)) throw new FileNotFoundException("解码 WebP 需要 ffmpeg：" + ffmpeg, ffmpeg);
+        var start = new System.Diagnostics.ProcessStartInfo(ffmpeg) {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in new[] { "-v", "error", "-i", path, "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1" })
+            start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var error = process.StandardError.ReadToEndAsync();
+        var data = new MemoryStream();
+        process.StandardOutput.BaseStream.CopyTo(data); process.WaitForExit();
+        if (process.ExitCode != 0) { data.Dispose(); throw new InvalidDataException("WebP 解码失败：" + error.GetAwaiter().GetResult()); }
+        data.Position = 0;
+        return data;
     }
 
     public bool LoadAtlas(string path)
@@ -64,6 +97,8 @@ internal sealed class PetAnimator : IDisposable
             if (image.PixelWidth != 1536 || image.PixelHeight != 2288)
                 return false;
             atlas = image;
+            staticImage = null;
+            RenderOptions.SetBitmapScalingMode(target, BitmapScalingMode.LowQuality);
             // Some atlases deliberately omit entire animations/directions.
             // Keep only visible cells, with their original frame timing.
             frames = new BitmapSource[FrameCounts.Length][];
@@ -107,6 +142,7 @@ internal sealed class PetAnimator : IDisposable
     public void Play(PetAnimation animation, bool shouldLoop = false, Action? onCompleted = null,
         bool holdOnLastFrame = false)
     {
+        if (staticImage != null) { ApplySource(staticImage); onCompleted?.Invoke(); return; }
         if (atlas != null && !showingLookDirection && state == animation &&
             holdFinalFrame && holdOnLastFrame)
         {
@@ -134,6 +170,7 @@ internal sealed class PetAnimator : IDisposable
 
     public void ShowLookDirection(double degrees, int holdMilliseconds = 900, Action? onCompleted = null)
     {
+        if (staticImage != null) { onCompleted?.Invoke(); return; }
         if (atlas == null)
             return;
 

@@ -4,10 +4,81 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:Themes="clr-namespace:Microsoft.Windows.Themes;assembly=PresentationFramework.Aero2"
+             xmlns:local="clr-namespace:MajdataEdit"
+             xmlns:sys="clr-namespace:System;assembly=mscorlib"
              mc:Ignorable="d"
              StartupUri="MainWindow.xaml"
              DispatcherUnhandledException="Application_DispatcherUnhandledException">
     <Application.Resources>
+        <x:Static x:Key="UiFontFamily" Member="local:App.UiFontFamily" />
+        <x:Static x:Key="TitleFontFamily" Member="local:App.TitleFontFamily" />
+        <ControlTemplate x:Key="TabCloseButton" TargetType="Button">
+            <Border Background="Transparent">
+                <Grid>
+                    <Path x:Name="cross" Data="M0,0 L8,8 M0,8 L8,0" Stroke="{DynamicResource ButtonForeground}" StrokeThickness="1.2" Width="8" Height="8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Ellipse x:Name="dirty" Width="5" Height="5" Fill="{DynamicResource ButtonForeground}" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="Tag"><Trigger.Value><sys:Boolean>True</sys:Boolean></Trigger.Value>
+                    <Setter TargetName="cross" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="dirty" Property="Visibility" Value="Visible" />
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="cross" Property="Visibility" Value="Visible" />
+                    <Setter TargetName="dirty" Property="Visibility" Value="Collapsed" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+        <ControlTemplate x:Key="DifficultySelector" TargetType="ComboBox">
+            <Grid>
+                <ToggleButton Focusable="False" Foreground="{TemplateBinding Foreground}"
+                              IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                    <ToggleButton.Template>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Border x:Name="face" CornerRadius="3" Background="Transparent" Padding="4,0">
+                                <Grid>
+                                    <ContentPresenter Content="{Binding Tag, RelativeSource={RelativeSource AncestorType=ComboBox}}" VerticalAlignment="Center" HorizontalAlignment="Left" Margin="0,0,14,0" />
+                                    <Path Data="M0,0 L3,3 L6,0" Stroke="{DynamicResource MutedForeground}" StrokeThickness="1" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="face" Property="Background" Value="{DynamicResource HoverBackground}" /></Trigger>
+                                <Trigger Property="IsChecked" Value="True"><Setter TargetName="face" Property="Background" Value="{DynamicResource HoverBackground}" /></Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </ToggleButton.Template>
+                </ToggleButton>
+                <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False">
+                    <Border Background="{DynamicResource ButtonsBackground}" BorderBrush="{DynamicResource MenuSeparator}" BorderThickness="1" CornerRadius="3" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" Padding="3">
+                        <ScrollViewer MaxHeight="260"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" /></ScrollViewer>
+                    </Border>
+                </Popup>
+            </Grid>
+        </ControlTemplate>
+        <ControlTemplate x:Key="SidebarButton" TargetType="Button">
+            <Border x:Name="surface" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="4">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="surface" Property="Background" Value="{DynamicResource HoverBackground}" /></Trigger>
+                <Trigger Property="Tag">
+                    <Trigger.Value><sys:Boolean>True</sys:Boolean></Trigger.Value>
+                    <Setter TargetName="surface" Property="Background" Value="{DynamicResource SelectionBackground}" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+        <ControlTemplate x:Key="AppearanceArrow" TargetType="Button">
+            <Border x:Name="surface" Background="Transparent" CornerRadius="3">
+                <Viewbox Width="16" Height="16"><Canvas Width="24" Height="24">
+                    <Path x:Name="arrow" Data="M9,6 L15,12 L9,18" Stroke="{TemplateBinding Foreground}" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas></Viewbox>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="Content" Value="‹"><Setter TargetName="arrow" Property="Data" Value="M15,6 L9,12 L15,18" /></Trigger>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="surface" Property="Background" Value="{DynamicResource HoverBackground}" /></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
         <Style TargetType="ProgressBar">
             <Setter Property="Foreground" Value="{DynamicResource HelperForeground}" />
             <Setter Property="Background" Value="{DynamicResource ButtonsBackground}" />
@@ -33,7 +104,7 @@
                             Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
                 </Trigger>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" TargetName="border" Value="{DynamicResource ScrollThumb}" />
+                    <Setter Property="Background" TargetName="border" Value="{DynamicResource HoverBackground}" />
                     <Setter Property="BorderBrush" TargetName="border" Value="{DynamicResource HelperForeground}" />
                 </Trigger>
                 <Trigger Property="IsPressed" Value="True">
@@ -41,8 +112,8 @@
                     <Setter Property="BorderBrush" TargetName="border" Value="{DynamicResource HelperForeground}" />
                 </Trigger>
                 <Trigger Property="ToggleButton.IsChecked" Value="True">
-                    <Setter Property="Background" TargetName="border" Value="#FFBCDDEE" />
-                    <Setter Property="BorderBrush" TargetName="border" Value="#FF245A83" />
+                    <Setter Property="Background" TargetName="border" Value="{DynamicResource SelectionBackground}" />
+                    <Setter Property="BorderBrush" TargetName="border" Value="{DynamicResource HelperForeground}" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
 
@@ -74,8 +145,15 @@
             <Setter Property="Template" Value="{StaticResource DarkTextBox}" />
             <Setter Property="Background" Value="{DynamicResource ButtonsBackground}" />
             <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource ScrollThumb}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource MenuSeparator}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource ButtonForeground}" />
+            <Setter Property="SelectionBrush" Value="{DynamicResource SelectionBackground}" />
             <Setter Property="BorderThickness" Value="1" />
+            <Style.Triggers>
+                <Trigger Property="AcceptsReturn" Value="False">
+                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <ControlTemplate x:Key="RoundedRichTextBox" TargetType="{x:Type RichTextBox}">
@@ -114,12 +192,12 @@
                 <Border x:Name="checkBoxBorder" BorderBrush="{TemplateBinding BorderBrush}"
                         BorderThickness="{TemplateBinding BorderThickness}" Background="{TemplateBinding Background}"
                         CornerRadius="3"
-                        HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" Margin="1"
-                        VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+                        HorizontalAlignment="Center" Margin="1" Width="14" Height="14"
+                        VerticalAlignment="Center">
                     <Grid x:Name="markGrid">
                         <Path x:Name="optionMark"
                               Data="F1M9.97498,1.22334L4.6983,9.09834 4.52164,9.09834 0,5.19331 1.27664,3.52165 4.255,6.08833 8.33331,1.52588E-05 9.97498,1.22334z"
-                              Margin="1" Opacity="0" Stretch="None" Fill="White" />
+                              Margin="1" Opacity="0" Stretch="None" Fill="{DynamicResource ButtonForeground}" />
                         <Rectangle x:Name="indeterminateMark" Fill="{DynamicResource ButtonForeground}" Margin="2"
                                    Opacity="0" />
                     </Grid>
@@ -149,23 +227,23 @@
                             </Style>
                         </Setter.Value>
                     </Setter>
-                    <Setter Property="Padding" Value="4,-1,0,0" />
+                    <Setter Property="Padding" Value="5,0,0,0" />
                 </Trigger>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Fill" TargetName="optionMark" Value="{DynamicResource ButtonForeground}" />
-                    <Setter Property="Fill" TargetName="indeterminateMark" Value="#FF212121" />
+                    <Setter Property="Fill" TargetName="indeterminateMark" Value="{DynamicResource ButtonForeground}" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Background" TargetName="checkBoxBorder" Value="#FFE6E6E6" />
-                    <Setter Property="BorderBrush" TargetName="checkBoxBorder" Value="#FFBCBCBC" />
-                    <Setter Property="Fill" TargetName="optionMark" Value="#FF707070" />
-                    <Setter Property="Fill" TargetName="indeterminateMark" Value="#FF707070" />
+                    <Setter Property="Background" TargetName="checkBoxBorder" Value="{DynamicResource ButtonsBackground}" />
+                    <Setter Property="BorderBrush" TargetName="checkBoxBorder" Value="{DynamicResource MenuSeparator}" />
+                    <Setter Property="Fill" TargetName="optionMark" Value="{DynamicResource MutedForeground}" />
+                    <Setter Property="Fill" TargetName="indeterminateMark" Value="{DynamicResource MutedForeground}" />
                 </Trigger>
                 <Trigger Property="IsPressed" Value="True">
-                    <Setter Property="Background" TargetName="checkBoxBorder" Value="#FFD9ECFF" />
-                    <Setter Property="BorderBrush" TargetName="checkBoxBorder" Value="#FF3C77DD" />
-                    <Setter Property="Fill" TargetName="optionMark" Value="#FF212121" />
-                    <Setter Property="Fill" TargetName="indeterminateMark" Value="#FF212121" />
+                    <Setter Property="Background" TargetName="checkBoxBorder" Value="{DynamicResource SelectionBackground}" />
+                    <Setter Property="BorderBrush" TargetName="checkBoxBorder" Value="{DynamicResource HelperForeground}" />
+                    <Setter Property="Fill" TargetName="optionMark" Value="{DynamicResource ButtonForeground}" />
+                    <Setter Property="Fill" TargetName="indeterminateMark" Value="{DynamicResource ButtonForeground}" />
                 </Trigger>
                 <Trigger Property="IsChecked" Value="True">
                     <Setter Property="Opacity" TargetName="optionMark" Value="1" />
@@ -279,7 +357,7 @@
                                                 <Setter Property="Background" TargetName="templateRoot"
                                                         Value="{DynamicResource ScrollTrack}" />
                                                 <Setter Property="BorderBrush" TargetName="templateRoot"
-                                                        Value="#FF7EB4EA" />
+                                                        Value="{DynamicResource HelperForeground}" />
                                             </MultiDataTrigger>
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
@@ -292,17 +370,10 @@
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Background" TargetName="templateRoot" Value="{DynamicResource ButtonsBackground}" />
                                                 <Setter Property="BorderBrush" TargetName="templateRoot"
-                                                        Value="#FF7EB4EA" />
-                                                <Setter Property="Background" TargetName="splitBorder">
-                                                    <Setter.Value>
-                                                        <LinearGradientBrush EndPoint="0,1" StartPoint="0,0">
-                                                            <GradientStop Color="#FF8B8A8A" Offset="0" />
-                                                            <GradientStop Color="#FF5B5959" Offset="1" />
-                                                        </LinearGradientBrush>
-                                                    </Setter.Value>
-                                                </Setter>
+                                                        Value="{DynamicResource HelperForeground}" />
+                                                <Setter Property="Background" TargetName="splitBorder" Value="{DynamicResource ButtonsBackground}" />
                                                 <Setter Property="BorderBrush" TargetName="splitBorder"
-                                                        Value="#FF7EB4EA" />
+                                                        Value="{DynamicResource HelperForeground}" />
                                             </MultiDataTrigger>
                                             <Trigger Property="IsPressed" Value="True">
                                                 <Setter Property="Fill" TargetName="Arrow" Value="{DynamicResource ButtonForeground}" />
@@ -319,7 +390,7 @@
                                                 <Setter Property="Background" TargetName="templateRoot"
                                                         Value="{DynamicResource ScrollThumb}" />
                                                 <Setter Property="BorderBrush" TargetName="templateRoot"
-                                                        Value="#FF569DE5" />
+                                                        Value="{DynamicResource HelperForeground}" />
                                             </MultiDataTrigger>
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
@@ -332,17 +403,10 @@
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Background" TargetName="templateRoot" Value="{DynamicResource ButtonsBackground}" />
                                                 <Setter Property="BorderBrush" TargetName="templateRoot"
-                                                        Value="#FF569DE5" />
-                                                <Setter Property="Background" TargetName="splitBorder">
-                                                    <Setter.Value>
-                                                        <LinearGradientBrush EndPoint="0,1" StartPoint="0,0">
-                                                            <GradientStop Color="#FF8B8A8A" Offset="0" />
-                                                            <GradientStop Color="#FF5B5959" Offset="1" />
-                                                        </LinearGradientBrush>
-                                                    </Setter.Value>
-                                                </Setter>
+                                                        Value="{DynamicResource HelperForeground}" />
+                                                <Setter Property="Background" TargetName="splitBorder" Value="{DynamicResource ButtonsBackground}" />
                                                 <Setter Property="BorderBrush" TargetName="splitBorder"
-                                                        Value="#FF569DE5" />
+                                                        Value="{DynamicResource HelperForeground}" />
                                             </MultiDataTrigger>
                                             <Trigger Property="IsEnabled" Value="False">
                                                 <Setter Property="Fill" TargetName="Arrow" Value="{DynamicResource ButtonForeground}" />
@@ -371,7 +435,7 @@
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Background" TargetName="templateRoot" Value="{DynamicResource ButtonsBackground}" />
                                                 <Setter Property="BorderBrush" TargetName="templateRoot"
-                                                        Value="#FFBFBFBF" />
+                                                        Value="{DynamicResource MenuSeparator}" />
                                                 <Setter Property="Background" TargetName="splitBorder"
                                                         Value="Transparent" />
                                                 <Setter Property="BorderBrush" TargetName="splitBorder"
@@ -536,16 +600,16 @@
                 <Trigger Property="Role" Value="TopLevelHeader"><Setter TargetName="SubMenuBorder" Property="Width" Value="208" />
                     <Setter Property="Width" TargetName="MenuIconColumn" Value="0" />
                     <Setter Property="Visibility" TargetName="Icon" Value="Collapsed" />
-                    <Setter Property="Margin" TargetName="ContentPresenter" Value="10,3" />
+                    <Setter Property="Margin" TargetName="ContentPresenter" Value="12,3" />
                 </Trigger>
                 <Trigger Property="Role" Value="TopLevelItem">
                     <Setter Property="Width" TargetName="MenuIconColumn" Value="0" />
                     <Setter Property="Visibility" TargetName="Icon" Value="Collapsed" />
-                    <Setter Property="Margin" TargetName="ContentPresenter" Value="10,3" />
+                    <Setter Property="Margin" TargetName="ContentPresenter" Value="12,3" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="TextElement.Foreground" TargetName="templateRoot" Value="#FF707070" />
-                    <Setter Property="Fill" TargetName="GlyphPanel" Value="#FF707070" />
+                    <Setter Property="TextElement.Foreground" TargetName="templateRoot" Value="{DynamicResource MutedForeground}" />
+                    <Setter Property="Fill" TargetName="GlyphPanel" Value="{DynamicResource MutedForeground}" />
                 </Trigger>
                 <Trigger Property="CanContentScroll" SourceName="SubMenuScrollViewer" Value="False">
                     <Setter Property="Canvas.Top" TargetName="OpaqueRect"
@@ -594,12 +658,13 @@
         </Style>
 
         <ControlTemplate x:Key="DarkVerticalScrollBar" TargetType="{x:Type ScrollBar}">
-            <Grid Width="12" Background="{DynamicResource ScrollTrack}" SnapsToDevicePixels="True">
-                <Track x:Name="PART_Track"
+            <Grid Width="12" Background="Transparent" SnapsToDevicePixels="True">
+                <Track x:Name="PART_Track" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}"
+                       Value="{TemplateBinding Value}" ViewportSize="{TemplateBinding ViewportSize}"
+                       Opacity="0"
                        Margin="2"
                        Orientation="Vertical"
-                       IsDirectionReversed="True"
-                       IsEnabled="{TemplateBinding IsMouseOver}">
+                       IsDirectionReversed="True">
                     <Track.DecreaseRepeatButton>
                         <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
                                       Style="{StaticResource DarkScrollBarPageButton}" />
@@ -613,14 +678,23 @@
                     </Track.IncreaseRepeatButton>
                 </Track>
             </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="PART_Track" Property="Opacity" Value="1" />
+                </Trigger>
+                <Trigger Property="IsMouseCaptureWithin" Value="True">
+                    <Setter TargetName="PART_Track" Property="Opacity" Value="1" />
+                </Trigger>
+            </ControlTemplate.Triggers>
         </ControlTemplate>
 
         <ControlTemplate x:Key="DarkHorizontalScrollBar" TargetType="{x:Type ScrollBar}">
-            <Grid Height="12" Background="{DynamicResource ScrollTrack}" SnapsToDevicePixels="True">
-                <Track x:Name="PART_Track"
+            <Grid Height="12" Background="Transparent" SnapsToDevicePixels="True">
+                <Track x:Name="PART_Track" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}"
+                       Value="{TemplateBinding Value}" ViewportSize="{TemplateBinding ViewportSize}"
+                       Opacity="0"
                        Margin="2"
-                       Orientation="Horizontal"
-                       IsEnabled="{TemplateBinding IsMouseOver}">
+                       Orientation="Horizontal">
                     <Track.DecreaseRepeatButton>
                         <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}"
                                       Style="{StaticResource DarkScrollBarPageButton}" />
@@ -634,10 +708,48 @@
                     </Track.IncreaseRepeatButton>
                 </Track>
             </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="PART_Track" Property="Opacity" Value="1" />
+                </Trigger>
+                <Trigger Property="IsMouseCaptureWithin" Value="True">
+                    <Setter TargetName="PART_Track" Property="Opacity" Value="1" />
+                </Trigger>
+            </ControlTemplate.Triggers>
         </ControlTemplate>
 
+        <ControlTemplate x:Key="OverlayScrollViewer" TargetType="{x:Type ScrollViewer}">
+            <Grid Background="{TemplateBinding Background}" ClipToBounds="True">
+                <ScrollContentPresenter x:Name="PART_ScrollContentPresenter"
+                    Margin="{TemplateBinding Padding}"
+                    Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                    CanContentScroll="{TemplateBinding CanContentScroll}" />
+                <ScrollBar x:Name="PART_VerticalScrollBar" Width="12" HorizontalAlignment="Right"
+                    Minimum="0" Maximum="{TemplateBinding ScrollableHeight}"
+                    ViewportSize="{TemplateBinding ViewportHeight}"
+                    Value="{Binding VerticalOffset, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}"
+                    Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}" />
+                <ScrollBar x:Name="PART_HorizontalScrollBar" Height="12" VerticalAlignment="Bottom" Orientation="Horizontal"
+                    Minimum="0" Maximum="{TemplateBinding ScrollableWidth}"
+                    ViewportSize="{TemplateBinding ViewportWidth}"
+                    Value="{Binding HorizontalOffset, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}"
+                    Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}" />
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="ComputedVerticalScrollBarVisibility" Value="Visible">
+                    <Setter TargetName="PART_HorizontalScrollBar" Property="Margin" Value="0,0,12,0" />
+                </Trigger>
+                <Trigger Property="ComputedHorizontalScrollBarVisibility" Value="Visible">
+                    <Setter TargetName="PART_VerticalScrollBar" Property="Margin" Value="0,0,0,12" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+        <Style TargetType="{x:Type ScrollViewer}">
+            <Setter Property="Template" Value="{StaticResource OverlayScrollViewer}" />
+        </Style>
+
         <Style TargetType="{x:Type ScrollBar}">
-            <Setter Property="Background" Value="{DynamicResource ScrollTrack}" />
+            <Setter Property="Background" Value="Transparent" />
             <Setter Property="Template" Value="{StaticResource DarkVerticalScrollBar}" />
             <Style.Triggers>
                 <Trigger Property="Orientation" Value="Horizontal">
@@ -668,6 +780,7 @@
             <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
             <Setter Property="BorderBrush" Value="{DynamicResource MenuSeparator}" />
             <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
 
         <Style TargetType="{x:Type ComboBoxItem}">
@@ -684,8 +797,21 @@
             </Style.Triggers>
         </Style>
 
+        <Style TargetType="{x:Type PasswordBox}">
+            <Setter Property="Background" Value="{DynamicResource ButtonsBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource MenuSeparator}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource ButtonForeground}" />
+        </Style>
+        <Style TargetType="{x:Type ListBox}">
+            <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
+            <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource MenuSeparator}" />
+        </Style>
+
         <Style TargetType="{x:Type Label}">
             <Setter Property="Foreground" Value="{DynamicResource ButtonForeground}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
 
         <Style TargetType="{x:Type TextBlock}">
@@ -736,15 +862,43 @@
                TargetType="{x:Type Separator}"
                BasedOn="{StaticResource HorizontalMenuSeparator}" />
 
-        <SolidColorBrush x:Key="ButtonForeground" Color="White" />
-        <SolidColorBrush x:Key="HelperForeground" Color="#569CD6" />
-        <SolidColorBrush x:Key="WindowBackground" Color="#FF1F1F1F" />
-        <SolidColorBrush x:Key="ButtonsBackground" Color="#FF303030" Opacity="0.6" />
-        <SolidColorBrush x:Key="EditorBackground" Color="#FF1A1B20" />
-        <SolidColorBrush x:Key="ScrollTrack" Color="#FF1B1D22" />
-        <SolidColorBrush x:Key="ScrollThumb" Color="#FF50545E" />
-        <SolidColorBrush x:Key="ScrollThumbHover" Color="#FF676C78" />
-        <SolidColorBrush x:Key="MenuSeparator" Color="#FF454A55" />
+        <SolidColorBrush x:Key="ButtonForeground" Color="#FFE2E5EB" />
+        <SolidColorBrush x:Key="HelperForeground" Color="#FF8DBDEB" />
+        <ControlTemplate x:Key="EditorTransportButton" TargetType="Button">
+            <Border x:Name="surface" Background="Transparent" CornerRadius="4">
+                <Path x:Name="icon" Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" Stroke="{TemplateBinding Foreground}"
+                      StrokeThickness="1.6" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                      Data="M5,3 L19,3 Q21,3 21,5 L21,19 Q21,21 19,21 L5,21 Q3,21 3,19 L3,5 Q3,3 5,3 Z" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="Content" Value="▶"><Setter TargetName="icon" Property="Data" Value="M7,3 L21,12 L7,21 Z" /></Trigger>
+                <Trigger Property="Content" Value="Previous"><Setter TargetName="icon" Property="Data" Value="M5,4 L5,20 M19,4 L7,12 L19,20 Z" /></Trigger>
+                <Trigger Property="Content" Value="Next"><Setter TargetName="icon" Property="Data" Value="M19,4 L19,20 M5,4 L17,12 L5,20 Z" /></Trigger>
+                <Trigger Property="Content" Value=" ▌▌"><Setter TargetName="icon" Property="Data" Value="M8,4 L8,20 M16,4 L16,20" /></Trigger>
+                <Trigger Property="Content" Value="  ▌▌ "><Setter TargetName="icon" Property="Data" Value="M8,4 L8,20 M16,4 L16,20" /></Trigger>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="surface" Property="Background" Value="{DynamicResource HoverBackground}" /></Trigger>
+                <Trigger Property="IsPressed" Value="True"><Setter TargetName="surface" Property="Background" Value="{DynamicResource SelectionBackground}" /></Trigger>
+                <Trigger Property="IsEnabled" Value="False"><Setter TargetName="icon" Property="Opacity" Value="0.4" /></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <SolidColorBrush x:Key="WaveBackground" Color="#FF262A31" />
+        <SolidColorBrush x:Key="WaveLabelForeground" Color="#FFFFFFFF" />
+        <SolidColorBrush x:Key="WaveAccent" Color="#FF838E9F" />
+        <SolidColorBrush x:Key="WindowBackground" Color="#FF23262C" />
+        <SolidColorBrush x:Key="ButtonsBackground" Color="#FF30353D" />
+        <SolidColorBrush x:Key="EditorBackground" Color="#FF202329" />
+        <SolidColorBrush x:Key="PanelBackground" Color="#FF2A2E35" />
+        <SolidColorBrush x:Key="PreviewBackground" Color="#FF30353D" />
+        <SolidColorBrush x:Key="SidebarHeaderBackground" Color="#FF31363E" />
+        <SolidColorBrush x:Key="MutedForeground" Color="#FFA0A9B7" />
+        <SolidColorBrush x:Key="HoverBackground" Color="#FF3A414B" />
+        <SolidColorBrush x:Key="SelectionBackground" Color="#66456A8E" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF8DBDEB" />
+        <SolidColorBrush x:Key="ScrollTrack" Color="#FF2A2E35" />
+        <SolidColorBrush x:Key="ScrollThumb" Color="#FF59616E" />
+        <SolidColorBrush x:Key="ScrollThumbHover" Color="#FF788494" />
+        <SolidColorBrush x:Key="MenuSeparator" Color="#FF3D444E" />
 
         <Style x:Key="AlphaContextMenu" TargetType="ContextMenu">
             <Setter Property="Background" Value="{DynamicResource WindowBackground}"/>
@@ -757,7 +911,7 @@
             <Setter Property="Template"><Setter.Value>
                 <ControlTemplate TargetType="ContextMenu">
                     <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
-                        <ScrollViewer CanContentScroll="True" Background="Transparent">
+                        <ScrollViewer CanContentScroll="True" Background="Transparent" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <Grid Grid.IsSharedSizeScope="True">
                                 <Rectangle Fill="{DynamicResource MenuSeparator}" HorizontalAlignment="Left" Margin="29,2,0,2" Width="1" Opacity="0.72"/>
                                 <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>

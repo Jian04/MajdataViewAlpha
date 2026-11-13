@@ -8,6 +8,9 @@ internal readonly record struct EditorSelection(int Start, int Length);
 internal sealed class FumenEditorAdapter
 {
     private readonly TextEditor editor;
+    private ICSharpCode.AvalonEdit.Document.ITextSourceVersion? textVersion;
+    private string rawText = "", normalizedText = "";
+    private bool hasCrLf;
 
     public FumenEditorAdapter(TextEditor editor)
     {
@@ -33,9 +36,9 @@ internal sealed class FumenEditorAdapter
         return true;
     }
 
-    internal bool ZoomWithWheel(int delta, ModifierKeys modifiers)
+    internal bool ZoomWithWheel(int delta, ModifierKeys modifiers, string gesture = "Ctrl+Wheel")
     {
-        if ((modifiers & ModifierKeys.Control) == 0 || delta == 0)
+        if (!MainWindow.WheelShortcutMatches(modifiers, gesture) || delta == 0)
             return false;
         editor.FontSize = Math.Clamp(editor.FontSize + delta / 120d, 8d, 32d);
         return true;
@@ -43,7 +46,7 @@ internal sealed class FumenEditorAdapter
 
     public string Text
     {
-        get => editor.Text.Replace("\r\n", "\n").Replace('\r', '\n');
+        get { RefreshText(); return normalizedText; }
         set => editor.Text = value ?? string.Empty;
     }
 
@@ -122,9 +125,12 @@ internal sealed class FumenEditorAdapter
         line = Math.Clamp(line + 1, 1, editor.Document.LineCount);
         var documentLine = editor.Document.GetLineByNumber(line);
         var offset = documentLine.Offset + Math.Clamp(column, 0, documentLine.Length);
-        // DocumentLine.Offset includes CRLF; Select accepts normalized LF offsets.
-        // Converting only once prevents a growing drift on later chart lines.
-        Select(RawToNormalizedOffset(offset), 0);
+        // The document line already gives a raw offset. Converting it to LF and
+        // back scanned the entire chart several times for every followed note.
+        editor.Select(offset, 0);
+        editor.CaretOffset = offset;
+        editor.ScrollTo(line, offset - documentLine.Offset + 1);
+        editor.TextArea.Caret.BringCaretToView();
     }
 
     public int FindNext(string text)
@@ -142,8 +148,10 @@ internal sealed class FumenEditorAdapter
 
     internal int RawToNormalizedOffset(int rawOffset)
     {
-        var raw = editor.Text;
+        RefreshText();
+        var raw = rawText;
         rawOffset = Math.Clamp(rawOffset, 0, raw.Length);
+        if (!hasCrLf) return rawOffset;
         var normalized = 0;
         for (var i = 0; i < rawOffset; i++)
         {
@@ -156,8 +164,10 @@ internal sealed class FumenEditorAdapter
 
     internal int NormalizedToRawOffset(int normalizedOffset)
     {
-        var raw = editor.Text;
-        normalizedOffset = Math.Clamp(normalizedOffset, 0, Text.Length);
+        RefreshText();
+        var raw = rawText;
+        normalizedOffset = Math.Clamp(normalizedOffset, 0, normalizedText.Length);
+        if (!hasCrLf) return normalizedOffset;
         var normalized = 0;
         for (var i = 0; i < raw.Length; i++)
         {
@@ -168,5 +178,15 @@ internal sealed class FumenEditorAdapter
             normalized++;
         }
         return raw.Length;
+    }
+
+    private void RefreshText()
+    {
+        var document = editor.Document;
+        if (ReferenceEquals(textVersion, document.Version)) return;
+        rawText = document.Text;
+        normalizedText = rawText.Replace("\r\n", "\n").Replace('\r', '\n');
+        hasCrLf = rawText.Length != normalizedText.Length;
+        textVersion = document.Version;
     }
 }

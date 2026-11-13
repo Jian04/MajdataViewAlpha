@@ -115,8 +115,8 @@ namespace MajdataCore
                     if (end == 5)
                         return Fail(
                             SlideShapeIssue.SameOrOppositeKey,
-                            "「v」星星的起终点不能是同键或对键",
-                            "'v' SLIDE ENDPOINTS MAY NOT BE THE SAME OR OPPOSITE KEY",
+                            "「v」星星的终点不能是对键",
+                            "'v' SLIDE MAY NOT END AT THE OPPOSITE KEY",
                             token, out issue, out error);
                     prefabKey = "v" + end;
                     return true;

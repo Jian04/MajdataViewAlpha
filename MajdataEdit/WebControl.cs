@@ -48,6 +48,12 @@ internal static class WebControl
     /// </summary>
     public static IReadOnlyList<DroppedBeat> LastDroppedBeats { get; private set; } =
         Array.Empty<DroppedBeat>();
+    private static int diagnosticsGeneration;
+    internal static void ResetChartDiagnostics()
+    {
+        Interlocked.Increment(ref diagnosticsGeneration);
+        LastDroppedBeats = Array.Empty<DroppedBeat>();
+    }
 
     // Do not set Timeout; keep HttpClient's 100-second default to match upstream 440.
     // After View receives a request, httpListen waits for the main-thread Update to finish, so response time equals View processing time.
@@ -80,6 +86,7 @@ internal static class WebControl
         LastError = null;
         if (IsShuttingDown)
             return "ERROR";
+        var generation = Volatile.Read(ref diagnosticsGeneration);
         try
         {
             var viewSession = ViewSession;
@@ -100,7 +107,8 @@ internal static class WebControl
                 LastError = "View does not belong to this Edit group. Rebuild and use the matching Alpha View.";
                 return "ERROR";
             }
-            LastDroppedBeats = result?.droppedBeats ?? Array.Empty<DroppedBeat>();
+            if (generation == Volatile.Read(ref diagnosticsGeneration))
+                LastDroppedBeats = result?.droppedBeats ?? Array.Empty<DroppedBeat>();
             if (!response.IsSuccessStatusCode)
             {
                 LastError = result?.error ??

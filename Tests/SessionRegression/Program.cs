@@ -11,6 +11,16 @@ if (args.Contains("--allocate"))
 if (args.Contains("--alpha-session"))
 {
     var s = AlphaSession.Current;
+    var chartFolder = Path.Combine(AlphaSession.Root, "chart-probe-" + s.Id);
+    var oldWorkFolder = Path.Combine(chartFolder, ".majdata");
+    Directory.CreateDirectory(oldWorkFolder);
+    var oldWorkFile = Path.Combine(oldWorkFolder, "majdata-" + Guid.NewGuid().ToString("N") + ".json");
+    File.WriteAllText(oldWorkFile, "old generated preview");
+    File.WriteAllText(Path.Combine(oldWorkFolder, "user-note.txt"), "keep");
+    var workFile = AlphaSession.ChartWorkFile(chartFolder, "majdata.json");
+    if (!workFile.StartsWith(Path.Combine(s.DirectoryPath, "ChartWork"), StringComparison.OrdinalIgnoreCase) ||
+        File.Exists(oldWorkFile) || !File.Exists(Path.Combine(oldWorkFolder, "user-note.txt")))
+        throw new Exception("chart work files must stay in the session folder and preserve unrelated files");
     bool view = args.Contains("--view");
     s.Register(view, Process.GetCurrentProcess());
     var endpoint = new Uri(view ? AlphaSession.ViewEndpoint : AlphaSession.EditEndpoint);
@@ -56,7 +66,8 @@ try
         var session = AlphaSession.Read(id);
         var detail = "2\t4\t" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("1-5 · LateGood\n判定异常"));
         session.PublishViewState(false, 1, 1, new[] { detail });
-        Check(session.ReadDynamicMuri() == 1 && session.ReadDynamicMuriDetails().SequenceEqual(new[] { detail }), "muri details lost source or Unicode text");
+        var snapshot = session.ReadDynamicMuriDetails(out var count);
+        Check(count == 1 && snapshot.SequenceEqual(new[] { detail }), "muri details lost source or Unicode text");
         session.PublishViewState(false, 2);
         Check(session.ReadDynamicMuri() == 0 && session.ReadDynamicMuriDetails().Length == 0, "replay must clear stale details");
         var state = Path.Combine(directory, "view-state.txt");
@@ -82,6 +93,16 @@ try
     Check(AlphaSession.FromArguments(Array.Empty<string>()) == null, "legacy arguments");
     Check(AlphaSession.ViewEndpoint == "http://localhost:8013/", "legacy endpoint");
     Check(AlphaSession.FileName("out.wav") == "out.wav", "legacy filenames");
+    var standaloneChart = Path.Combine(root, "standalone-chart");
+    var standaloneLegacy = Path.Combine(standaloneChart, ".majdata");
+    Directory.CreateDirectory(standaloneLegacy);
+    var staleWork = Path.Combine(standaloneLegacy, "out-" + Guid.NewGuid().ToString("N") + ".wav");
+    File.WriteAllText(staleWork, "old recording work");
+    File.WriteAllText(Path.Combine(standaloneLegacy, "user-note.txt"), "keep");
+    var standaloneWork = AlphaSession.ChartWorkFile(standaloneChart, "out.wav");
+    Check(!standaloneWork.StartsWith(standaloneChart, StringComparison.OrdinalIgnoreCase) &&
+          !File.Exists(staleWork) && File.Exists(Path.Combine(standaloneLegacy, "user-note.txt")),
+        "standalone View must use temporary work outside the chart and preserve unrelated files");
     try { AlphaSession.FromArguments(new[] { "--alpha-session", "../../other" }); throw new Exception("accepted bad id"); }
     catch (ArgumentException) { }
     var blocker = new TcpListener(IPAddress.Loopback, 18014); blocker.Start();

@@ -14,7 +14,7 @@ namespace MajdataCore
         }
         public static readonly Definition[] All =
         {
-            new("SHATTER", "Shatter", "玻璃碎裂：中心冲击形成放射裂纹，分块仅轻微扰动，厚玻璃迅速向外震开，带立体厚边、层叠折射、反射和切面高光；强度 0～1，0 完全复原。", "Glass shatter: a central impact sends thick shards outward along gently varied radial fractures, with extruded edges, layered refraction, reflection and facet highlights; strength 0–1, 0 restores the image.", "ガラス破砕：中央の衝撃から放射状の亀裂が広がり、大きな破片が素早く外へ飛び、屈折・反射と面のハイライトを表示。強度0～1、0で復元。"),
+            new("SHATTER", "Shatter", "玻璃碎裂：中心冲击形成放射裂纹，分块仅轻微扰动，厚玻璃迅速向外震开，带立体厚边、层叠折射、反射和切面高光；强度 0～1；0 完全复原，0～0.3 只产生裂纹，大于 0.3 才开始飞散。", "Glass shatter: a central impact sends thick shards outward along gently varied radial fractures, with extruded edges, layered refraction, reflection and facet highlights; strength 0–1; 0 restores the image, up to 0.3 only cracks, above 0.3 shards scatter.", "ガラス破砕：中央の衝撃から放射状の亀裂が広がり、大きな破片が素早く外へ飛び、屈折・反射と面のハイライトを表示。強度0～1。0で復元、0.3以下は亀裂のみ、0.3を超えると破片が飛散。"),
             new("RADIALBLUR", "RadialBlur", "径向模糊：从中心向外拉出速度感；强度 0～1。", "Radial blur: streaks radiate from the center; strength 0–1.", "放射状ぼかし：中心から外側へ速度感。強度0～1。"),
             new("RIPPLE", "Ripple", "冲击波：圆环从中心反复向外扩散并折射画面；强度 0～1。", "Ripple: repeated expanding rings refract the image from the center; strength 0–1.", "衝撃波：中心から円環が繰り返し広がって画面を屈折。強度0～1。"),
             new("PIXELATE", "Pixelate", "像素化：强度 0～1，越大像素块越大；0 原样。", "Pixelation: strength 0–1 controls block size; 0 is unchanged.", "ピクセル化：強度0～1でブロックの大きさを変更。0は元画像。"),

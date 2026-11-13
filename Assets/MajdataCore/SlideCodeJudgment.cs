@@ -207,7 +207,8 @@ namespace MajdataCore
         public const double LastDistanceCircle = 4.8 * 175.0 / 480.0;
         public const double LastDistanceShort = 4.8 * 130.0 / 480.0;
         public const double LastDistanceLong = 4.8 * 159.0 / 480.0;
-        public static SlideAreaRawData[] Build(double totalLength, Func<double, Complex> pointAt, bool endsWithLine)
+        public static SlideAreaRawData[] Build(double totalLength, Func<double, Complex> pointAt, bool endsWithLine,
+            bool applyEndTiming = true, bool allowSingleRegion = false)
         {
 
             var nodeList = new List<(int, double)>(); 
@@ -243,6 +244,8 @@ namespace MajdataCore
                 lastNode = node;
             }
             var endNode = FindNode(pointAt(1d));
+            if (allowSingleRegion && endNode.HasValue && nodeList.Count == 0)
+                return new[] { new SlideAreaRawData(totalLength, totalLength, endNode.Value) };
             if (!endNode.HasValue || nodeList.Count == 0)
                 throw new InvalidOperationException("SlideCode route must connect A/B/C sensor regions.");
             nodeList.Add((endNode.Value, totalLength));
@@ -277,8 +280,11 @@ namespace MajdataCore
                 }
             }
 
+            if (result.Count == 1 && allowSingleRegion)
+                return new[] { new SlideAreaRawData(totalLength, totalLength, result[0].SensorA) };
             if (result.Count < 2)
                 throw new InvalidOperationException("SlideCode route needs at least two judgement areas.");
+            if (!applyEndTiming) return result.ToArray();
             double lastDistance;
 
             if (endsWithLine)
@@ -295,6 +301,82 @@ namespace MajdataCore
                 last2ndArea.SensorA, last2ndArea.SensorB);
             result[^1] = new SlideAreaRawData(totalLength, totalLength, lastArea.SensorA, lastArea.SensorB);
 
+            return result.ToArray();
+        }
+
+        // Preserve the upstream A/B/C table inside the route. Only the portions
+        // outside that table's hit regions use the existing Touch sensor layout.
+        public static SlideAreaRawData[] BuildForEndpoints(double totalLength, Func<double, Complex> pointAt,
+            bool endsWithLine, SlidePositionData start, SlidePositionData end)
+        {
+            if (start.IsKey && !start.isDZone && end.IsKey && !end.isDZone)
+                return Build(totalLength, pointAt, endsWithLine);
+            var steps = Math.Max(1, (int)Math.Ceiling(totalLength / HitAreaCalcStep));
+            var first = -1;
+            var last = -1;
+            for (var i = 0; i <= steps; i++)
+                if (FindNode(pointAt((double)i / steps)).HasValue)
+                {
+                    if (first < 0) first = i;
+                    last = i;
+                }
+            if (first == 0 && last == steps)
+                return Build(totalLength, pointAt, endsWithLine, allowSingleRegion: true);
+            var result = new List<SlideAreaRawData>();
+            var centers = new Complex[33];
+            foreach (var area in new[] { 'A', 'B', 'C', 'D', 'E' })
+                for (var index = 1; index <= (area == 'C' ? 1 : 8); index++)
+                {
+                    var position = new SlidePositionData { area = area, position = index };
+                    centers[SlideCodeParser.EndpointSensor(position)] = SlideCodeParser.EndpointPosition(position);
+                }
+            void Add(SlideAreaRawData area)
+            {
+                if (result.Count > 0 && result[^1].SensorA == area.SensorA &&
+                    result[^1].SensorB == area.SensorB) result[^1] = area;
+                else result.Add(area);
+            }
+            void Cap(double from, double to, int startSensor, int endSensor)
+            {
+                var count = Math.Max(1, (int)Math.Ceiling((to - from) / HitAreaCalcStep));
+                var sensor = startSensor;
+                for (var i = 1; i <= count; i++)
+                {
+                    var distance = from + (to - from) * i / count;
+                    var next = endSensor;
+                    if (i < count)
+                    {
+                        var point = pointAt(distance / totalLength);
+                        var best = double.PositiveInfinity;
+                        for (var j = 0; j < centers.Length; j++)
+                        {
+                            var delta = SquaredMagnitude(point - centers[j]);
+                            if (delta < best) { best = delta; next = j; }
+                        }
+                    }
+                    if (next == sensor) continue;
+                    Add(new SlideAreaRawData(distance, distance, sensor));
+                    sensor = next;
+                }
+                Add(new SlideAreaRawData(to, to, sensor));
+            }
+            if (first < 0)
+                Cap(0, totalLength, SlideCodeParser.EndpointSensor(start), SlideCodeParser.EndpointSensor(end));
+            else
+            {
+                var from = totalLength * first / steps;
+                var to = totalLength * last / steps;
+                var firstSensor = FindNode(pointAt((double)first / steps)).Value;
+                var lastSensor = FindNode(pointAt((double)last / steps)).Value;
+                if (first > 0) Cap(0, from, SlideCodeParser.EndpointSensor(start), firstSensor);
+                if (to > from)
+                    foreach (var area in Build(to - from, progress => pointAt((from + progress * (to - from)) / totalLength),
+                        endsWithLine, applyEndTiming: last == steps, allowSingleRegion: true))
+                        Add(new SlideAreaRawData(from + area.LengthAfterPush, from + area.LengthAfterFinish, area.SensorA, area.SensorB));
+                else Add(new SlideAreaRawData(from, from, firstSensor));
+                if (last < steps) Cap(to, totalLength, lastSensor, SlideCodeParser.EndpointSensor(end));
+            }
+            if (result.Count < 2) throw new InvalidOperationException("SlideCode route needs at least two judgement areas.");
             return result.ToArray();
         }
     }

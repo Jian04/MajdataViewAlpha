@@ -22,6 +22,11 @@ public class BGManager : MonoBehaviour
     private SpriteRenderer spriteRender;
     private Sprite originalBackgroundSprite;
     private Sprite loadedStandbySprite;
+    private Material standbyMaterial;
+    private Material backgroundMaterial;
+    private float standbyWidth;
+    private static string desiredStandbyColor = "";
+    public bool ShowPausedJudgeAreas = true;
     private SpriteRenderer pausedJudgeRegions;
     private Sprite pausedJudgeRegionsSprite;
     private Vector3 originalBackgroundScale;
@@ -56,7 +61,12 @@ public class BGManager : MonoBehaviour
     private float outerCoverReleaseStart = float.NaN;
     private const float OuterCoverReleaseDuration = 0.6f;
     private const float VerticalOverscanPixels = 3f;
-    private static readonly WaitForEndOfFrame WaitForFrameEnd = new();
+    private AnimatedChartCover animatedCover;
+    private VideoPlayer coverVideo;
+    private AnimatedChartCover animatedBackground;
+    private bool coverAsBackground;
+    private bool coverReady = true;
+    private bool backgroundReady = true;
     private float coverWorldHeight;
     private float coverWorldWidth;
     private int backgroundFitMode;
@@ -70,12 +80,15 @@ public class BGManager : MonoBehaviour
     private const float IntroGameplayRevealTime =
         MajdataCore.AlphaVisualTiming.GameplayRevealTime;
 
-    public bool IsPreparedForRecording => videoWarmupReady;
+    public string PreparationError { get; private set; }
+    public bool IsPreparedForRecording => PreparationError != null || videoWarmupReady && coverReady && backgroundReady;
 
     private void Start()
     {
         spriteRender = GetComponent<SpriteRenderer>();
         originalBackgroundSprite = spriteRender.sprite;
+        backgroundMaterial = spriteRender.sharedMaterial;
+        standbyWidth = originalBackgroundSprite.bounds.size.x;
         originalBackgroundScale = transform.localScale;
         // The sprite rect must cover the full texture so VideoPlayer receives 0..1 UVs.
         videoSurfaceSprite = Sprite.Create(
@@ -84,6 +97,7 @@ public class BGManager : MonoBehaviour
             new Vector2(0.5f, 0.5f),
             1f / 10.8f);
         videoPlayer = GetComponent<VideoPlayer>();
+        videoPlayer.errorReceived += (_, message) => PreparationError = "PV 读取失败：" + message;
         videoPlayer.renderMode = VideoRenderMode.MaterialOverride;
         videoPlayer.targetMaterialRenderer = spriteRender;
         videoPlayer.targetMaterialProperty = "_MainTex";
@@ -131,7 +145,7 @@ public class BGManager : MonoBehaviour
         songDetailIntroBg = gameObject.AddComponent<SongDetailIntroBg>();
         songDetailIntroBg.Init(SongDetail, provider);
 
-        LoadStandbyTheme(desiredStandbyTheme);
+        LoadStandbyTheme(desiredStandbyTheme, desiredStandbyColor);
 
         var bgCoverObj = GameObject.Find("BackgroundCover");
         if (bgCoverObj != null)
@@ -249,6 +263,29 @@ public class BGManager : MonoBehaviour
 
     private void Update()
     {
+        if (coverVideo != null && coverReady && coverVideo.isPrepared)
+        {
+            coverVideo.externalReferenceTime = Math.Max(0d, provider.AudioTime + 5d);
+            if (provider.PlaybackStarted && rawImage.isActiveAndEnabled)
+            {
+                if (!coverVideo.isPlaying) coverVideo.Play();
+            }
+            else if (coverVideo.isPlaying) coverVideo.Pause();
+            if (coverVideo.texture != null) rawImage.texture = coverVideo.texture;
+        }
+        if (animatedCover?.Ready == true && rawImage != null)
+        {
+            var frame = animatedCover.At((provider != null ? provider.AudioTime : 0d) + 5d);
+            rawImage.texture = frame.texture;
+            if (coverAsBackground && spriteRender != null && chartBackgroundActive) spriteRender.sprite = frame;
+        }
+        if (animatedBackground?.Ready == true && spriteRender != null && chartBackgroundActive)
+            spriteRender.sprite = animatedBackground.At((provider != null ? provider.AudioTime : 0d) + 5d);
+        if (spriteRender != null && standbyMaterial != null)
+        {
+            var material = spriteRender.sprite == loadedStandbySprite ? standbyMaterial : backgroundMaterial;
+            if (spriteRender.sharedMaterial != material) spriteRender.sharedMaterial = material;
+        }
         RefreshPausedJudgeRegions();
         if (chartBackgroundActive)
             RefreshChartBackgroundVisibility();
@@ -379,6 +416,8 @@ public class BGManager : MonoBehaviour
 
     public void SetPausedTimelineTime(float time)
     {
+        if (coverVideo != null && coverVideo.isPrepared && coverVideo.length > 0d)
+            coverVideo.time = Math.Max(0d, time + 5d) % coverVideo.length;
         if (videoPlayer != null && videoPlayer.isPrepared)
         {
             var target = Math.Max(0d, time);
@@ -459,43 +498,50 @@ public class BGManager : MonoBehaviour
         backgroundFitMode = Mathf.Clamp(fitMode, 0, 1);
         PrepareBGLoad(innerCover, outerCover, showSongDetail);
 
-        var pictureName = new[] { "Cover", "bg" };
-        var pictureExt = new[] { ".png", ".jpg", ".jpeg" };
-        var videoName = new[] { "pv.mp4", "mv.mp4", "bg.mp4" };
-        string videoPath = null;
-        if (loadDefaultVideo)
-            foreach (var name in videoName)
-            {
-                var candidate = Path.Combine(path, name);
-                if (!File.Exists(candidate))
-                    continue;
-                videoPath = candidate;
-                break;
-            }
+        animatedCover = null;
+        if (coverVideo != null) { coverVideo.Stop(); Destroy(coverVideo.gameObject); coverVideo = null; }
+        animatedBackground = null;
+        coverReady = true;
+        backgroundReady = true;
+        PreparationError = null;
+        var coverPath = MajdataCore.ChartCover.Find(path);
+        var backgroundPath = MajdataCore.ChartCover.FindBackground(path, loadDefaultVideo);
+        var videoPath = string.Equals(Path.GetExtension(backgroundPath), ".mp4", StringComparison.OrdinalIgnoreCase)
+            ? backgroundPath : null;
         videoWarmupReady = videoPath == null;
 
-        foreach (var name in pictureName)
+        var sharedPicture = coverPath != null && string.Equals(coverPath, backgroundPath, StringComparison.OrdinalIgnoreCase);
+        if (coverPath != null)
         {
-            var finished = false;
-            foreach (var ext in pictureExt)
-                if (File.Exists(path + "/" + name + ext))
-                {
-                    StartCoroutine(loadPic(path + "/" + name + ext, videoPath == null));
-                    finished = true;
-                    break;
-                }
-            if (finished) break;
+            if (Path.GetExtension(coverPath).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                StartCoroutine(LoadCoverVideo(coverPath));
+            else StartCoroutine(loadPic(coverPath, sharedPicture));
         }
+        if (backgroundPath != null && videoPath == null && !sharedPicture)
+            StartCoroutine(loadPic(backgroundPath, true, false));
 
         if (videoPath != null)
             loadVideo(videoPath, speed);
     }
 
-    public void LoadStandbyTheme(string themeName)
+    public void LoadStandbyTheme(string themeName, string backgroundColor = "")
     {
         desiredStandbyTheme = string.Equals(themeName, "light", System.StringComparison.OrdinalIgnoreCase)
             ? "light"
             : "dark";
+        desiredStandbyColor = backgroundColor;
+        // Edit can send its settings as soon as the HTTP port opens, before Start
+        // has established the authored sprite width. Start applies these values.
+        if (spriteRender == null) return;
+        if (standbyMaterial == null)
+            standbyMaterial = new Material(Resources.Load<Shader>("StandbyBackground"));
+        var htmlColor = string.IsNullOrEmpty(backgroundColor)
+            ? desiredStandbyTheme == "light" ? "#ECEEF1" : "#23262C" : backgroundColor;
+        if (htmlColor.Length == 9) htmlColor = "#" + htmlColor.Substring(3);
+        if (!ColorUtility.TryParseHtmlString(htmlColor, out var color))
+            throw new FormatException("待机背景颜色无效：" + backgroundColor);
+        standbyMaterial.SetVector("_ThemeColor", QualitySettings.activeColorSpace == ColorSpace.Linear ? color.linear : color);
+        standbyMaterial.SetFloat("_LightTheme", desiredStandbyTheme == "light" ? 1f : 0f);
         if (loadedStandbyTheme == desiredStandbyTheme && loadedStandbySprite != null)
         {
             if (!loadingPreview && !chartBackgroundActive &&
@@ -510,9 +556,7 @@ public class BGManager : MonoBehaviour
         if (loadingStandbyTheme == desiredStandbyTheme)
             return;
         loadingStandbyTheme = desiredStandbyTheme;
-        var fileName = desiredStandbyTheme == "light"
-            ? "Default_Background_Light.png"
-            : "Default_Background_Dark.png";
+        var fileName = "StandbyRegions.png";
         var path = Path.Combine(Application.streamingAssetsPath, "Background", fileName);
         StartCoroutine(LoadStandbySprite(path, desiredStandbyTheme, ++standbyLoadVersion));
     }
@@ -528,6 +572,9 @@ public class BGManager : MonoBehaviour
             yield break;
         }
 
+        // Keep the authored playfield size when a supplied image has a different resolution.
+        var fitted = Sprite.Create(sprite.texture, sprite.rect, new Vector2(.5f, .5f), sprite.texture.width / standbyWidth);
+        Destroy(sprite); sprite = fitted;
         var previous = loadedStandbySprite;
         loadedStandbySprite = sprite;
         loadedStandbyTheme = themeName;
@@ -576,14 +623,40 @@ public class BGManager : MonoBehaviour
             SetOuterCoverAlpha(outerAlpha);
     }
 
-    private IEnumerator loadPic(string path, bool useAsBackground)
+    private IEnumerator loadPic(string path, bool useAsBackground, bool isCover = true)
     {
         Sprite sprite;
-        yield return sprite = SpriteLoader.LoadSpriteFromFile(path);
+        if (isCover) coverAsBackground = useAsBackground;
+        if (Path.GetExtension(path).Equals(".gif", StringComparison.OrdinalIgnoreCase))
+        {
+            coverReady = false;
+            var source = VideoSourceCompatibility.Prepare(path);
+            while (!source.IsCompleted) yield return null;
+            if (source.IsFaulted)
+            {
+                PreparationError = source.Exception.GetBaseException().Message;
+                yield break;
+            }
+            path = source.Result;
+        }
+        if (string.Equals(Path.GetExtension(path), ".apng", StringComparison.OrdinalIgnoreCase))
+        {
+            if (isCover) coverReady = false;
+            else backgroundReady = false;
+            var animation = AnimatedChartCover.Open(path, !isCover);
+            if (isCover) animatedCover = animation;
+            else animatedBackground = animation;
+            yield return animation.Prepare();
+            sprite = animation.First;
+            if (isCover) coverReady = true;
+            else backgroundReady = true;
+        }
+        else
+            sprite = SpriteLoader.LoadSpriteFromFile(path);
         if (this == null || rawImage == null || sprite == null)
             yield break;
 
-        if (sprite.texture != null && sprite.texture.width > 0 && sprite.texture.height > 0)
+        if (isCover && sprite.texture != null && sprite.texture.width > 0 && sprite.texture.height > 0)
             rawImage.texture = sprite.texture;
         if (!useAsBackground)
             yield break;
@@ -597,10 +670,44 @@ public class BGManager : MonoBehaviour
         RefreshChartBackgroundVisibility();
     }
 
+    private IEnumerator LoadCoverVideo(string path)
+    {
+        coverReady = false;
+        var source = VideoSourceCompatibility.Prepare(path);
+        while (!source.IsCompleted) yield return null;
+        if (source.IsFaulted) { PreparationError = "视频封面读取失败：" + source.Exception.GetBaseException().Message; yield break; }
+        // The jacket is hidden while recording prepares; decoding needs an active owner.
+        var coverObject = new GameObject("Cover video");
+        coverObject.transform.SetParent(transform, false);
+        coverVideo = coverObject.AddComponent<VideoPlayer>();
+        coverVideo.playOnAwake = false;
+        coverVideo.renderMode = VideoRenderMode.APIOnly;
+        coverVideo.audioOutputMode = VideoAudioOutputMode.None;
+        coverVideo.isLooping = true;
+        coverVideo.skipOnDrop = !provider.isRecord;
+        coverVideo.timeUpdateMode = VideoTimeUpdateMode.GameTime;
+        coverVideo.timeReference = VideoTimeReference.ExternalTime;
+        coverVideo.errorReceived += (_, message) => PreparationError = "视频封面读取失败：" + message;
+        coverVideo.url = new Uri(Path.GetFullPath(source.Result)).AbsoluteUri;
+        coverVideo.Prepare();
+        while (!coverVideo.isPrepared && PreparationError == null) yield return null;
+        if (PreparationError != null) yield break;
+        coverVideo.Play();
+        var deadline = Time.realtimeSinceStartup + 12f;
+        while ((coverVideo.frame < 0 || coverVideo.texture == null) && PreparationError == null && Time.realtimeSinceStartup < deadline)
+            yield return null;
+        coverVideo.Pause();
+        if (PreparationError != null) yield break;
+        if (coverVideo.frame < 0 || coverVideo.texture == null) { PreparationError = "视频封面首帧解码超时：" + path; yield break; }
+        rawImage.texture = coverVideo.texture;
+        if (coverVideo.length > 0d) coverVideo.time = Math.Max(0d, provider.AudioTime + 5d) % coverVideo.length;
+        coverReady = true;
+    }
+
     private void loadVideo(string path, float speed)
     {
         videoWarmupReady = false;
-        videoPlayer.url = "file://" + path;
+        pendingVideoPath = path;
         videoPlayer.audioOutputMode = VideoAudioOutputMode.None;
         videoPlayer.timeUpdateMode = VideoTimeUpdateMode.GameTime;
         // Offline capture must wait for every decoded PV frame. Dropping frames
@@ -611,12 +718,21 @@ public class BGManager : MonoBehaviour
         StartCoroutine(waitFumenStart());
     }
 
+    private string pendingVideoPath;
     private IEnumerator waitFumenStart()
     {
+        var source = VideoSourceCompatibility.Prepare(pendingVideoPath);
+        while (!source.IsCompleted) yield return null;
+        if (source.IsFaulted)
+        {
+            PreparationError = "PV 读取失败：" + source.Exception.GetBaseException().Message;
+            yield break;
+        }
+        videoPlayer.url = new Uri(Path.GetFullPath(source.Result)).AbsoluteUri;
         videoPlayer.Prepare();
-        while (videoPlayer != null && !videoPlayer.isPrepared)
-            yield return WaitForFrameEnd;
-        if (this == null || videoPlayer == null || spriteRender == null || provider == null)
+        while (videoPlayer != null && !videoPlayer.isPrepared && PreparationError == null)
+            yield return null;
+        if (this == null || videoPlayer == null || spriteRender == null || provider == null || PreparationError != null)
             yield break;
 
         spriteRender.sprite = videoSurfaceSprite;
@@ -630,23 +746,26 @@ public class BGManager : MonoBehaviour
         var decodeDeadline = Time.realtimeSinceStartup + 12f;
         do
         {
-            yield return WaitForFrameEnd;
+            yield return null;
         } while (videoPlayer != null &&
-                 videoPlayer.frame < 0 &&
+                 PreparationError == null && videoPlayer.frame < 0 &&
                  (videoPlayer.texture == null || videoPlayer.texture.width <= 0) &&
                  Time.realtimeSinceStartup < decodeDeadline);
         if (this == null || videoPlayer == null)
             yield break;
         videoPlayer.Pause();
-        if (videoPlayer.frame < 0 &&
-            (videoPlayer.texture == null || videoPlayer.texture.width <= 0))
+        if (PreparationError != null) yield break;
+        if (videoPlayer.frame < 0 && (videoPlayer.texture == null || videoPlayer.texture.width <= 0))
+        {
+            PreparationError = "PV 首帧解码超时：" + videoPlayer.url;
             yield break;
+        }
         videoWarmupReady = true;
         backgroundMediaReady = true;
         RefreshChartBackgroundVisibility();
 
         while (provider != null && provider.AudioTime <= 0)
-            yield return WaitForFrameEnd;
+            yield return null;
         if (this == null || videoPlayer == null || provider == null)
             yield break;
         ApplyDisplayModeForPlayback();
@@ -862,7 +981,7 @@ public class BGManager : MonoBehaviour
     // Match the standby background's world size, independent of PV aspect ratio.
     private void RefreshPausedJudgeRegions()
     {
-        var visible = provider != null && provider.IsPaused && !provider.IsScheduled && !provider.isRecord;
+        var visible = ShowPausedJudgeAreas && provider != null && provider.IsPaused && !provider.IsScheduled && !provider.isRecord;
         if (visible && pausedJudgeRegions == null)
         {
             var path = Path.Combine(Application.streamingAssetsPath, "Background", "PausedJudgeRegions.png");
@@ -899,6 +1018,7 @@ public class BGManager : MonoBehaviour
             if (pausedJudgeRegionsSprite.texture != null) Destroy(pausedJudgeRegionsSprite.texture);
             Destroy(pausedJudgeRegionsSprite);
         }
+        if (standbyMaterial != null) Destroy(standbyMaterial);
         if (videoSurfaceSprite != null)
             Destroy(videoSurfaceSprite);
         if (loadedStandbySprite != null)

@@ -50,11 +50,17 @@ public partial class MainWindow
     }
     private void NewSession_Click(object sender, RoutedEventArgs e)
     {
-        try { launcher.LaunchIndependent(); }
+        try { LaunchPairFromPet(); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "独立实例", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
     private void Sessions_Click(object sender, RoutedEventArgs e) =>
-        new SessionManagerWindow(launcher.LaunchIndependent).Show();
+        new SessionManagerWindow(LaunchPairFromPet).Show();
+
+    private void LaunchPairFromPet()
+    {
+        var origin = PointToScreen(new Point(ActualWidth / 2, ActualHeight / 2));
+        launcher.LaunchIndependent(FormattableString.Invariant($"{origin.X};{origin.Y}"));
+    }
     private void StopSessionDiscovery()
     {
         sessionTimer.Stop();

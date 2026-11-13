@@ -284,6 +284,11 @@ internal static class SlideCodePathGeometry
 
     private static Vector2 Node(SlideCodeInstruction instruction)
     {
+        if (instruction.endpoint != null && (instruction.endpoint.IsTouch || instruction.endpoint.isDZone))
+        {
+            var point = SlideCodeParser.EndpointPosition(instruction.endpoint);
+            return new Vector2((float)point.Real, (float)point.Imaginary);
+        }
         if (instruction.command == SlideCodeCommand.C)
             return Vector2.zero;
         var radius = instruction.command == SlideCodeCommand.B

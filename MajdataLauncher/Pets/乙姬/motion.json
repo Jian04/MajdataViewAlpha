@@ -1,0 +1,8 @@
+{
+  "breathingIntervalSeconds": 0.7,
+  "breathingDownSeconds": 0.1,
+  "breathingUpSeconds": 0.1,
+  "elasticityEnabled": true,
+  "dragGravityEnabled": true,
+  "clickExpressionCooldownSeconds": 6
+}

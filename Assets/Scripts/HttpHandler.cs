@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.IO;
 using System.Linq;
@@ -36,7 +36,10 @@ public class HttpHandler : MonoBehaviour
     private GameObject generatedMark;
     private GameObject currentTimeText;
     private bool showGeneratedMark;
+    internal bool ReadyForEditor => http.IsListening;
+    internal bool HasEditorDisplaySettings { get; private set; }
     private int viewDisplayFontPreset;
+    private string viewDisplayFontFile = "";
 
     private void Start()
     {
@@ -110,6 +113,7 @@ public class HttpHandler : MonoBehaviour
             ViewLocalization.SetLanguage(data.language);
             showGeneratedMark = data.showGeneratedMark;
             viewDisplayFontPreset = data.viewDisplayFontPreset;
+            viewDisplayFontFile = data.viewDisplayFontFile;
             var visualEditor = GetComponent<VisualChartEditor>();
             if (visualEditor != null)
                 visualEditor.enabled = data.enableVisualChartEditor;
@@ -123,6 +127,10 @@ public class HttpHandler : MonoBehaviour
             // Input/Sensors and crash in TapDrop.Start().
             return;
         }
+        if (data.control is EditorControlMethod.Start or EditorControlMethod.OpStart or
+            EditorControlMethod.Record or EditorControlMethod.Continue or EditorControlMethod.SetDisplay or
+            EditorControlMethod.Preview or EditorControlMethod.TimelinePreview)
+            timeProvider.GetComponent<ViewFpsDisplay>()?.SetMode(data.viewTopLeftDisplayMode, loader);
         var displayTimeline = loader.GetComponent<DisplayTimelineController>();
         if (displayTimeline == null)
             displayTimeline = loader.gameObject.AddComponent<DisplayTimelineController>();
@@ -139,7 +147,8 @@ public class HttpHandler : MonoBehaviour
             EditorControlMethod.SetDisplay or EditorControlMethod.Preview or
             EditorControlMethod.TimelinePreview)
         {
-            bgManager.LoadStandbyTheme(data.standbyTheme);
+            bgManager.LoadStandbyTheme(data.standbyTheme, data.standbyBackgroundColor);
+            bgManager.ShowPausedJudgeAreas = data.showPausedJudgeAreas;
             bgManager.SetIntroBgTheme(data.introBgTheme);
             bgManager.SetBackgroundClip(data.clipBackgroundToRing);
         }
@@ -157,6 +166,9 @@ public class HttpHandler : MonoBehaviour
 
         switch(data.control)
         {
+            case EditorControlMethod.RefreshAssets:
+                NoteSkinLibrary.Clear();
+                break;
             case EditorControlMethod.Start:
                 {
                     playbackActivationGeneration++;
@@ -181,7 +193,7 @@ public class HttpHandler : MonoBehaviour
                     {
                         loader.ClearLoadedNotes(true);
                     }
-                    customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
+                    customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar, data.slideSkin);
                     loader.noteSpeed = (float)(107.25 / (71.4184491 * Mathf.Pow(data.noteSpeed + 0.9975f, -0.985558604f)));
                     loader.touchSpeed = data.touchSpeed;
                     loader.starSpeed = data.starSpeed;
@@ -189,7 +201,7 @@ public class HttpHandler : MonoBehaviour
                     StarDisplayOrder.SetMode(data.starDisplayMode);
                     objectCounter.ComboSetActive(data.comboStatusType);
                     objectCounter.SetSideDisplays(data.showJudgeInfo, data.showComboInfo);
-                    objectCounter.SetDisplayFont(data.viewDisplayFontPreset);
+                    objectCounter.SetDisplayFont(data.viewDisplayFontPreset, data.viewDisplayFontFile);
                     var jsonText = File.ReadAllText(data.jsonPath);
                     // Keep DJAuto and the shared clock inert while the first playable
                     // slice binds. This prevents a stale preview or half-bound note from
@@ -202,7 +214,8 @@ public class HttpHandler : MonoBehaviour
                         data.startTime,
                         previewOnly: false,
                         preserveTintCache: replacePausedPreview);
-                    allPerfect.Configure(data.showAllPerfect, getChartLength(jsonText));
+                    var startChart = JsonConvert.DeserializeObject<Majson>(jsonText);
+                    allPerfect.Configure(data.showAllPerfect, getChartLength(jsonText, startChart));
                     allPerfect.enabled = true;
                     GameObject.Find("MultTouchHandler").GetComponent<MultTouchHandler>().clearSlots();
 
@@ -210,10 +223,10 @@ public class HttpHandler : MonoBehaviour
                         (string.IsNullOrEmpty(data.chartDirectory) ? Path.GetDirectoryName(data.jsonPath) : data.chartDirectory));
                     bgManager.LoadBGFromPath((string.IsNullOrEmpty(data.chartDirectory) ? Path.GetDirectoryName(data.jsonPath) : data.chartDirectory), data.audioSpeed,
                         data.innerBackgroundCover, data.outerBackgroundCover, data.showSongDetail,
-                        data.backgroundFitMode, !HasTimelineVideo(jsonText));
+                        data.backgroundFitMode, !HasTimelineVideo(jsonText, startChart));
                     ConfigureDisplayTimeline(displayTimeline, screenEffects, mediaTimeline,
-                        timeProvider, jsonText, data);
-                    if (data.previewFlow && data.startTime >= getChartLength(jsonText))
+                        timeProvider, jsonText, data, startChart);
+                    if (data.previewFlow && data.startTime >= getChartLength(jsonText, startChart))
                         allPerfect.PreviewNow();
                     deferredStartCompletion = true;
                     StartCoroutine(CompleteAsyncStartWhenPlayable(
@@ -232,7 +245,7 @@ public class HttpHandler : MonoBehaviour
                     pausedTimelinePreviewActive = false;
                     ApplyGeneratedMarkVisibility();
                     loader.ClearLoadedNotes(true);
-                    customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
+                    customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar, data.slideSkin);
                     loader.noteSpeed = (float)(107.25 / (71.4184491 * Mathf.Pow(data.noteSpeed + 0.9975f, -0.985558604f)));
                     loader.touchSpeed = data.touchSpeed;
                     loader.starSpeed = data.starSpeed;
@@ -240,7 +253,7 @@ public class HttpHandler : MonoBehaviour
                     StarDisplayOrder.SetMode(data.starDisplayMode);
                     objectCounter.ComboSetActive(data.comboStatusType);
                     objectCounter.SetSideDisplays(data.showJudgeInfo, data.showComboInfo);
-                    objectCounter.SetDisplayFont(data.viewDisplayFontPreset);
+                    objectCounter.SetDisplayFont(data.viewDisplayFontPreset, data.viewDisplayFontFile);
                     var jsonText = File.ReadAllText(data.jsonPath);
                     allPerfect.Configure(data.showAllPerfect, getChartLength(jsonText));
                     allPerfect.enabled = true;
@@ -317,7 +330,7 @@ public class HttpHandler : MonoBehaviour
                     pausedTimelinePreviewActive = false;
                     ApplyGeneratedMarkVisibility();
                     loader.ClearLoadedNotes(true);
-                    customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
+                    customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar, data.slideSkin);
                     var maidataPath = (string.IsNullOrEmpty(data.chartDirectory) ? Path.GetDirectoryName(data.jsonPath) : data.chartDirectory);
                     // A 30 FPS simulation step exceeds the CriticalPerfect window.
                     var recordFrameRate = data.recordFrameRate >= 120 ? 120 : 60;
@@ -328,7 +341,7 @@ public class HttpHandler : MonoBehaviour
                     StarDisplayOrder.SetMode(data.starDisplayMode);
                     objectCounter.ComboSetActive(data.comboStatusType);
                     objectCounter.SetSideDisplays(data.showJudgeInfo, data.showComboInfo);
-                    objectCounter.SetDisplayFont(data.viewDisplayFontPreset);
+                    objectCounter.SetDisplayFont(data.viewDisplayFontPreset, data.viewDisplayFontFile);
                     var jsonText = File.ReadAllText(data.jsonPath);
                     loader.LoadJsonImmediate(jsonText, data.startTime);
                     timeProvider.SetStartTime(data.startAt, data.startTime, data.audioSpeed, true, recordFrameRate);
@@ -342,7 +355,7 @@ public class HttpHandler : MonoBehaviour
                     // a stop scheduled from the exact frame on which the animation is revealed.
                     const float allPerfectDuration = 3.1166666f;
                     var chartEnd = data.chartLength > 0f ? data.chartLength : getChartLength(jsonText);
-                    screenRecorder.CutoffTime = chartEnd +
+                    screenRecorder.CutoffTime = data.recordEndTime >= 0f ? data.recordEndTime : chartEnd +
                         (data.showAllPerfect ? allPerfectDuration + 3f : 5f);
                     // Layered export is disabled until full-screen filters can be isolated correctly.
                     screenRecorder.RevealOutput = data.revealOutput;
@@ -354,7 +367,8 @@ public class HttpHandler : MonoBehaviour
                     var outputName = string.IsNullOrWhiteSpace(data.recordFileName)
                         ? "out.mp4" : data.recordFileName;
                     if (Path.GetFileName(outputName) != outputName || outputName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
-                        !outputName.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+                        !(outputName.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ||
+                          outputName.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)))
                         throw new InvalidOperationException("Invalid recording file name.");
                     screenRecorder.OutputFileName = outputName;
                     // Mark PV and post effects unprepared before the recorder can observe
@@ -416,12 +430,12 @@ public class HttpHandler : MonoBehaviour
                     // Let an active capture close its pipe before any scene reload.
                     var wasRecording = screenRecorder.IsRecording;
                     screenRecorder.StopRecording();
+                    if (!wasRecording) timeProvider.ResetStartTime();
                     displayTimeline.SetPlaybackActive(false);
                     mediaTimeline.SetPlaybackActive(false);
                     GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>()?.ResetAllEffects();
                     if (!wasRecording)
                     {
-                        timeProvider.ResetStartTime();
                         IsReloding = true;
                         // Match 4.4.0's non-blocking Stop acknowledgement. A following
                         // Start may queue immediately, but Update keeps it pending until
@@ -526,7 +540,8 @@ public class HttpHandler : MonoBehaviour
                             data.tapSkin,
                             data.holdSkin,
                             data.starSkin,
-                            data.pinkStar);
+                            data.pinkStar,
+                            data.slideSkin);
                         loader.noteSpeed = (float)(107.25 /
                             (71.4184491 * Mathf.Pow(
                                 data.noteSpeed + 0.9975f,
@@ -584,12 +599,14 @@ public class HttpHandler : MonoBehaviour
             case EditorControlMethod.SetDisplay:
                 StarDisplayOrder.SetMode(data.starDisplayMode);
                 MajdataPetClient.Trigger("review", "Refreshing display");
-                customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
+                customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar, data.slideSkin);
+                foreach (var star in FindObjectsByType<StarDrop>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                    star.RefreshSkin(customSkin);
                 if (liveChartActive)
                     objectCounter.SetSideDisplays(data.showJudgeInfo, data.showComboInfo);
                 else
                     HideStandbyDisplays(objectCounter);
-                objectCounter.SetDisplayFont(data.viewDisplayFontPreset);
+                objectCounter.SetDisplayFont(data.viewDisplayFontPreset, data.viewDisplayFontFile);
                 allPerfect.Configure(data.showAllPerfect);
                 displayTimeline.SetImmediateDisplay(
                     data.judgeLineStyle,
@@ -601,6 +618,7 @@ public class HttpHandler : MonoBehaviour
                 bgManager.SetBackgroundFitMode(data.backgroundFitMode);
                 mediaTimeline.SetBackgroundFitMode(data.backgroundFitMode);
                 ApplyGeneratedMarkVisibility();
+                HasEditorDisplaySettings = true;
                 break;
             case EditorControlMethod.Preview:
                 MajdataPetClient.Trigger("review", "Previewing note");
@@ -610,7 +628,7 @@ public class HttpHandler : MonoBehaviour
                 if (liveChartActive)
                     break;
                 Debug.Log("[MajdataView] Preview request: loading isolated preview notes.");
-                customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar);
+                customSkin.LoadSkin(data.skin, data.tapSkin, data.holdSkin, data.starSkin, data.pinkStar, data.slideSkin);
                 allPerfect.enabled = false;
                 var previewNotesRoot = GameObject.Find("Notes");
                 if (previewNotesRoot != null)
@@ -801,6 +819,16 @@ public class HttpHandler : MonoBehaviour
                Time.realtimeSinceStartup < mediaWarmupDeadline)
             yield return null;
 
+        var mediaError = bgManager?.PreparationError ?? mediaTimeline?.PreparationError;
+        if (!string.IsNullOrEmpty(mediaError))
+        {
+            deferredStartCompletion = false;
+            liveChartActive = false;
+            InputManager.Mode = AutoPlayMode.Disable;
+            timeProvider.ResetStartTime();
+            CompleteRequest(false, mediaError, 500);
+            yield break;
+        }
         sensorManager?.ResetAllSensors();
         multTouchHandler?.clearSlots();
         if (deferPlaybackStart)
@@ -853,6 +881,16 @@ public class HttpHandler : MonoBehaviour
                Time.realtimeSinceStartup < mediaWarmupDeadline)
             yield return null;
 
+        var mediaError = bgManager?.PreparationError ?? mediaTimeline?.PreparationError;
+        if (!string.IsNullOrEmpty(mediaError))
+        {
+            deferredStartCompletion = false;
+            liveChartActive = false;
+            InputManager.Mode = AutoPlayMode.Disable;
+            timeProvider.ResetStartTime();
+            CompleteRequest(false, mediaError, 500);
+            yield break;
+        }
         sensorManager?.ResetAllSensors();
         multTouchHandler?.clearSlots();
         InputManager.Mode = requestedMode;
@@ -878,7 +916,7 @@ public class HttpHandler : MonoBehaviour
         if (currentTimeText != null)
             currentTimeText.SetActive(visible);
         if (visible)
-            FindSceneComponent<ObjectCounter>("ObjectCounter")?.SetDisplayFont(viewDisplayFontPreset);
+            FindSceneComponent<ObjectCounter>("ObjectCounter")?.SetDisplayFont(viewDisplayFontPreset, viewDisplayFontFile);
     }
 
     private static void HideStandbyDisplays(ObjectCounter counter)
@@ -895,9 +933,13 @@ public class HttpHandler : MonoBehaviour
         MediaTimelineController mediaTimeline,
         AudioTimeProvider timeProvider,
         string jsonText,
-        EditRequestjson request)
+        EditRequestjson request,
+        Majson parsedChart = null)
     {
-        var chart = JsonConvert.DeserializeObject<Majson>(jsonText);
+        var chart = parsedChart ?? JsonConvert.DeserializeObject<Majson>(jsonText);
+        var chartDirectory = string.IsNullOrEmpty(request.chartDirectory)
+            ? Path.GetDirectoryName(request.jsonPath)
+            : request.chartDirectory;
         controller.Configure(
             chart?.displayTable,
             chart?.subtitleTable,
@@ -909,7 +951,8 @@ public class HttpHandler : MonoBehaviour
             request.outerBackgroundCover,
             (int)request.comboStatusType,
             chart?.colorTable,
-            request.showSongDetail);
+            request.showSongDetail,
+            chartDirectory);
         screenEffects?.Configure(chart?.effectTable, timeProvider, mediaTimeline);
         var liveNoteVisuals = controller.GetComponent<LiveNoteVisualController>() ??
                               controller.gameObject.AddComponent<LiveNoteVisualController>();
@@ -921,16 +964,16 @@ public class HttpHandler : MonoBehaviour
             timeProvider);
         mediaTimeline?.Configure(
             chart?.mediaTable,
-            (string.IsNullOrEmpty(request.chartDirectory) ? Path.GetDirectoryName(request.jsonPath) : request.chartDirectory),
+            chartDirectory,
             timeProvider,
             request.control == EditorControlMethod.Record);
         mediaTimeline?.SetAudioVolume(request.mediaAudioVolume);
         mediaTimeline?.SetBackgroundFitMode(request.backgroundFitMode);
     }
 
-    private static bool HasTimelineVideo(string jsonText)
+    private static bool HasTimelineVideo(string jsonText, Majson parsedChart = null)
     {
-        var chart = JsonConvert.DeserializeObject<Majson>(jsonText);
+        var chart = parsedChart ?? JsonConvert.DeserializeObject<Majson>(jsonText);
         return chart?.mediaTable?.Exists(item =>
             item != null && item.timelineClip && item.kind == "pvOverlay") == true;
     }
@@ -1058,9 +1101,9 @@ public class HttpHandler : MonoBehaviour
         requestCompleted.Set();
     }
 
-    private float getChartLength(string jsonText)
+    private float getChartLength(string jsonText, Majson parsedChart = null)
     {
-        var majson = JsonConvert.DeserializeObject<Majson>(jsonText);
+        var majson = parsedChart ?? JsonConvert.DeserializeObject<Majson>(jsonText);
         if (majson == null)
             return 0f;
 

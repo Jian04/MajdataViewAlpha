@@ -18,7 +18,7 @@ using WPFLocalizeExtension.Engine;
 
 namespace MajdataEdit.Editor;
 
-internal static class AlphaCommandHints
+internal static partial class AlphaCommandHints
 {
     private const string BooleanTrue = "True";
     private const string BooleanFalse = "False";
@@ -74,8 +74,14 @@ internal static class AlphaCommandHints
                     : new AlphaCommand(
                         descriptor.name, GetStateSignature(descriptor.name) ?? BuildSignature(descriptor),
                         AlphaExtraFilters.Find(descriptor.name) is { } filter
-                            ? Localized(filter.Chinese, filter.English, filter.Japanese) : string.Empty));
-        return commands.Select(command => Describe(command.Name)?.SupportsDefaultReset == true
+                            ? Localized(filter.Chinese, filter.English, filter.Japanese)
+                            : string.Empty));
+        return commands.Select(command => command.Name is "ALPHA" or "ALPHAV"
+            ? command with { Description = command.Description + Localized(
+                " 引导圆弧默认跟随对应音符的透明度；tapline= 单独覆盖圆弧。",
+                " Guide arcs follow their note opacity unless overridden with tapline=.",
+                " ガイド円弧は音符の不透明度に従います。tapline=で個別に上書きできます。") }
+            : Describe(command.Name)?.SupportsDefaultReset == true
             ? command with { Description = command.Description + Localized(
                 " Default 恢复当前设置配置，可附加过渡时间。",
                 " Default restores the current configured setting, with an optional transition.",
@@ -117,8 +123,10 @@ internal static class AlphaCommandHints
                 new("SIZEV", "<SIZEV*scale> / <SIZEV*(scaleX,scaleY)> / <SIZEV*type=(scaleX,scaleY)>", "Instantly resizes loaded notes with uniform or local X/Y scale and typed targets."),
                 new("ALPHA", "<ALPHA*opacity>", "Opacity from 0 to 1. star controls star-shaped notes and Slide heads; slidestar controls moving guide stars; slide controls paths."),
                 new("ALPHAV", "<ALPHAV*opacity> / <ALPHAV*slidestar=0.5>", "Instantly changes loaded-note opacity with separate star, slidestar, and slide targets."),
+                new("ANGLE", "<ANGLE*degrees|NULL>", "Rotates each following note's artwork about its own center without changing position or judgement. Global angle excludes slide paths, guide stars and blockareas; explicit slide/slidestar targets are supported."),
+                new("ANGLEV", "<ANGLEV*degrees|NULL>", "Changes loaded-note artwork orientation from this slot. A transition starts at the command time. Global angle excludes slide paths, guide stars and blockareas."),
                 new("JLINE", "<JLINE*RRGGBB> / <JLINE*(RRGGBB[,duration])>", "Transitions the judge-line color during playback. NULL restores the skin color."),
-                new("TEXT", "<TEXT*(\"content\"[,duration][,x][,y][,size][,font][,index][,style][,transition])>", "Caption text must be quoted. Optional positional slots may be skipped with consecutive commas. index is any non-negative integer; Fade uses transition as fade-in time, while Typewriter uses it as typing time."),
+                new("TEXT", "<TEXT*(\"content\"[,duration][,x][,y][,size][,font][,index][,style][,transition][,color][,origin])>", "Caption text must be quoted. Optional positional slots may be skipped with consecutive commas. index is any non-negative integer; Fade uses transition as fade-in time, while Typewriter uses it as typing time."),
                 new("JUDGELINEEXPAND", "<JUDGELINEEXPAND*(True[,duration,1|-1])> / <JUDGELINEEXPAND*(False)>", Localized("True 附加白线并旋转22.5°，False 移除附加白线；默认时间0秒、方向1/CW，-1/CCW逆时针。", "True adds a white ring rotated 22.5 degrees; False removes it. Default duration 0, direction CW/1.", "Trueで白い判定線を追加して22.5度回転、Falseで追加線のみ非表示。時間0秒、方向CW/1が既定値。")),
                 new("JUDGELINE", "<JUDGELINE*(0|1|2|3|4|Default[,duration])>", Localized("判定线样式：1 经典、2 经典完整、3 MAGiCAL；0/False 关闭。4 及以后预留扩展。", "1 classic, 2 classic full, 3 MAGiCAL; 0/False off; later IDs reserved.", "1 クラシック、2 全体、3 MAGiCAL、0/False 非表示。以降は拡張用。")),
                 new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}|Default[,duration])>", "Shows or hides judgment text such as Critical Perfect."),
@@ -143,7 +151,8 @@ internal static class AlphaCommandHints
                 new("HUE", $"<HUE*({BooleanTrue},degrees[,duration])>", "Rotates the frame hue in degrees."),
                 new("TINT", $"<TINT*({BooleanTrue},RRGGBB,strength[,duration])> / <TINT*({BooleanFalse}[,duration])>", "Blends any color, including black and white."),
                 new("MOVE", $"<MOVE*({BooleanTrue},dx,dy[,duration])> / <MOVE*({BooleanFalse}[,duration])>", "Moves the frame relative to its center."),
-                new("ROTATE", $"<ROTATE*({BooleanTrue},degrees[,duration])>", "Rotates the frame around its center; negative angles are allowed."),
+                new("ROTATE", $"<ROTATE*({BooleanTrue},degrees[,duration])>", "Rotates notes and paths about the playfield center; judge lines and interface text stay fixed."),
+                new("FLIP", "<FLIP*(Instant,angle,duration)>", "Reflects across the center axis. The optional notes-only flag defaults to True; False reflects the whole image. 0° is horizontal, 90° is vertical. Instant has a duration and no transition; judgment is unchanged."),
                 new("SHAKE", $"<SHAKE*({BooleanTrue},strength,frequency[,degrees,duration])>", "Shakes the camera. Angle and transition are independently optional; leave the angle empty to set only transition."),
                 new("AUDIO", $"<AUDIO*({BooleanTrue},relative/path.ogg)> / <AUDIO*({BooleanFalse})>", "Plays one OGG, WAV, or MP3 file. False stops the current clip early."),
                 new("PVOVERLAY", $"<PVOVERLAY*({BooleanTrue},relative/path.mp4[,duration])> / <PVOVERLAY*({BooleanFalse}[,duration])>", "Replaces the chart PV with PNG, JPG, or MP4 media. The optional duration crossfades the original PV or the preceding overlay.")
@@ -165,8 +174,10 @@ internal static class AlphaCommandHints
                 new("SIZEV", "<SIZEV*倍率> / <SIZEV*(X倍率,Y倍率)> / <SIZEV*種別=(X倍率,Y倍率)>", "読み込み済みノーツを等倍またはローカル X/Y で即時拡縮します。"),
                 new("ALPHA", "<ALPHA*透明度|NULL> / <ALPHA*blockarea=0.5>", "全体の値はblockareaに適用せず、blockarea=で個別設定します。透明度は 0～1。star は星型ノーツとヘッド、slidestar は移動星、slide は軌道に適用されます。"),
                 new("ALPHAV", "<ALPHAV*透明度|NULL> / <ALPHAV*slidestar=0.5>", "star、slidestar、slide の透明度を個別に即時変更します。"),
+                new("ANGLE", "<ANGLE*角度|NULL>", "以後のノーツ画像を自身の中心で回転。単位は度で、位置と判定は変更しません。全体指定は軌道・移動星・噪域を除外。slide/slidestarは個別指定可能。"),
+                new("ANGLEV", "<ANGLEV*角度|NULL>", "この位置から読み込み済み画像の向きを変更。遷移は命令時刻から開始。全体指定は軌道・移動星・噪域を除外。"),
                 new("JLINE", "<JLINE*RRGGBB> / <JLINE*(RRGGBB[,時間])>", "再生中の判定ライン色を切り替えます。NULL でスキン色に戻します。"),
-                new("TEXT", "<TEXT*(\"内容\"[,時間][,x][,y][,サイズ][,フォント][,index][,style][,transition])>", "字幕は二重引用符で囲みます。省略する位置引数は連続したカンマで飛ばせます。index は 0 以上の整数、Fade の transition はフェード時間、Typewriter では文字送り時間です。"),
+                new("TEXT", "<TEXT*(\"内容\"[,時間][,x][,y][,サイズ][,フォント][,index][,style][,transition][,color][,origin])>", "字幕は二重引用符で囲みます。省略する位置引数は連続したカンマで飛ばせます。index は 0 以上の整数、Fade の transition はフェード時間、Typewriter では文字送り時間です。"),
                 new("JUDGELINEEXPAND", "<JUDGELINEEXPAND*(True[,过渡时间][,方向])> / <JUDGELINEEXPAND*(False)>", Localized("True 附加白线并旋转22.5°，False 移除附加白线；默认时间0秒、方向1/CW，-1/CCW逆时针。", "True adds a white ring rotated 22.5 degrees; False removes it. Default duration 0, direction CW/1.", "Trueで白い判定線を追加して22.5度回転、Falseで追加線のみ非表示。時間0秒、方向CW/1が既定値。")),
                 new("JUDGELINE", "<JUDGELINE*(0|1|2|3|4|Default[,过渡时间])>", Localized("判定线样式：1 经典、2 经典完整、3 MAGiCAL；0/False 关闭。4 及以后预留扩展。", "1 classic, 2 classic full, 3 MAGiCAL; 0/False off; later IDs reserved.", "1 クラシック、2 全体、3 MAGiCAL、0/False 非表示。以降は拡張用。")),
                 new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}|Default[,時間])>", "Critical Perfect などの判定文字を表示または非表示にします。"),
@@ -192,6 +203,7 @@ internal static class AlphaCommandHints
                 new("TINT", $"<TINT*({BooleanTrue},RRGGBB,強度[,時間])> / <TINT*({BooleanFalse}[,時間])>", "黒や白を含む任意の色を合成します。"),
                 new("MOVE", $"<MOVE*({BooleanTrue},dx,dy[,時間])> / <MOVE*({BooleanFalse}[,時間])>", "画面中央を基準に移動します。"),
                 new("ROTATE", $"<ROTATE*({BooleanTrue},角度[,時間])>", "画面中央を基準に回転します。負の角度も使用できます。"),
+                new("FLIP", "<FLIP*(Instant,角度,持続時間)>", "画面中心を通る軸で映像を反転します。0°は水平軸、90°は垂直軸です。Instant は秒数または拍で指定でき、遷移と判定変更はありません。"),
                 new("SHAKE", $"<SHAKE*({BooleanTrue},強度,周波数[,角度,時間])>", "カメラを振動させます。角度と切替時間は個別に省略でき、切替時間だけの場合は角度を空欄にします。"),
                 new("AUDIO", $"<AUDIO*({BooleanTrue},相対パス.ogg)> / <AUDIO*({BooleanFalse})>", "OGG、WAV、MP3 を1回再生します。False で途中停止できます。"),
                 new("PVOVERLAY", $"<PVOVERLAY*({BooleanTrue},相対パス.mp4[,時間])> / <PVOVERLAY*({BooleanFalse}[,時間])>", "PNG、JPG、MP4 で譜面 PV を置き換えます。時間を指定すると元の PV または直前のメディアとクロスフェードします。")
@@ -212,8 +224,10 @@ internal static class AlphaCommandHints
         new("SIZEV", "<SIZEV*倍率> / <SIZEV*(X倍率,Y倍率)> / <SIZEV*类型=(X倍率,Y倍率)>", "按等比或局部 X/Y 即时缩放已加载音符；全局值不控制 blockarea，blockarea= 单独控制。"),
         new("ALPHA", "<ALPHA*透明度|NULL> / <ALPHA*blockarea=0.5>", "全局值默认不控制 blockarea；blockarea= 单独控制噪域；透明度范围 0～1；star 控制星形音符和 Slide 头，slidestar 控制运动星，slide 控制轨道。"),
         new("ALPHAV", "<ALPHAV*透明度|NULL> / <ALPHAV*slidestar=0.5>", "分别即时修改 star、slidestar、slide、blockarea 的透明度；全局值不控制 blockarea，blockarea= 单独控制。"),
+        new("ANGLE", "<ANGLE*角度|NULL>", "后续音符绕自身贴图中心旋转，单位为度，不移动位置或改变判定。默认不影响 slide、slidestar 和噪域；可显式指定 slide/slidestar。渐变从每颗音符出现时开始。"),
+        new("ANGLEV", "<ANGLEV*角度|NULL>", "从此槽位改变已加载音符的贴图朝向，渐变也从此槽位开始。默认不影响 slide、slidestar 和噪域；可显式指定 slide/slidestar。"),
         new("JLINE", "<JLINE*RRGGBB> / <JLINE*(RRGGBB[,过渡时间])>", "播放时渐变判定线颜色；NULL 恢复皮肤颜色，停止播放后不会影响待机判定线。"),
-        new("TEXT", "<TEXT*(\"内容\"[,持续时间][,x][,y][,字号][,字体][,index][,样式][,过渡时间])>", "字幕必须写在双引号内。可选位置参数可用连续逗号跳过。index 可使用任意非负整数。"),
+        new("TEXT", "<TEXT*(\"内容\"[,持续时间][,x][,y][,字号][,字体][,index][,样式][,过渡时间][,颜色RGB][,原点])>", "字幕必须写在双引号内。可选位置参数可用连续逗号跳过。index 可使用任意非负整数。"),
         new("JUDGELINEEXPAND", "<JUDGELINEEXPAND*(True[,过渡时间][,方向])> / <JUDGELINEEXPAND*(False)>", Localized("True 附加白线并旋转22.5°，False 移除附加白线；默认时间0秒、方向1/CW，-1/CCW逆时针。", "True adds a white ring rotated 22.5 degrees; False removes it. Default duration 0, direction CW/1.", "Trueで白い判定線を追加して22.5度回転、Falseで追加線のみ非表示。時間0秒、方向CW/1が既定値。")),
         new("JUDGELINE", "<JUDGELINE*(0|1|2|3|4|Default[,过渡时间])>", Localized("判定线样式：1 经典、2 经典完整、3 MAGiCAL；0/False 关闭。4 及以后预留扩展。", "1 classic, 2 classic full, 3 MAGiCAL; 0/False off; later IDs reserved.", "1 クラシック、2 全体、3 MAGiCAL、0/False 非表示。以降は拡張用。")),
         new("SHOWJUDGETEXT", $"<SHOWJUDGETEXT*({BooleanChoices}|Default[,过渡时间])>", "渐变显示或隐藏 Critical Perfect 等判定文字。"),
@@ -238,7 +252,8 @@ internal static class AlphaCommandHints
         new("HUE", $"<HUE*({BooleanTrue},角度[,过渡时间])>", "旋转整幅画面的色相，单位为度；灰色区域基本不变。"),
         new("TINT", $"<TINT*({BooleanTrue},RRGGBB,强度[,过渡时间])> / <TINT*({BooleanFalse}[,过渡时间])>", "按强度叠加任意颜色，包括黑色和白色。"),
         new("MOVE", $"<MOVE*({BooleanTrue},dx,dy[,过渡时间])> / <MOVE*({BooleanFalse}[,过渡时间])>", "平移画面；dx/dy 是相对画面中心的目标坐标。"),
-        new("ROTATE", $"<ROTATE*({BooleanTrue},角度[,过渡时间])>", "画面绕中心旋转，角度可为负。"),
+        new("ROTATE", $"<ROTATE*({BooleanTrue},角度[,过渡时间])>", "音符与轨迹绕谱面中心旋转，角度可为负；判定线和界面文字不旋转。"),
+        new("FLIP", "<FLIP*(Instant,角度,持续时间)>", "沿经过谱面中心的轴翻转，0° 是水平轴、90° 是垂直轴。末尾“仅音符”默认 True；False 翻转整幅画面。Instant 支持秒数或拍数，无过渡，不改变判定。"),
         new("SHAKE", $"<SHAKE*({BooleanTrue},强度,频率[,角度,过渡时间])>", "镜头震动；角度和过渡时间可分别省略，只写过渡时间时保留空的角度位置。"),
         new("AUDIO", $"<AUDIO*({BooleanTrue},相对路径.ogg)> / <AUDIO*({BooleanFalse})>", "播放一次 OGG、WAV 或 MP3；False 可中途停止当前音频。"),
         new("PVOVERLAY", $"<PVOVERLAY*({BooleanTrue},相对路径.mp4[,过渡时间])> / <PVOVERLAY*({BooleanFalse}[,过渡时间])>", "用 PNG、JPG 或 MP4 替换谱面 PV；可选时间用于和原 PV 或前一个覆盖媒体交叉渐变。")
@@ -261,10 +276,11 @@ internal static class AlphaCommandHints
         {
             "VIGNETTE" => $"<VIGNETTE*({BooleanTrue},{strength}[,{duration}][,{Localized("渐变", "gradient", "グラデーション")}])>",
             "TINT" => $"<TINT*({BooleanTrue},RRGGBB,{strength}[,{duration}])>",
-            "MOVE" => $"<MOVE*({BooleanTrue},dx,dy[,{duration}])>",
+            "MOVE" => $"<MOVE*({BooleanTrue},dx,dy[,{duration}][,{Localized("移动PV", "move PV", "PV移動")}])>",
             "SHAKE" => $"<SHAKE*({BooleanTrue},{strength},{frequency}[,{degrees},{duration}])>",
             "ZOOM" => $"<ZOOM*({BooleanTrue},{scale}[,{duration}])>",
             "ROTATE" => $"<{name}*({BooleanTrue},{degrees}[,{duration}][,{Localized("旋转PV", "rotate PV", "PV回転")}])>",
+            "FLIP" => $"<FLIP*({BooleanTrue},{degrees}[,{Localized("仅音符", "notes only", "音符のみ")}])>",
             "HUE" or "KALEIDOSCOPE" => $"<{name}*({BooleanTrue},{degrees}[,{duration}])>",
             "GAUSSIAN" or "NEON" or "TRAIL" or "FADE" or "FLASH" or
             "BRIGHTNESS" or "SATURATION" or "CONTRAST" or "RAINBOW" or
@@ -276,15 +292,16 @@ internal static class AlphaCommandHints
         if (on == null)
             return null;
 
-        var off = $"<{name}*({BooleanFalse}[,{duration}])>";
+        var off = name == "FLIP" ? $"<FLIP*({BooleanFalse})>" : $"<{name}*({BooleanFalse}[,{duration}])>";
         var instant = name switch
         {
             "VIGNETTE" => $"<VIGNETTE*(Instant,{strength},{sustain}[,{Localized("渐变", "gradient", "グラデーション")}])>",
             "TINT" => $"<TINT*(Instant,RRGGBB,{strength},{sustain})>",
-            "MOVE" => $"<MOVE*(Instant,dx,dy,{sustain})>",
+            "MOVE" => $"<MOVE*(Instant,dx,dy,{sustain}[,{Localized("移动PV", "move PV", "PV移動")}])>",
             "SHAKE" => $"<SHAKE*(Instant,{strength},{frequency}[,{degrees}],{sustain})>",
             "ZOOM" => $"<ZOOM*(Instant,{scale},{sustain})>",
             "ROTATE" => $"<{name}*(Instant,{degrees},{sustain}[,{Localized("旋转PV", "rotate PV", "PV回転")}])>",
+            "FLIP" => $"<FLIP*(Instant,{degrees},{sustain}[,{Localized("仅音符", "notes only", "音符のみ")}])>",
             "HUE" or "KALEIDOSCOPE" => $"<{name}*(Instant,{degrees},{sustain})>",
             _ => $"<{name}*(Instant,{strength},{sustain})>"
         };
@@ -352,10 +369,11 @@ internal static class AlphaCommandHints
     private static bool durationCompletionActive;
     private static bool durationCompletionFromSelection;
     private static int durationCompletionOffset = -1;
-    private static OverloadInsightWindow? insightWindow;
+    private static CaretInsightWindow? insightWindow;
     private static AlphaOverloadProvider? insightProvider;
     private static AlphaCommand? insightCommand;
     private static bool completionRefreshQueued;
+    private static string commandCompletionPrefix = "";
 
     private static Brush HintBackground => ThemeBrush("EditorBackground", Color.FromRgb(0x1E, 0x1E, 0x1E));
     private static Brush HintForeground => ThemeBrush("ButtonForeground", Color.FromRgb(0xD4, 0xD4, 0xD4));
@@ -363,12 +381,11 @@ internal static class AlphaCommandHints
     private static Brush HintOptional => WithOpacity(HintSecondary, 0.58);
     private static Brush HintBorder => ThemeBrush("MenuSeparator", Color.FromRgb(0x45, 0x45, 0x48));
     private static Brush HintAccent => ThemeBrush("HelperForeground", Color.FromRgb(0x56, 0x9C, 0xD6));
-    private static Brush HintParamActive => ThemeBrush("ScrollThumb", Color.FromRgb(0x26, 0x4F, 0x78));
-    private static Brush HintSelection => IsLightHintTheme()
-        ? Frozen(new SolidColorBrush(Color.FromRgb(0x63, 0xA8, 0xD8)))
-        : Frozen(new SolidColorBrush(Color.FromRgb(0x09, 0x47, 0x71)));
+    private static Brush HintParamActive => ThemeBrush("SelectionBackground", Color.FromRgb(0x26, 0x4F, 0x78));
+    private static Brush HintSelection => ThemeBrush("SelectionBackground", Color.FromRgb(0x09, 0x47, 0x71));
     private static readonly FontFamily HintMonoFont = new("Cascadia Mono, Consolas");
-    private static readonly string[] CommonDurations = { "[8:1]", "[4:1]", "[2:1]", "[16:3]", "[1:0]" };
+    private static readonly string[] CommonDurations =
+        { "[8:1]", "[4:1]", "[2:1]", "[16:1]", "[32:1]", "[16:3]", "[1:1]", "[1:0]" };
 
     private static Brush Frozen(SolidColorBrush brush)
     {
@@ -427,10 +444,8 @@ internal static class AlphaCommandHints
             if (completionWindow != null && !durationCompletionActive &&
                 !TryGetAlphaPrefix(editor.TextArea, out _, out _))
                 completionWindow.Close();
-            UpdateInsight(editor.TextArea);
             QueueCompletionRefresh(editor);
         };
-        editor.TextArea.PreviewTextInput += (_, _) => CloseDurationCompletion();
         editor.TextArea.PreviewMouseLeftButtonDown += (_, _) =>
         {
             mouseSelecting = true;
@@ -473,12 +488,16 @@ internal static class AlphaCommandHints
         editor.Dispatcher.BeginInvoke(() =>
         {
             completionRefreshQueued = false;
+            if (editor.IsKeyboardFocusWithin)
+                ShowOrUpdateInsight(editor.TextArea);
+            else
+                insightWindow?.Close();
             if (editor.SelectionLength != 0)
                 return;
             if (TryShowCaretCommandCompletion(editor.TextArea))
                 return;
             UpdateDurationCompletion(editor.TextArea);
-        }, DispatcherPriority.Background);
+        }, DispatcherPriority.Input);
     }
 
     private static bool TryShowCaretCommandCompletion(TextArea textArea)
@@ -505,12 +524,12 @@ internal static class AlphaCommandHints
 
     private static void UpdateDurationCompletion(TextArea textArea)
     {
-        if (!TryGetDurationTarget(textArea, out var slideTarget))
+        if (!TryGetDurationTarget(textArea, out var slideTarget, out var startOffset))
         {
             CloseDurationCompletion();
             return;
         }
-        ShowDurationCompletion(textArea, textArea.Caret.Offset, slideTarget, false);
+        ShowDurationCompletion(textArea, startOffset, slideTarget, false);
     }
 
     private static void ShowDurationCompletion(
@@ -526,7 +545,7 @@ internal static class AlphaCommandHints
         var window = new CompletionWindow(textArea)
         {
             StartOffset = insertionOffset,
-            EndOffset = insertionOffset,
+            EndOffset = fromSelection ? insertionOffset : textArea.Caret.Offset,
             Width = 124,
             MinWidth = 124
         };
@@ -549,19 +568,31 @@ internal static class AlphaCommandHints
             durationCompletionOffset = -1;
         };
         window.Show();
+        if (!fromSelection)
+            window.CompletionList.SelectItem(textArea.Document.GetText(insertionOffset,
+                textArea.Caret.Offset - insertionOffset));
     }
 
-    private static bool TryGetDurationTarget(TextArea textArea, out bool slideTarget)
+    private static bool TryGetDurationTarget(TextArea textArea, out bool slideTarget, out int startOffset)
     {
         slideTarget = false;
         var document = textArea.Document;
         var caret = textArea.Caret.Offset;
+        startOffset = caret;
         if (caret <= 0 || caret > document.TextLength)
             return false;
         var line = document.GetLineByOffset(caret);
         var prefix = document.GetText(line.Offset, caret - line.Offset);
         if (IsInsideAlphaCommand(prefix) || prefix.TrimStart().StartsWith("||", StringComparison.Ordinal))
             return false;
+        var bracket = prefix.LastIndexOf('[');
+        if (bracket > prefix.LastIndexOf(']'))
+        {
+            if (prefix[(bracket + 1)..].Any(ch => !char.IsDigit(ch) && ch != ':'))
+                return false;
+            startOffset = line.Offset + bracket;
+            prefix = prefix[..bracket];
+        }
         var tail = prefix.Length > 48 ? prefix[^48..] : prefix;
         return NoteDurationTarget.TryFromTypedText(tail, out slideTarget);
     }
@@ -591,6 +622,7 @@ internal static class AlphaCommandHints
         var document = textArea.Document;
         var caret = textArea.Caret.Offset;
         var typed = e.Text[0];
+        if (typed == '>') completionWindow?.Close();
         if (typed is '>' or ')' &&
             caret < document.TextLength && document.GetCharAt(caret) == typed)
         {
@@ -614,10 +646,15 @@ internal static class AlphaCommandHints
             return;
         }
 
-        if (completionWindow == null)
+        if (typed == '>' || completionWindow == null)
             return;
-        if (durationCompletionFromSelection)
+        // Duration punctuation is typed normally; only Tab/click accepts a candidate.
+        if (durationCompletionActive)
+        {
+            if (durationCompletionFromSelection || (typed != '[' && typed != ':' && !char.IsDigit(typed)))
+                CloseDurationCompletion();
             return;
+        }
 
         if (!char.IsLetter(typed))
             completionWindow.CompletionList.RequestInsertion(e);
@@ -683,7 +720,14 @@ internal static class AlphaCommandHints
 
     private static void ShowCompletion(TextArea textArea, string prefix, int startOffset)
     {
+        if (completionWindow is { IsVisible: true } existing && !durationCompletionActive &&
+            existing.StartOffset == startOffset && prefix.StartsWith(commandCompletionPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            existing.CompletionList.SelectItem(prefix);
+            return;
+        }
         completionWindow?.Close();
+        commandCompletionPrefix = prefix;
         var window = new CompletionWindow(textArea)
         {
             StartOffset = startOffset,
@@ -704,12 +748,40 @@ internal static class AlphaCommandHints
         if (data.Count > 0)
             window.CompletionList.SelectedItem = data[0];
 
+        Window? commandHint = null;
+        void PositionHint()
+        {
+            if (commandHint == null) return;
+            commandHint.Left = window.Left + window.ActualWidth + 8;
+            commandHint.Top = window.Top;
+            PositionCurveWindows(commandHint);
+        }
+        void PreviewSelected()
+        {
+            commandHint?.Close(); commandHint = null;
+            if (window.CompletionList.SelectedItem is not AlphaCompletionData selected ||
+                Describe(selected.Text)?.kind != AlphaCommandKind.Effect) return;
+            var hint = new Window { Owner = window, Topmost = true, WindowStyle = WindowStyle.None,
+                ResizeMode = ResizeMode.NoResize, ShowActivated = false, ShowInTaskbar = false,
+                SizeToContent = SizeToContent.WidthAndHeight, Background = HintBackground,
+                Content = new Border { Child = BuildHintPanel(selected.command), Padding = new Thickness(12,10,12,10),
+                    Background = HintBackground, BorderBrush = HintBorder, BorderThickness = new Thickness(1) } };
+            commandHint = hint;
+            hint.Closed += (_, _) => { if (curveWindow?.Owner == hint) CloseCurveWindows(); };
+            hint.Show(); PositionHint();
+            UpdateCurveWindows(hint, selected.Text, "");
+        }
+        window.CompletionList.ListBox.SelectionChanged += (_, _) => PreviewSelected();
+        window.LocationChanged += (_, _) => PositionHint();
         window.Closed += (_, _) =>
         {
+            commandHint?.Close();
+            if (curveWindow?.Owner == window) CloseCurveWindows();
             if (ReferenceEquals(completionWindow, window))
                 completionWindow = null;
         };
         window.Show();
+        PreviewSelected();
     }
 
     private static void ApplyDarkStyle(CompletionWindow window)
@@ -718,6 +790,16 @@ internal static class AlphaCommandHints
         window.BorderBrush = HintBorder;
         window.BorderThickness = new Thickness(1);
         window.Foreground = HintForeground;
+        window.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key is not (Key.Up or Key.Down)) return;
+            var list = window.CompletionList.ListBox;
+            if (list.Items.Count == 0) return;
+            var step = e.Key == Key.Down ? 1 : -1;
+            list.SelectedIndex = (list.SelectedIndex + step + list.Items.Count) % list.Items.Count;
+            list.ScrollIntoView(list.SelectedItem);
+            e.Handled = true;
+        };
 
         var listBox = window.CompletionList.ListBox;
         if (listBox != null)
@@ -815,9 +897,10 @@ internal static class AlphaCommandHints
         return panel;
     }
 
-    private static void UpdateInsight(TextArea textArea)
+    private sealed class CaretInsightWindow : OverloadInsightWindow
     {
-        ShowOrUpdateInsight(textArea);
+        internal CaretInsightWindow(TextArea area) : base(area) { }
+        internal void FollowCaret(TextArea area) => SetPosition(area.Caret.Position);
     }
 
     private static void ShowOrUpdateInsight(TextArea textArea)
@@ -833,21 +916,32 @@ internal static class AlphaCommandHints
         if (command == null)
             return;
 
-        var parameterIndex = GetParameterIndex(document, starOffset + 1, caret);
+        var parameterIndex = GetParameterIndex(document, starOffset + 1, caret, command.Name);
+        var transitionMode = TryGetTransitionArgument(document,starOffset,caret,command.Name,
+            out var transitionIndex,out _,out _);
+        if(transitionMode) parameterIndex=transitionIndex;
         var enabled = GetBooleanArgument(document, starOffset + 1, caret);
         var instantMode = IsInstantArgument(document, starOffset + 1, caret);
+        var curveText = GetCurveText(document, starOffset + 1, caret);
+        var scalar = Describe(command.Name)?.scalar;
+        if (!transitionMode && scalar?.allowsTransition == true &&
+            NoteValueTransition.TryParse(curveText, 120, scalar, out _)) transitionMode = true;
         if (insightWindow != null &&
+            insightWindow.StartOffset == openOffset + 1 &&
             string.Equals(insightCommand?.Name, command.Name, StringComparison.OrdinalIgnoreCase) &&
             insightProvider != null)
         {
-            insightProvider.Update(parameterIndex, enabled, instantMode);
+            insightProvider.Update(parameterIndex, enabled, instantMode, transitionMode, curveText);
+            insightWindow.FollowCaret(textArea);
+            UpdateCurveWindows(insightWindow, command.Name, curveText);
             return;
         }
 
         insightWindow?.Close();
         insightCommand = command;
-        insightProvider = new AlphaOverloadProvider(command, parameterIndex, enabled, instantMode);
-        var window = new OverloadInsightWindow(textArea)
+        insightProvider = new AlphaOverloadProvider(command, parameterIndex, enabled, instantMode, transitionMode);
+        insightProvider.Update(parameterIndex, enabled, instantMode, transitionMode, curveText);
+        var window = new CaretInsightWindow(textArea)
         {
             Provider = insightProvider,
             StartOffset = openOffset + 1,
@@ -855,7 +949,8 @@ internal static class AlphaCommandHints
             Background = HintBackground,
             Foreground = HintForeground,
             BorderBrush = HintBorder,
-            BorderThickness = new Thickness(1)
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(12, 10, 12, 10)
         };
         insightWindow = window;
         window.Closed += (_, _) =>
@@ -865,8 +960,13 @@ internal static class AlphaCommandHints
             insightWindow = null;
             insightProvider = null;
             insightCommand = null;
+            CloseCurveWindows();
         };
         window.Show();
+        window.FollowCaret(textArea);
+        window.LocationChanged += (_, _) => PositionCurveWindows(window);
+        window.SizeChanged += (_, _) => PositionCurveWindows(window);
+        UpdateCurveWindows(window, command.Name, curveText);
     }
 
     private static bool TryFindOpenAlphaCommand(
@@ -915,7 +1015,7 @@ internal static class AlphaCommandHints
         return command != null;
     }
 
-    private static int GetParameterIndex(TextDocument document, int startOffset, int caretOffset)
+    private static int GetParameterIndex(TextDocument document, int startOffset, int caretOffset, string commandName)
     {
         var index = 1;
         var depth = 0;
@@ -941,8 +1041,73 @@ internal static class AlphaCommandHints
             else if (ch == ',' && depth == topLevelDepth)
                 index++;
         }
+        if(commandName=="TEXT")
+        {
+            var argumentStart=caretOffset;
+            while(argumentStart>startOffset && document.GetCharAt(argumentStart-1)!=',') argumentStart--;
+            var argument=document.GetText(argumentStart,caretOffset-argumentStart);
+            var equals=argument.IndexOf('=');
+            if(equals>=0)
+                index=argument[..equals].Trim().ToLowerInvariant() switch {
+                    "x"=>3,"y"=>4,"size"=>5,"font"=>6,"index"=>7,"style"=>8,"transition"=>9,"color"=>10,"origin"=>11,_=>index
+                };
+        }
         return Math.Max(1, index);
     }
+
+    private static bool TryGetTransitionArgument(TextDocument document,int star,int caret,string name,
+        out int index,out int argumentStart,out int argumentEnd)
+    {
+        index=1; argumentStart=argumentEnd=caret;
+        if(Describe(name)?.scalar?.allowsTransition != true) return false;
+        var valueStart=star+1; var depth=0;
+        for(var i=valueStart;i<caret;i++)
+        {
+            var ch=document.GetCharAt(i);
+            if(ch=='(') depth++;
+            else if(ch==')') depth--;
+            else if(ch==',' && depth==0) valueStart=i+1;
+        }
+        var prefix=document.GetText(valueStart,caret-valueStart);
+        var equals=prefix.IndexOf('=');
+        if(equals>=0) valueStart+=equals+1;
+        while(valueStart<caret && char.IsWhiteSpace(document.GetCharAt(valueStart))) valueStart++;
+        if(valueStart>=caret || document.GetCharAt(valueStart)!='(') return false;
+        argumentStart=valueStart+1; depth=0;
+        for(var i=valueStart;i<caret;i++)
+        {
+            var ch=document.GetCharAt(i);
+            if(ch=='(') depth++;
+            else if(ch==')') depth--;
+            else if(ch==',' && depth==1) { index++; argumentStart=i+1; }
+        }
+        if(depth==0) return false;
+        if(name is "SIZE" or "SIZEV")
+        {
+            var inner=document.GetText(valueStart+1,caret-valueStart-1).TrimStart();
+            if(index<3 && !inner.StartsWith('(')) return false;
+        }
+        depth=0; argumentEnd=argumentStart;
+        while(argumentEnd<document.TextLength)
+        {
+            var ch=document.GetCharAt(argumentEnd);
+            if(ch=='(') depth++;
+            else if(ch==')' && depth>0) depth--;
+            else if((ch==',' || ch==')') && depth==0 || ch=='>' || ch is '\r' or '\n') break;
+            argumentEnd++;
+        }
+        return true;
+    }
+
+    private static AlphaValueSpec TransitionArgumentSpec(string name,int index) => index switch
+    {
+        3 => new AlphaValueSpec { kind=AlphaValueKind.Duration, defaultText="8:1" },
+        4 => new AlphaValueSpec { kind=AlphaValueKind.Keyword,
+            keywords=NoteValueTransition.Functions,defaultText="linear" },
+        5 => new AlphaValueSpec { kind=AlphaValueKind.Number,minimum=.1f,maximum=100f,defaultText="2" },
+        _ => new AlphaValueSpec { kind=Describe(name)!.scalar!.kind,
+            defaultText=name is "COLOR" or "COLORV" ? (index==1 ? "FF0000" : "00BBFF") : "1" }
+    };
 
     private static bool? GetBooleanArgument(TextDocument document, int startOffset, int caretOffset)
     {
@@ -984,6 +1149,14 @@ internal static class AlphaCommandHints
         var equals = current.IndexOf('=');
         var spec = ArgumentSpec(command.Name, parameterIndex, enabled,
             IsInstantArgument(document, starOffset + 1, caret));
+        var transitionArgument=TryGetTransitionArgument(document,starOffset,caret,command.Name,out var transitionIndex,
+            out var transitionStart,out var transitionEnd);
+        if(transitionArgument)
+        {
+            parameterIndex=transitionIndex; argumentStart=transitionStart; argumentEnd=transitionEnd;
+            current=document.GetText(argumentStart,argumentEnd-argumentStart).Trim();
+            equals=-1; spec=TransitionArgumentSpec(command.Name,parameterIndex);
+        }
         if (equals >= 0 && Describe(command.Name)?.HasTarget(current[..equals].Trim()) == true) {
             argumentStart += document.GetText(argumentStart, argumentEnd - argumentStart).IndexOf('=') + 1;
             current = document.GetText(argumentStart, argumentEnd - argumentStart).Trim();
@@ -997,7 +1170,7 @@ internal static class AlphaCommandHints
             ShowOrUpdateInsight(textArea);
             return true;
         }
-        if (SupportsNullReset(command.Name) && current.Length > 0 && current != "NULL" &&
+        if (!transitionArgument && SupportsNullReset(command.Name) && current.Length > 0 && current != "NULL" &&
             "NULL".StartsWith(current, StringComparison.OrdinalIgnoreCase))
         {
             document.Replace(argumentStart, argumentEnd - argumentStart, "NULL");
@@ -1039,7 +1212,7 @@ internal static class AlphaCommandHints
         }
         if (spec == null) yield break;
         var candidates = spec.kind switch {
-            AlphaValueKind.Duration => new[] { "8:1", "16:1", "2:1", "4:1", "1:1", "0" },
+            AlphaValueKind.Duration => new[] { "8:1", "4:1", "2:1", "16:1", "32:1", "16:3", "1:1", "0" },
             AlphaValueKind.Boolean => new[] { "True", "False" },
             AlphaValueKind.Color => new[] { "00BBFF", "FF6666", "FFFFFF" },
             AlphaValueKind.Keyword => spec.keywords,
@@ -1049,6 +1222,10 @@ internal static class AlphaCommandHints
             _ => new[] { GetDefaultArgument(name, index, null) ?? spec.defaultText }
         };
         foreach (var value in candidates.Where(v => v.Length > 0 && spec.Matches(v, 120)).Distinct(StringComparer.OrdinalIgnoreCase)) yield return value;
+        if (name == "TEXT" && index == 6 && System.IO.Directory.Exists(Editor.FontLibrary.DirectoryPath))
+            foreach (var file in System.IO.Directory.EnumerateFiles(Editor.FontLibrary.DirectoryPath)
+                         .Where(MajdataCore.FontFiles.IsFontFile).OrderBy(System.IO.Path.GetFileName))
+                yield return "\"" + System.IO.Path.GetFileName(file) + "\"";
         if (spec.allowsNull) yield return "NULL";
         if (index == 1 && descriptor.SupportsDefaultReset) yield return "Default";
     }
@@ -1128,23 +1305,37 @@ internal static class AlphaCommandHints
 
     private sealed class AlphaCompletionData : ICompletionData
     {
-        private readonly AlphaCommand command;
+        internal readonly AlphaCommand command;
+        private object? description;
 
         public AlphaCompletionData(AlphaCommand command) => this.command = command;
 
         public ImageSource? Image => null;
         public string Text => command.Name;
         public object Content => BuildCompletionItem(command);
-        public object Description => BuildHintPanel(command);
+        public object? Description => Describe(command.Name)?.kind == AlphaCommandKind.Effect
+            ? null : description ??= BuildHintPanel(command);
         public double Priority => 0;
 
         public void Complete(TextArea textArea, ISegment completionSegment, EventArgs insertionRequestEventArgs)
         {
             var insertionOffset = completionSegment.Offset;
+            var document = textArea.Document;
+            if (completionSegment.EndOffset < document.TextLength &&
+                document.GetCharAt(completionSegment.EndOffset) == '*')
+            {
+                document.Replace(completionSegment, command.Name);
+                textArea.Caret.Offset = insertionOffset + command.Name.Length + 1;
+                ShowOrUpdateInsight(textArea);
+                return;
+            }
             var parenthesized = RequiresParenthesizedArguments(command.Name);
             var replacement = parenthesized
                 ? command.Name + "*()>"
                 : command.Name + "*>";
+            if (completionSegment.EndOffset < textArea.Document.TextLength &&
+                textArea.Document.GetCharAt(completionSegment.EndOffset) == '>')
+                replacement = replacement[..^1];
             textArea.Document.Replace(completionSegment, replacement);
             textArea.Caret.Offset = insertionOffset + command.Name.Length +
                                    (parenthesized ? 2 : 1);
@@ -1228,7 +1419,11 @@ internal static class AlphaCommandHints
                 textArea.ClearSelection();
                 return;
             }
-            textArea.Document.Replace(completionSegment, value);
+            var length = completionSegment.Length;
+            if (completionSegment.EndOffset < textArea.Document.TextLength &&
+                textArea.Document.GetCharAt(completionSegment.EndOffset) == ']')
+                length++;
+            textArea.Document.Replace(completionSegment.Offset, length, value);
         }
     }
 
@@ -1238,27 +1433,32 @@ internal static class AlphaCommandHints
         private int parameterIndex;
         private bool? enabled;
         private bool instantMode;
+        private bool transitionMode;
+        private string curveText = "";
 
         public AlphaOverloadProvider(
             AlphaCommand command,
             int parameterIndex,
             bool? enabled,
-            bool instantMode)
+            bool instantMode,bool transitionMode)
         {
             this.command = command;
             this.parameterIndex = parameterIndex;
             this.enabled = enabled;
             this.instantMode = instantMode;
+            this.transitionMode = transitionMode;
         }
 
-        public void Update(int newParameterIndex, bool? newEnabled, bool newInstantMode)
+        public void Update(int newParameterIndex, bool? newEnabled, bool newInstantMode,bool newTransitionMode, string newCurveText)
         {
             if (parameterIndex == newParameterIndex && enabled == newEnabled &&
-                instantMode == newInstantMode)
+                instantMode == newInstantMode && transitionMode==newTransitionMode && curveText == newCurveText)
                 return;
             parameterIndex = newParameterIndex;
             enabled = newEnabled;
             instantMode = newInstantMode;
+            transitionMode = newTransitionMode;
+            curveText = newCurveText;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CurrentHeader)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CurrentContent)));
         }
@@ -1267,7 +1467,52 @@ internal static class AlphaCommandHints
         public int Count => 1;
         public string? CurrentIndexText => null;
         public object CurrentHeader => BuildHeader();
-        public object CurrentContent => BuildHintContent(command, parameterIndex <= 1 ? command.Description : ParameterExplanation());
+        public object CurrentContent
+        {
+            get
+            {
+                var content = BuildHintContent(command, transitionMode ? TransitionExplanation() :
+                    parameterIndex <= 1 ? command.Description : ParameterExplanation());
+                return content;
+            }
+        }
+
+        private string TransitionExplanation() => parameterIndex switch
+        {
+            1 when command.Name is "COLOR" or "COLORV" => Localized("当前参数：起始颜色，6 位 RGB 十六进制，例如 FF0000。","Starting colour as six RGB hex digits, such as FF0000.","開始色。FF0000 など6桁の RGB 十六進数。"),
+            2 when command.Name is "COLOR" or "COLORV" => Localized("当前参数：终止颜色，6 位 RGB 十六进制。RGB 三个通道分别过渡，到持续时间结束时到达并保持。","Target colour as six RGB hex digits. Each channel interpolates independently and holds its target.","終了色。6桁の RGB 十六進数。各チャンネルを個別に補間し、終了色を維持。"),
+            1 => Localized("当前参数：起始值。SIZE 可写 (横向倍率,纵向倍率)。","Starting value. SIZE also accepts (scaleX,scaleY).","開始値。SIZEは(X倍率,Y倍率)も使用可能。"),
+            2 => Localized("当前参数：终止值，到持续时间结束时到达并保持。","Target value, reached and held at the end of the duration.","終了値。時間の終了後もこの値を維持。"),
+            3 => Localized("当前参数：持续时间，秒数或 8:1。SV 和 V 版本从此槽位计时；其他版本从各音符出现时计时。0 表示立即到终止值。","Duration in seconds or beats. SV and V commands start at this slot; others start when each note appears. Zero reaches the target immediately.","持続時間。秒数または8:1。SV/Vは現在のスロット、それ以外は各ノーツの出現時から計測。0で即時切替。"),
+            4 => TransitionFunctionsExplanation(),
+            _ => Localized("当前参数：可以省略。ease 系列的幂次，默认 2，范围 0.1–100；2/3/4/5 对应二次/三次/四次/五次曲线。其他函数不填此参数。","Optional: power for ease curves, default 2, range 0.1–100; use 2/3/4/5 for quadratic/cubic/quartic/quintic. Omit for other curves.","省略可能。easeの指数は既定2、範囲0.1–100。2/3/4/5で2/3/4/5次曲線。他の関数は指定不可。")
+        };
+
+        private static string TransitionFunctionsExplanation()
+        {
+            string Describe(string function)
+            {
+                var family=function switch
+                {
+                    "linear"=>Localized("线性","Linear","線形"),
+                    "smoothstep"=>Localized("平滑起停","Smooth endpoints","滑らかな開始と終了"),
+                    "smootherstep"=>Localized("更柔和的平滑起停","Smoother endpoints","さらに滑らかな開始と終了"),
+                    _ when function.StartsWith("ease")=>Localized("幂函数，可调幂次","Power, adjustable exponent","べき乗、指数調整可能"),
+                    _ when function.StartsWith("sine")=>Localized("正弦","Sine","正弦"),
+                    _ when function.StartsWith("expo")=>Localized("指数","Exponential","指数"),
+                    _ when function.StartsWith("circ")=>Localized("圆弧","Circular","円弧"),
+                    _ when function.StartsWith("back")=>Localized("回弹，有超调","Back, overshoots","バック、行き過ぎあり"),
+                    _ when function.StartsWith("elastic")=>Localized("弹性振荡，有超调","Elastic, overshoots","弾性振動、行き過ぎあり"),
+                    _=>Localized("弹跳","Bounce","バウンド")
+                };
+                var direction=function.EndsWith("inout") ? Localized("，缓入缓出",", in/out","、イン/アウト") :
+                    function.EndsWith("out") ? Localized("，缓出",", out","、アウト") :
+                    function.EndsWith("in") ? Localized("，缓入",", in","、イン") : "";
+                return function+" — "+family+direction;
+            }
+            return Localized("当前参数：函数。","Current argument: function.","現在の引数：関数。")+"\n"+
+                string.Join("\n",NoteValueTransition.Functions.Select(Describe));
+        }
 
         private string ParameterExplanation()
         {
@@ -1286,10 +1531,13 @@ internal static class AlphaCommandHints
         private StackPanel BuildHeader()
         {
             var panel = new StackPanel { Orientation = Orientation.Horizontal };
-            var active = IsScreenEffect(command.Name) && enabled == false && parameterIndex == 2
-                ? RequiredEffectParameterCount(command.Name) + 1 : parameterIndex;
-            var header = BuildSignatureBlock(instantMode && IsScreenEffect(command.Name)
-                ? GetStateSignatureOverview(command.Name, true)! : CommonSignature(command), active);
+            var signature = transitionMode ? AlphaCommandExamples.TransitionHeader(command.Name,CurrentLanguage) :
+                IsScreenEffect(command.Name) && enabled == false
+                ? GetStateSignature(command.Name, false)!
+                : instantMode && IsScreenEffect(command.Name)
+                    ? GetStateSignatureOverview(command.Name, true)!
+                    : CommonSignature(command);
+            var header = BuildSignatureBlock(signature, parameterIndex);
             header.FontWeight = FontWeights.Bold;
             panel.Children.Add(header);
             return panel;
@@ -1297,6 +1545,8 @@ internal static class AlphaCommandHints
 
         private string GetCurrentParameterHint()
         {
+            if (command.Name == "FLIP" && parameterIndex == (instantMode ? 4 : enabled == false ? 2 : 3))
+                return Localized("当前参数：可以省略。仅音符开关，默认 True；False 翻转整幅画面。", "Optional notes-only flag: True by default; False reflects the whole image.", "音符のみ：省略時True、Falseで画面全体を反転。");
             if (command.Name == "ROTATE" && parameterIndex == 4)
                 return Localized("当前参数：可以省略。True 同时旋转 PV，False 不旋转 PV；默认 False。", "Current parameter: optional. True also rotates PV; False keeps PV stationary (default).", "現在の引数：省略可能。True はPVも回転、False はPVを固定（初期値）。");
             if (IsScreenEffect(command.Name))
@@ -1384,15 +1634,17 @@ internal static class AlphaCommandHints
                 ("TEXT", 1) => Localized("当前参数：双引号内的字幕内容。", "Current parameter: caption text inside double quotes.", "現在の引数：二重引用符内の字幕内容。"),
                 ("TEXT", 2) => Localized("当前参数：显示时长；省略时保持到下一条 TEXT。", "Current parameter: display duration; omit it to keep the caption until the next TEXT.", "現在の引数：表示時間。省略すると次の TEXT まで表示します。"),
                 ("TEXT", 3) or ("TEXT", 4) or ("TEXT", 5) => Localized(
-                    "当前参数：依次为 x、y、字号；x/y 是相对左上角的屏幕比例。保留默认值时留空该槽，也兼容 x=、y=、size= 命名写法。",
-                    "Current parameters: x, y and size in order. x/y are screen fractions from the top left. Leave a slot empty for its default; named x=, y= and size= forms also work.",
-                    "現在の引数：順に x、y、サイズ。x/y は左上からの画面比です。既定値は空欄で飛ばせ、x=、y=、size= 形式も使えます。"),
+                    "当前参数：依次为 x、y、字号；x/y 是相对所选原点的屏幕宽高比例，向右、向下为正。留空使用默认值，也可写 x=、y=、size=。",
+                    "Parameters: x, y and size. x/y are screen fractions from the selected origin, positive right/down. Leave a slot empty for its default, or use x=, y= and size=.",
+                    "引数：順に x、y、サイズ。x/y は選んだ原点からの画面比率、右と下が正。空欄で既定値、x=、y=、size= も使えます。"),
                 ("TEXT", 6) => Localized(
-                    "当前参数：字体；可选 Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta，也兼容 font=字体。",
-                    "Current parameter: font. Choices: Default, CascadiaMono, CascadiaCode, MicrosoftYaHei, NotoSansSC, SimSun, DengXian, NotoSerifSC, GlobalMonospace, Aileron, Allerta; font=FONT also works.",
-                    "現在の引数：フォント。Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta。font=形式も使えます。"),
+                    "当前参数：字体名或 TTF/OTF/TTC 路径，也可写 font=路径。相对路径先找谱面目录，再找程序根目录 Fonts；Tab 可选择 Fonts 内的字体。Default 使用原字幕字体。",
+                    "Font name or TTF/OTF/TTC path, including font=path. Relative paths search the chart folder, then the application Fonts folder. Tab lists library fonts; Default uses the original subtitle font.",
+                    "フォント名またはTTF/OTF/TTCパス。相対パスは譜面フォルダー、次にアプリのFontsを検索。TabでFonts内を選択。Defaultは元の字幕フォント。"),
                 ("TEXT", 7) => Localized("当前参数：index 为任意非负整数；不同索引可同时显示，相同索引的新字幕替换旧字幕。", "Current parameter: index is any non-negative integer. Different indices coexist; a new caption replaces the same index.", "現在の引数：index は 0 以上の整数。異なる index は同時表示でき、同じ index の新字幕だけを置き換えます。"),
                 ("TEXT", 8) => Localized("当前参数：样式，可写 Fade 或 Typewriter；也兼容 style=样式。", "Current parameter: style, either Fade or Typewriter; style=STYLE also works.", "現在の引数：スタイル。Fade または Typewriter。style=形式も使えます。"),
+                ("TEXT", 10) => Localized("当前参数：字幕颜色，6 位十六进制 RGB，默认 FFFFFF；可写 color=00BBFF。", "Caption color: six hexadecimal RGB digits, default FFFFFF; color=00BBFF is also accepted.", "字幕色：6 桁の RGB。既定は FFFFFF。color=00BBFF も使えます。"),
+                ("TEXT", 11) => Localized("当前参数：原点，TopLeft 为屏幕左上角并左上对齐（默认）；Center 为屏幕中心并居中对齐。x/y 按屏幕宽高比例偏移，向右、向下为正；可写 origin=Center。", "Origin: TopLeft (default) or Center; text alignment follows the origin. x/y are screen fractions, positive right/down. Use origin=Center.", "原点：TopLeft（既定）または Center。文字の揃えも切り替わります。x/y は画面比率、右と下が正。origin=Center も使えます。"),
                 ("TEXT", 9) => Localized("当前参数：过渡时间；Fade 时为渐入时间，Typewriter 时为逐字显示完成时间，也兼容 transition=时长。", "Current parameter: transition duration. It is fade-in time for Fade and typing time for Typewriter; transition=DURATION also works.", "現在の引数：切り替え時間。Fade ではフェード、Typewriter では文字送り完了時間です。transition=形式も使えます。"),
                 ("SHOWJUDGETEXT" or
                     "SHOWJUDGEINFO" or "SHOWCOMBOINFO", 1) => Localized("当前参数：True 显示，False 隐藏。", "Current parameter: True shows and False hides.", "現在の引数：True で表示、False で非表示。"),
@@ -1537,7 +1789,7 @@ internal static class AlphaCommandHints
                 run.FontWeight = FontWeights.Bold;
                 run.Background = HintParamActive;
                 if (!part.Optional)
-                    run.Foreground = Brushes.White;
+                    run.Foreground = HintForeground;
             }
             block.Inlines.Add(run);
         }

@@ -28,6 +28,7 @@ namespace MajdataCore
         Color,
         Size,
         Alpha,
+        Angle,
         JudgeLine,
         Subtitle,
         Display,
@@ -86,6 +87,7 @@ namespace MajdataCore
         // SHAKE lets the direction stay empty to set only the transition.
         public bool allowsEmpty;
         public bool requiresQuotes;
+        public bool allowsTransition;
         public bool optional;
         public string defaultText = string.Empty;
 
@@ -105,6 +107,13 @@ namespace MajdataCore
                 return allowsEmpty;
             if (IsReset(text))
                 return true;
+            if (allowsTransition && NoteValueTransition.TryParse(text, bpm, this, out _))
+                return true;
+            if (text.Length >= 2 && text[0] == '(' &&
+                text[text.Length - 1] == ')' &&
+                AlphaCommandGrammar.TrySplitValues(text.Substring(1, text.Length - 2), out var scalar) &&
+                scalar.Count == 1)
+                return Matches(scalar[0], bpm);
 
             switch (kind)
             {
@@ -621,7 +630,7 @@ namespace MajdataCore
             }
 
             if (!TrySplitValues(body.Substring(1, body.Length - 2), out var values) ||
-                values.Count is < 1 or > 9 ||
+                values.Count is < 1 or > 11 ||
                 values[0].Length < 2 ||
                 values[0][0] != '"' ||
                 values[0][values[0].Length - 1] != '"')
@@ -638,14 +647,14 @@ namespace MajdataCore
                 positional &= values[index].IndexOf('=') < 0;
             if (positional)
             {
-                if (values.Count > 9 ||
+                if (values.Count > 11 ||
                     values[1].Length > 0 && !TryParseDuration(values[1], bpm, out _) ||
                     values.Count > 2 && values[2].Length > 0 &&
-                    !TryFiniteNumber(values[2], 0f, 1f) ||
+                    !TryFiniteNumber(values[2], float.MinValue, float.MaxValue) ||
                     values.Count > 3 && values[3].Length > 0 &&
-                    !TryFiniteNumber(values[3], 0f, 1f) ||
+                    !TryFiniteNumber(values[3], float.MinValue, float.MaxValue) ||
                     values.Count > 4 && values[4].Length > 0 &&
-                    !TryFiniteNumber(values[4], 8f, 200f) ||
+                    !TryFiniteNumber(values[4], float.MinValue, float.MaxValue) ||
                     values.Count > 5 && values[5].Length > 0 &&
                     !TryNormalizeSubtitleFont(values[5], out _) ||
                     values.Count > 6 && values[6].Length > 0 &&
@@ -655,11 +664,13 @@ namespace MajdataCore
                     values.Count > 7 && values[7].Length > 0 &&
                     !TryNormalizeSubtitleStyle(values[7], out _) ||
                     values.Count > 8 && values[8].Length > 0 &&
-                    !TryParseDuration(values[8], bpm, out _))
+                    !TryParseDuration(values[8], bpm, out _) ||
+                    values.Count > 9 && values[9].Length > 0 && !Color().Matches(values[9],bpm) ||
+                    values.Count > 10 && values[10].Length > 0 && !TryNormalizeSubtitleOrigin(values[10], out _))
                 {
                     error = Diagnose(
-                        "TEXT 位置参数格式为（\"内容\"，持续时间，x，y，字号，字体，索引，样式，过渡时间）",
-                        "TEXT POSITIONAL FORM IS (\"CONTENT\", DURATION, X, Y, SIZE, FONT, INDEX, STYLE, TRANSITION)",
+                        "TEXT 位置参数格式为（\"内容\"，持续时间，x，y，字号，字体，索引，样式，过渡时间，颜色，原点）",
+                        "TEXT POSITIONAL FORM IS (\"CONTENT\", DURATION, X, Y, SIZE, FONT, INDEX, STYLE, TRANSITION, COLOR, ORIGIN)",
                         token);
                     return false;
                 }
@@ -686,21 +697,22 @@ namespace MajdataCore
                     }
                     var valid = key switch
                     {
-                        "x" or "y" => TryFiniteNumber(option, 0f, 1f),
-                        "size" => TryFiniteNumber(option, 8f, 200f),
+                        "x" or "y" or "size" => TryFiniteNumber(option, float.MinValue, float.MaxValue),
                         "font" => TryNormalizeSubtitleFont(option, out _),
+                        "color" => Color().Matches(option,bpm),
                         "index" => int.TryParse(option, NumberStyles.Integer,
                                        CultureInfo.InvariantCulture, out var subtitleIndex) &&
                                    subtitleIndex >= 0,
                         "style" => TryNormalizeSubtitleStyle(option, out _),
+                        "origin" => TryNormalizeSubtitleOrigin(option, out _),
                         "transition" => TryParseDuration(option, bpm, out _),
                         _ => false
                     };
                     if (valid)
                         continue;
                     error = Diagnose(
-                        "TEXT 命名参数格式错误；支持 x、y、size、font、index、style 和 transition",
-                        "INVALID TEXT NAMED PARAMETER; USE X, Y, SIZE, FONT, INDEX, STYLE OR TRANSITION",
+                        "TEXT 命名参数格式错误；支持 x、y、size、font、index、style、transition、color 和 origin",
+                        "INVALID TEXT NAMED PARAMETER; USE X, Y, SIZE, FONT, INDEX, STYLE, TRANSITION, COLOR OR ORIGIN",
                         token);
                     return false;
                 }
@@ -718,9 +730,21 @@ namespace MajdataCore
             return true;
         }
 
+        public static bool TryNormalizeSubtitleOrigin(string value, out string normalized)
+        {
+            normalized = string.Equals(value.Trim(), "Center", StringComparison.OrdinalIgnoreCase) ? "Center" : "TopLeft";
+            return string.Equals(value.Trim(), normalized, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static bool TryNormalizeSubtitleFont(
             string value, out string normalized)
         {
+            var file = (value ?? string.Empty).Trim().Trim('"');
+            if (FontFiles.IsFontFile(file))
+            {
+                normalized = file;
+                return true;
+            }
             normalized = string.Empty;
             var compact = (value ?? string.Empty).Trim()
                 .Replace(" ", string.Empty)
@@ -926,7 +950,7 @@ namespace MajdataCore
                     if (candidate.kind == kind && candidate.slots.Length == 3 &&
                         candidate.slots[2].kind == AlphaValueKind.Boolean)
                         form = candidate;
-            if (descriptor.Canonical == "Rotate" && values.Count > 1 && bool.TryParse(values[values.Count - 1], out _))
+            if ((descriptor.Canonical is "Rotate" or "Move" or "Flip") && values.Count > 1 && bool.TryParse(values[values.Count - 1], out _))
                 foreach (var candidate in descriptor.forms)
                     if (candidate.kind == kind && candidate.slots.Length == values.Count &&
                         candidate.slots[candidate.slots.Length - 1].kind == AlphaValueKind.Boolean)
@@ -1241,7 +1265,7 @@ namespace MajdataCore
                     name = "SV",
                     kind = AlphaCommandKind.Sv,
                     targets = ScrollNoteTypes,
-                    scalar = Number(defaultText: "1"),
+                    scalar = Number(allowsNull: true, defaultText: "1"),
                     typedValue = Number(allowsNull: true)
                 },
                 new AlphaCommandDescriptor
@@ -1327,14 +1351,14 @@ namespace MajdataCore
                 {
                     name = "ALPHA",
                     kind = AlphaCommandKind.Alpha,
-                    targets = VisualNoteTypes,
+                    targets = VisualNoteTypes.Append("tapline").ToArray(),
                     scalar = Number(allowsNull: true, defaultText: "1")
                 },
                 new AlphaCommandDescriptor
                 {
                     name = "ALPHAV",
                     kind = AlphaCommandKind.Alpha,
-                    targets = VisualNoteTypes,
+                    targets = VisualNoteTypes.Append("tapline").ToArray(),
                     scalar = Number(allowsNull: true, defaultText: "1")
                 },
                 new AlphaCommandDescriptor
@@ -1408,8 +1432,10 @@ namespace MajdataCore
                             {
                                 kind = AlphaValueKind.Text,
                                 optional = true,
-                                defaultText = "0.3"
-                            })
+                                defaultText = "0"
+                            },
+                            new AlphaValueSpec { kind=AlphaValueKind.Color, optional=true, defaultText="FFFFFF" },
+                            new AlphaValueSpec { kind=AlphaValueKind.Keyword, optional=true, defaultText="TopLeft", keywords=new[] { "TopLeft", "Center" } })
                     }
                 }
             };
@@ -1560,6 +1586,24 @@ namespace MajdataCore
             foreach (var effect in BuildScreenEffects())
                 commands.Add(effect);
 
+            foreach (var name in new[] { "ANGLE", "ANGLEV" })
+                commands.Add(new AlphaCommandDescriptor
+                {
+                    name = name, kind = AlphaCommandKind.Angle,
+                    targets = VisualNoteTypes.Where(type => type != "blockarea").ToArray(),
+                    scalar = Number(allowsNull: true, defaultText: "0")
+                });
+            foreach (var command in commands)
+            {
+                if (command.category != AlphaCommandCategory.Note || command.scalar == null) continue;
+                if (command.kind != AlphaCommandKind.Bounce && command.name is not ("SPAWN" or "DESTROY") &&
+                    command.scalar.kind is AlphaValueKind.Number or AlphaValueKind.Scale or AlphaValueKind.Color)
+                {
+                    command.scalar.allowsTransition = true;
+                    if (command.typedValue != null) command.typedValue.allowsTransition = true;
+                }
+            }
+
             return commands.ToArray();
         }
 
@@ -1595,6 +1639,22 @@ namespace MajdataCore
                 effects.Add(BuildScreenEffect(filter.Name, filter.Canonical, false,
                     new[] { filter.Canonical == "Kaleidoscope" ? Number(defaultText: "45") : filter.Canonical == "LensDistort" ? Number(-1, 1, defaultText: "0.5") :
                         Number(0, filter.Canonical == "Bloom" ? 4 : 1, defaultText: "0.5") }, null));
+
+            effects.Add(new AlphaCommandDescriptor
+            {
+                name = "FLIP",
+                canonical = "Flip",
+                kind = AlphaCommandKind.Effect,
+                category = AlphaCommandCategory.Filter,
+                forms = new[]
+                {
+                    Form(AlphaArgumentFormKind.StateOn, Boolean(), Number(defaultText: "0"), Clone(Boolean(defaultText: "True"), true)),
+                    Form(AlphaArgumentFormKind.StateOff, Boolean(), Clone(Boolean(defaultText: "True"), true)),
+                    Form(AlphaArgumentFormKind.Instant,
+                        new AlphaValueSpec { kind = AlphaValueKind.Keyword, keywords = new[] { "Instant" }, defaultText = "Instant" },
+                        Number(defaultText: "0"), Duration(), Clone(Boolean(defaultText: "True"), true))
+                }
+            });
 
             // FADE drives the same filter as FLASH, aimed at black.
             effects.Add(BuildScreenEffect(
@@ -1712,7 +1772,7 @@ namespace MajdataCore
                     Boolean(), Number(), Boolean(defaultText: "True")));
             }
 
-            if (canonical == "Rotate")
+            if (canonical == "Rotate" || canonical == "Move")
             {
                 // Append a PV flag to every existing form, including forms
                 // whose optional transition is omitted before the flag.

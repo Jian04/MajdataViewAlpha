@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -14,24 +15,25 @@ public partial class Infomation : Window
 {
     public event Action? InformationChanged;
     private bool loaded;
+    private string chartDirectory = "";
     private readonly System.Windows.Threading.DispatcherTimer saveTimer = new()
     { Interval = TimeSpan.FromMilliseconds(600) };
     public Infomation()
     {
         InitializeComponent();
-        saveTimer.Tick += (_, _) => { saveTimer.Stop(); InformationChanged?.Invoke(); };
+        saveTimer.Tick += (_, _) => FlushInformation();
         foreach (var input in new[] { TitleTextbox, ArtistTextbox, DesignTextbox,
                      BpmTextbox, ClockCountTextbox, OtherTextbox })
             input.TextChanged += (_, _) => CommitInformation();
         Closing += (_, _) => {
             if (!saveTimer.IsEnabled) return;
-            saveTimer.Stop(); InformationChanged?.Invoke();
+            FlushInformation();
         };
     }
 
     private void CommitInformation()
     {
-        if (!loaded) return;
+        if (!loaded || !IsCurrentChart) return;
         SimaiProcess.title = TitleTextbox.Text;
         SimaiProcess.artist = ArtistTextbox.Text;
         SimaiProcess.designer = DesignTextbox.Text;
@@ -41,25 +43,60 @@ public partial class Infomation : Window
         saveTimer.Stop(); saveTimer.Start();
     }
 
-    private void InfomationWindow_Loaded(object sender, RoutedEventArgs e)
+    private bool IsCurrentChart => string.Equals(chartDirectory, MainWindow.maidataDir, StringComparison.OrdinalIgnoreCase);
+
+    private void FlushInformation()
     {
+        saveTimer.Stop();
+        if (loaded && IsCurrentChart) InformationChanged?.Invoke();
+    }
+
+    internal void FlushPendingInformation()
+    {
+        if (saveTimer.IsEnabled) FlushInformation();
+    }
+
+    private void InfomationWindow_Loaded(object sender, RoutedEventArgs e) => ReloadChartInformation();
+
+    internal void ReloadChartInformation()
+    {
+        saveTimer.Stop();
+        loaded = false;
+        chartDirectory = MainWindow.maidataDir;
         TitleTextbox.Text = SimaiProcess.title;
         ArtistTextbox.Text = SimaiProcess.artist;
         DesignTextbox.Text = SimaiProcess.designer;
         BpmTextbox.Text = SimaiProcess.GetWholeBpmText();
         ClockCountTextbox.Text = SimaiProcess.GetClockCountText();
         OtherTextbox.Text = SimaiProcess.other_commands;
-        LoadImageFromDefault();
+        ReloadChartAssets();
         RenderOptions.SetBitmapScalingMode(SaltImage, BitmapScalingMode.HighQuality);
         loaded = true;
     }
 
+    internal void ReloadChartAssets()
+    {
+        if (!IsCurrentChart) return;
+        var paths = new[] { MajdataCore.ChartCover.Find(chartDirectory),
+            MajdataCore.ChartCover.FindBackground(chartDirectory),
+            (Owner as MainWindow)?.GetOriginalTrackPath() };
+        var inputs = new[] { CoverTextbox, BackgroundTextbox, AudioTextbox };
+        for (var index = 0; index < inputs.Length; index++)
+        { inputs[index].Text = paths[index] == null ? "" : Path.GetFileName(paths[index]); inputs[index].ToolTip = paths[index]; }
+        LoadImageFromDefault();
+    }
+
+    private async void SelectAsset_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsCurrentChart && Owner is MainWindow main && sender is Button { Tag: string role })
+            await main.SelectChartAssetAsync(Enum.Parse<ChartAssetRole>(role));
+    }
+
     private void LoadImageFromDefault()
     {
-        if (File.Exists(MainWindow.maidataDir + "/bg.png"))
-            LoadImageFromByte(File.ReadAllBytes(MainWindow.maidataDir + "/bg.png"));
-        else if (File.Exists(MainWindow.maidataDir + "/bg.jpg"))
-            LoadImageFromByte(File.ReadAllBytes(MainWindow.maidataDir + "/bg.jpg"));
+        var cover = MajdataCore.ChartCover.Find(MainWindow.maidataDir);
+        if (cover != null)
+            SaltImage.Source = MainWindow.ReadChartThumbnail(cover, 512);
         else
             SaltImage.Source =
                 new BitmapImage(new Uri("pack://application:,,,/MajdataEdit;component/Image/bg_dummy.jpg"));
@@ -68,17 +105,20 @@ public partial class Infomation : Window
     private void LoadImageFromByte(byte[] data)
     {
         var image = new BitmapImage();
+        using var stream = new MemoryStream(data);
         image.BeginInit();
-        image.StreamSource = new MemoryStream(data);
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.StreamSource = stream;
         image.EndInit();
+        image.Freeze();
         SaltImage.Source = image;
     }
 
-    private void ReadMetadata(string path)
+    private async Task ReadMetadataAsync(string path)
     {
         var formattedPath = path;
 
-        if (!path.EndsWith(".ogg") && !path.EndsWith(".mp3"))
+        if (!path.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
         {
             var ext = ".mp3";
 
@@ -87,7 +127,7 @@ public partial class Infomation : Window
             formattedPath += ext;
         }
 
-        var file = TagLib.File.Create(formattedPath);
+        using var file = TagLib.File.Create(formattedPath);
         TitleTextbox.Text = file.Tag.Title;
         ArtistTextbox.Text = file.Tag.JoinedPerformers;
         if (file.Tag.Pictures.Length > 0)
@@ -102,16 +142,16 @@ public partial class Infomation : Window
                 return;
             }
 
-            if (pic.MimeType.Contains("jpeg"))
+            if (Owner is MainWindow main && (pic.MimeType.Contains("jpeg") || pic.MimeType.Contains("png")))
             {
-                DelBGs();
-                File.WriteAllBytes(MainWindow.maidataDir + "/bg.jpg", pic.Data.Data);
-            }
-
-            if (pic.MimeType.Contains("png"))
-            {
-                DelBGs();
-                File.WriteAllBytes(MainWindow.maidataDir + "/bg.png", pic.Data.Data);
+                var temporary = MajdataCore.AlphaSession.ChartWorkFile(chartDirectory,
+                    Guid.NewGuid() + (pic.MimeType.Contains("png") ? ".png" : ".jpg"));
+                try
+                {
+                    await File.WriteAllBytesAsync(temporary, pic.Data.Data);
+                    if (IsCurrentChart) await main.AssignChartAssetAsync(temporary, ChartAssetRole.Background, confirmReplace: false);
+                }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
             }
 
             Console.WriteLine(pic.MimeType);
@@ -119,42 +159,23 @@ public partial class Infomation : Window
         }
     }
 
-    private void ReadTrackButton_Click(object sender, RoutedEventArgs e)
+    private async void ReadTrackButton_Click(object sender, RoutedEventArgs e)
     {
-        ReadMetadata(MainWindow.maidataDir + "/track");
+        if (IsCurrentChart) await ReadMetadataAsync(Path.Combine(chartDirectory, "track"));
     }
 
-    private void ReadFileButton_Click(object sender, RoutedEventArgs e)
+    private async void ReadFileButton_Click(object sender, RoutedEventArgs e)
     {
         var openFileDialog = new OpenFileDialog
         {
             Filter = "*.mp3, *.ogg|*.mp3;*.ogg"
         };
-        if ((bool)openFileDialog.ShowDialog()!) ReadMetadata(openFileDialog.FileName);
+        if (IsCurrentChart && openFileDialog.ShowDialog() == true) await ReadMetadataAsync(openFileDialog.FileName);
     }
 
-    private void SaltImage_MouseDown(object sender, MouseButtonEventArgs e)
+    private async void SaltImage_MouseDown(object sender, MouseButtonEventArgs e)
     {
-        var openFileDialog = new OpenFileDialog
-        {
-            InitialDirectory = "",
-            Filter = "图片|*.png;*.jpg"
-        };
-        if ((bool)openFileDialog.ShowDialog()!)
-        {
-            var data = File.ReadAllBytes(openFileDialog.FileName);
-            var info = new FileInfo(openFileDialog.FileName);
-            LoadImageFromByte(data);
-            DelBGs();
-            File.Copy(openFileDialog.FileName, MainWindow.maidataDir + "/bg" + info.Extension);
-            CommitInformation();
-        }
-    }
-
-    private void DelBGs()
-    {
-        if (File.Exists(MainWindow.maidataDir + "/bg.png")) File.Delete(MainWindow.maidataDir + "/bg.png");
-        if (File.Exists(MainWindow.maidataDir + "/bg.jpg")) File.Delete(MainWindow.maidataDir + "/bg.jpg");
+        if (IsCurrentChart && Owner is MainWindow main) await main.SelectChartAssetAsync(ChartAssetRole.Cover);
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)

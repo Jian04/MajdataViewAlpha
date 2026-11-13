@@ -5,7 +5,7 @@
         lex:LocalizeDictionary.DesignCulture="zh-CN"
         lex:ResxLocalizationProvider.DefaultAssembly="MajdataEdit"
         lex:ResxLocalizationProvider.DefaultDictionary="Langs"
-        Title="{lex:Loc RecordVideo}" Height="610" Width="700" Background="{DynamicResource WindowBackground}"
+        Title="导出视频" Height="610" Width="700" Background="{DynamicResource WindowBackground}"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
         ShowInTaskbar="False" Loaded="RecordVideoWindow_Loaded">
     <Grid Margin="14" Background="{DynamicResource WindowBackground}">

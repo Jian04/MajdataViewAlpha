@@ -217,8 +217,11 @@ public sealed class RoomPublicTunnel : IDisposable
         Process? process = null;
         try
         {
-            var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MajdataAlpha", "Network");
+            var folder = Path.Combine(MajdataCore.AlphaSession.EditorDataRoot, "Cache", "Network");
             Directory.CreateDirectory(folder);
+            var previousHosts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MajdataAlpha", "Network", "known_hosts");
+            var hosts = Path.Combine(folder, "known_hosts");
+            if (!File.Exists(hosts) && File.Exists(previousHosts)) File.Copy(previousHosts, hosts);
             var start = new ProcessStartInfo(ssh)
             { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
             foreach (var argument in new[] { "-T", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
@@ -317,9 +320,11 @@ public sealed class RoomPublicTunnel : IDisposable
     }
     private static async Task<string> GetBinary(CancellationToken cancellation)
     {
-        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MajdataAlpha", "Network");
+        var root = Path.Combine(MajdataCore.AlphaSession.EditorDataRoot, "Cache", "Network");
         Directory.CreateDirectory(root);
         var file = Path.Combine(root, $"cloudflared-{Version}.exe");
+        var previous = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MajdataAlpha", "Network", Path.GetFileName(file));
+        if (!File.Exists(file) && File.Exists(previous)) File.Copy(previous, file);
         if (File.Exists(file) && Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file))).Equals(ExpectedDigest, StringComparison.OrdinalIgnoreCase)) return file;
         var temporary = file + "." + Guid.NewGuid().ToString("N") + ".download";
         using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };

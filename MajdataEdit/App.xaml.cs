@@ -12,8 +12,30 @@ namespace MajdataEdit;
 /// </summary>
 public partial class App : Application
 {
+    public static System.Windows.Media.FontFamily TitleFontFamily { get; } = Editor.FontLibrary.Load("FOT-NewRodin Pro EB.otf").Family;
+    public static System.Windows.Media.FontFamily UiFontFamily { get; } = CreateUiFont();
+
+    private static System.Windows.Media.FontFamily CreateUiFont()
+    {
+        var chinese = Editor.FontLibrary.Load("MajdataUIRounded-Regular.otf").Family;
+        var latin = Editor.FontLibrary.Load("FOT-Seurat Pro DB.otf").Family;
+        var family = new System.Windows.Media.FontFamily();
+        family.FamilyMaps.Add(new System.Windows.Media.FontFamilyMap
+        {
+            Unicode = "2E80-2FFF,3100-312F,31A0-31EF,3400-9FFF,F900-FAFF,20000-2FFFF",
+            Target = chinese.BaseUri.AbsoluteUri + chinese.Source.Substring(2)
+        });
+        // Seurat supplies the Latin text, numbers and punctuation used on covers.
+        family.FamilyMaps.Add(new System.Windows.Media.FontFamilyMap
+        {
+            Target = latin.BaseUri.AbsoluteUri + latin.Source.Substring(2)
+        });
+        return family;
+    }
+
     public App()
     {
+        MajdataSessionUi.SessionTheme.DisableWheelSelection();
         LocalizeDictionary.Instance.SetCurrentThreadCulture = true;
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
         {

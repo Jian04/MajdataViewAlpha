@@ -11,8 +11,8 @@ internal sealed class MediaClipInfoWindow : Window
     private readonly MediaTimelineEditor editor;
     private readonly TextBlock name = SessionTheme.Text("请选择时间线片段", size: 16);
     private readonly TextBlock track = SessionTheme.Text("");
-    private readonly TextBlock start = SessionTheme.Text("");
-    private readonly TextBlock end = SessionTheme.Text("");
+    private readonly TextBox start = new();
+    private readonly TextBox end = new();
     private readonly TextBlock sourceLength = SessionTheme.Text("");
     private readonly ComboBox volume = new() { Width = 105, IsEditable = true,
         ItemsSource = new[] { "0%", "25%", "50%", "75%", "100%", "150%", "200%", "300%", "400%" } };
@@ -37,9 +37,8 @@ internal sealed class MediaClipInfoWindow : Window
         panel.Children.Add(name);
         name.Margin = new Thickness(0, 0, 0, 14);
         AddInfo(panel, "轨道", track);
-        AddInfo(panel, "时间线起点", start);
-        AddInfo(panel, "时间线终点", end);
-        AddInfo(panel, "源文件时长", sourceLength);
+        AddField(panel, "时间线起点", PrepareInput(start, 90), "秒");
+        AddField(panel, "时间线终点", PrepareInput(end, 90), "秒");
         SessionTheme.Input(volume);
         AddField(audioFields, "音量", volume);
         AddField(audioFields, "渐入", PrepareInput(fadeIn, 58), "秒");
@@ -48,13 +47,16 @@ internal sealed class MediaClipInfoWindow : Window
         AddField(videoFields, "透明度", PrepareInput(opacity, 82), "%");
         panel.Children.Add(audioFields);
         panel.Children.Add(videoFields);
+        var sourceInfo = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
+        AddInfo(sourceInfo, "源文件时长", sourceLength);
+        panel.Children.Add(sourceInfo);
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         volume.SelectionChanged += (_, _) => { if (!refreshing) { applyDelay.Stop(); applyDelay.Start(); } };
         volume.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) =>
             { if (!refreshing) { applyDelay.Stop(); applyDelay.Start(); } }));
         volume.LostKeyboardFocus += (_, _) => Apply();
-        foreach (var field in new[] { fadeIn, fadeOut, brightness, opacity })
+        foreach (var field in new[] { start, end, fadeIn, fadeOut, brightness, opacity })
         {
             field.TextChanged += (_, _) => { if (!refreshing) { applyDelay.Stop(); applyDelay.Start(); } };
             field.LostKeyboardFocus += (_, _) => Apply();
@@ -93,6 +95,7 @@ internal sealed class MediaClipInfoWindow : Window
         Grid.SetColumn(values, 1); row.Children.Add(values); parent.Children.Add(row);
     }
     private void OnSelectionChanged(object? sender, EventArgs args) { if (!applying) Refresh(); }
+    internal void FlushPendingChanges() { if (applyDelay.IsEnabled) Apply(); }
     private void Refresh()
     {
         applyDelay.Stop();
@@ -110,8 +113,9 @@ internal sealed class MediaClipInfoWindow : Window
             name.Text = clip.Name;
             name.ToolTip = clip.SourcePath;
             track.Text = (clip.Track == MediaTrackKind.Audio ? "音频轨" : "视频轨") + (clip.TrackIndex + 1);
-            start.Text = Format(clip.TimelineStart) + " 秒";
-            end.Text = Format(clip.TimelineEnd) + " 秒";
+            start.Text = Format(clip.TimelineStart);
+            end.Text = Format(clip.TimelineEnd);
+            start.IsReadOnly = end.IsReadOnly = clip.Track != MediaTrackKind.Video;
             sourceLength.Text = Format(clip.SourceDuration) + " 秒";
             volume.Text = Format(clip.Volume * 100d) + "%";
             fadeIn.Text = Format(clip.FadeIn);
@@ -127,17 +131,22 @@ internal sealed class MediaClipInfoWindow : Window
     {
         applyDelay.Stop();
         if (editor.SelectedClip is not { } clip) return;
-        if (!TryRead(volume.Text.Trim().TrimEnd('%'), out var gain) || gain is < 0d or > 400d ||
+        if (!TryRead(start, out var timelineStart) || timelineStart < 0d ||
+            !TryRead(end, out var timelineEnd) || timelineEnd - timelineStart < 0.05d ||
+            !clip.IsStillImage && timelineEnd - timelineStart > clip.SourceDuration - clip.SourceOffset + 0.0001d ||
+            !TryRead(volume.Text.Trim().TrimEnd('%'), out var gain) || gain is < 0d or > 400d ||
             !TryRead(fadeIn, out var fadeStart) || fadeStart < 0d ||
             !TryRead(fadeOut, out var fadeEnd) || fadeEnd < 0d ||
             !TryRead(brightness, out var light) || light is < -100d or > 100d ||
             !TryRead(opacity, out var alpha) || alpha is < 0d or > 100d)
             return; // Partially typed values are applied when valid, without interrupting editing.
-        if (Math.Abs(clip.Volume * 100d - gain) < .0001d && Math.Abs(clip.FadeIn - fadeStart) < .0001d &&
+        if (Math.Abs(clip.TimelineStart - timelineStart) < .0001d && Math.Abs(clip.TimelineEnd - timelineEnd) < .0001d &&
+            Math.Abs(clip.Volume * 100d - gain) < .0001d && Math.Abs(clip.FadeIn - fadeStart) < .0001d &&
             Math.Abs(clip.FadeOut - fadeEnd) < .0001d && Math.Abs(clip.Brightness * 100d - light) < .0001d &&
             Math.Abs(clip.Opacity * 100d - alpha) < .0001d) return;
         applying = true;
-        try { editor.UpdateSelectedClip(clip.Duration, gain / 100d, fadeStart, fadeEnd, light / 100d, alpha / 100d); }
+        try { editor.UpdateSelectedClip(timelineEnd - timelineStart, gain / 100d, fadeStart, fadeEnd,
+            light / 100d, alpha / 100d, timelineStart); }
         finally { applying = false; }
     }
     private static bool TryRead(TextBox box, out double value) =>

@@ -27,6 +27,27 @@ namespace MajdataCore
         public string ColorHex { get { return Colors[(Slot - 1) % Colors.Length]; } }
         private static readonly string[] Colors = { "#3DA5FF", "#C779EF", "#36C9A0", "#F3AA43", "#F57391", "#65CEDB", "#A7C957", "#B39DDB" };
         public string DirectoryPath { get { return Path.Combine(Root, Id); } }
+        public static string InstallRoot
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return Directory.GetCurrentDirectory();
+#else
+#if UNITY_5_3_OR_NEWER
+                var directory = new DirectoryInfo(Path.GetDirectoryName(UnityEngine.Application.dataPath));
+#else
+                var directory = new DirectoryInfo(AppContext.BaseDirectory);
+#endif
+                if (directory.Name == "Managed" && directory.Parent.Name.EndsWith("_Data", StringComparison.OrdinalIgnoreCase))
+                    directory = directory.Parent.Parent;
+                if (directory.Parent?.Name.Equals("App", StringComparison.OrdinalIgnoreCase) == true)
+                    directory = directory.Parent.Parent;
+                return directory.FullName;
+#endif
+            }
+        }
+        public static string EditorDataRoot { get { return Path.Combine(InstallRoot, "App", "MajdataEdit"); } }
         public static string Root
         {
             get
@@ -34,7 +55,7 @@ namespace MajdataCore
 #if ALPHA_SESSION_TESTS
                 return Environment.GetEnvironmentVariable("MAJDATA_SESSION_TEST_ROOT");
 #else
-                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MajdataAlpha", "Sessions");
+                return Path.Combine(EditorDataRoot, "Cache", "Sessions");
 #endif
             }
         }
@@ -45,6 +66,7 @@ namespace MajdataCore
         }
         private static readonly Lazy<AlphaSession> current = new Lazy<AlphaSession>(() => FromArguments(Environment.GetCommandLineArgs()));
         private static AlphaSession automaticSession;
+        private static readonly HashSet<string> cleanedChartFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public static AlphaSession Current { get { return automaticSession ?? current.Value; } }
         public static void EnsureEditorSession()
         {
@@ -66,9 +88,52 @@ namespace MajdataCore
         }
         public static string ChartWorkFile(string chartFolder, string name)
         {
-            var folder = Path.Combine(chartFolder, ".majdata");
+            CleanLegacyChartWork(chartFolder);
+            var folder = Current == null
+                ? Path.Combine(EditorDataRoot, "Cache", "ChartWork",
+                    Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture))
+                : Path.Combine(Current.DirectoryPath, "ChartWork");
             Directory.CreateDirectory(folder);
             return Path.Combine(folder, FileName(name));
+        }
+        private static void CleanLegacyChartWork(string chartFolder)
+        {
+            var folder = Path.GetFullPath(chartFolder);
+            lock (cleanedChartFolders)
+            {
+                if (!cleanedChartFolders.Add(folder)) return;
+            }
+            var legacy = Path.Combine(folder, ".majdata");
+            if (!Directory.Exists(legacy)) return;
+            var activeIds = new HashSet<string>(List().Select(session => session.Id), StringComparer.OrdinalIgnoreCase);
+            foreach (var path in Directory.EnumerateFiles(legacy))
+            {
+                var name = Path.GetFileName(path);
+                var prefix = name.StartsWith("majdata-", StringComparison.OrdinalIgnoreCase) ? "majdata-"
+                    : name.StartsWith("majSetting-", StringComparison.OrdinalIgnoreCase) ? "majSetting-"
+                    : name.StartsWith("out-", StringComparison.OrdinalIgnoreCase) ? "out-" : null;
+                if (prefix == null || name.Length != prefix.Length + 32 + (prefix == "out-" ? 4 : 5) ||
+                    !name.EndsWith(prefix == "out-" ? ".wav" : ".json", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var id = name.Substring(prefix.Length, 32);
+                if (!Guid.TryParseExact(id, "N", out _) || activeIds.Contains(id) ||
+                    !name.Equals(prefix + id + (prefix == "out-" ? ".wav" : ".json"), StringComparison.OrdinalIgnoreCase))
+                    continue;
+                try { File.Delete(path); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    Trace.WriteLine($"Could not remove old chart work file {path}: {error.Message}");
+                }
+            }
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(legacy).Any())
+                    Directory.Delete(legacy);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                Trace.WriteLine($"Could not remove old chart work directory {legacy}: {error.Message}");
+            }
         }
         public static string PipeName { get { return Current == null ? "majdataRec" : "majdataRec-" + Current.Id; } }
         public static string SettingsPath(string baseline)
@@ -136,6 +201,12 @@ namespace MajdataCore
                     var item = Read(Path.GetFileName(dir));
                     if (item.IsAlive || DateTime.UtcNow.Ticks - item.Created < TimeSpan.FromMinutes(2).Ticks)
                         result.Add(item);
+                    else if ((new DirectoryInfo(dir).Attributes & FileAttributes.ReparsePoint) == 0)
+                    {
+                        try { Directory.Delete(dir, true); }
+                        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                        { Trace.WriteLine($"Could not remove expired session {dir}: {error.Message}"); }
+                    }
                 }
                 catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is FormatException || e is ArgumentException) { }
             }
@@ -164,6 +235,12 @@ namespace MajdataCore
         }
         public bool? ReadViewRecording(out long generation)
         {
+            var values = ReadViewState(out generation);
+            return values == null ? (bool?)null : values[3] == "1";
+        }
+
+        private string[] ReadViewState(out long generation)
+        {
             generation = -1;
             try
             {
@@ -173,27 +250,23 @@ namespace MajdataCore
                     !IsProcess(latest.ViewPid, latest.ViewStart) || DateTime.UtcNow.Ticks - long.Parse(values[2]) > TimeSpan.FromSeconds(5).Ticks)
                     return null;
                 generation = long.Parse(values[4]);
-                return values[3] == "1";
+                return values;
             }
             catch { return null; }
         }
         public int ReadDynamicMuri()
         {
-            if (!ReadViewRecording().HasValue) return 0;
-            try
-            {
-                var values = File.ReadAllLines(Path.Combine(DirectoryPath, "view-state.txt"));
-                return values.Length >= 6 && int.TryParse(values[5], out var count) ? Math.Max(0, count) : 0;
-            }
-            catch (IOException) { return 0; }
-            catch (UnauthorizedAccessException) { return 0; }
+            ReadDynamicMuriDetails(out var count);
+            return count;
         }
-        public string[] ReadDynamicMuriDetails()
+
+        public string[] ReadDynamicMuriDetails() => ReadDynamicMuriDetails(out _);
+
+        public string[] ReadDynamicMuriDetails(out int count)
         {
-            if (!ReadViewRecording().HasValue) return new string[0];
-            try { return File.ReadAllLines(Path.Combine(DirectoryPath, "view-state.txt")).Skip(6).ToArray(); }
-            catch (IOException) { return new string[0]; }
-            catch (UnauthorizedAccessException) { return new string[0]; }
+            var values = ReadViewState(out _);
+            count = values != null && values.Length >= 6 && int.TryParse(values[5], out var parsed) ? Math.Max(0, parsed) : 0;
+            return values != null && values.Length > 6 ? values.Skip(6).ToArray() : Array.Empty<string>();
         }
         public static bool IsProcess(int pid, long start)
         {
@@ -223,15 +296,21 @@ namespace MajdataCore
                 return true;
             });
         }
-        public Process StartProcess(string executable, bool view, bool batchWorker = false, string playbackViewSession = null)
+        public Process StartProcess(string executable, bool view, bool batchWorker = false, string playbackViewSession = null, string startupOrigin = null)
         {
+            if (view)
+                foreach (var name in new[] { "view-ready", "view-window", "startup-frame.png", "startup-capture", "startup-show" })
+                    File.Delete(Path.Combine(DirectoryPath, name));
             if (batchWorker && !view)
                 File.WriteAllText(Path.Combine(DirectoryPath, "background-worker"), "1");
             var info = new ProcessStartInfo(executable, "--alpha-session " + Id + (batchWorker ? " --batch-worker" : "")) {
                 WorkingDirectory = Path.GetDirectoryName(executable), UseShellExecute = false,
-                CreateNoWindow = true, WindowStyle = batchWorker ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal };
+                CreateNoWindow = true, WindowStyle = batchWorker || startupOrigin != null ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal };
             if (batchWorker && !view && playbackViewSession != null)
                 info.EnvironmentVariables["MAJDATA_PLAYBACK_VIEW_SESSION"] = playbackViewSession;
+            info.EnvironmentVariables.Remove("MAJDATA_STARTUP_ORIGIN");
+            if (!batchWorker && startupOrigin != null)
+                info.EnvironmentVariables["MAJDATA_STARTUP_ORIGIN"] = startupOrigin;
             var process = Process.Start(info);
             if (process == null) throw new IOException("Unable to start " + executable);
             Register(view, process);

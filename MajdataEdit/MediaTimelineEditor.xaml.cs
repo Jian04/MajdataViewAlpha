@@ -12,7 +12,6 @@ using Polygon = System.Windows.Shapes.Polygon;
 
 namespace MajdataEdit;
 
-internal sealed record MediaMarkerRequest(string Name, double? Time);
 internal sealed record MediaPlayheadRequest(double Time);
 
 public partial class MediaTimelineEditor : UserControl
@@ -79,11 +78,11 @@ public partial class MediaTimelineEditor : UserControl
     private TimelineSnapshot committedSnapshot = new(new List<MediaTimelineClip>(), null);
     private string loadedChartDirectory = "";
     private bool hasPendingChanges;
+    private readonly SemaphoreSlim configureGate = new(1, 1);
 
     public MediaTimelineEditor()
     {
         InitializeComponent();
-        TimelineCanvas.ContextMenu = BuildTimelineContextMenu();
         Loaded += (_, _) =>
         {
             ThemeManager.ThemeChanged += OnThemeChanged;
@@ -97,10 +96,11 @@ public partial class MediaTimelineEditor : UserControl
     internal event EventHandler? SelectedClipChanged;
     internal MediaTimelineClip? SelectedClip => selectedClip?.Copy();
     internal void UpdateSelectedClip(double duration, double volume, double fadeIn, double fadeOut,
-        double brightness, double opacity)
+        double brightness, double opacity, double? timelineStart = null)
     {
         if (selectedClip == null) return;
         var snapshot = CaptureSnapshot();
+        if (timelineStart.HasValue) selectedClip.TimelineStart = Math.Max(0d, timelineStart.Value);
         selectedClip.Duration = Math.Clamp(duration, MinimumClipDuration,
             selectedClip.IsStillImage ? 36000d :
             Math.Max(MinimumClipDuration, selectedClip.SourceDuration - selectedClip.SourceOffset));
@@ -113,10 +113,25 @@ public partial class MediaTimelineEditor : UserControl
         SaveProject("已更新片段参数");
         RenderTimeline();
     }
-    internal event EventHandler<MediaMarkerRequest>? MarkerRequested;
     internal event EventHandler<MediaPlayheadRequest>? PlayheadChanged;
     internal bool HasPendingChanges => hasPendingChanges;
     internal double CurrentPlayhead => playhead;
+
+    internal void InvalidateSourceMetadata() => loadedChartDirectory = "";
+    internal bool IsConfiguredFor(string directory) => !string.IsNullOrEmpty(loadedChartDirectory) &&
+        loadedChartDirectory.Equals(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+
+    internal void RenameAsset(string directory, string source, string target)
+    {
+        if (string.IsNullOrEmpty(chartDirectory) ||
+            !Path.GetFullPath(directory).Equals(Path.GetFullPath(chartDirectory), StringComparison.OrdinalIgnoreCase)) return;
+        ChartAssetFiles.RenameClips(project.Clips, directory, source, target);
+        ChartAssetFiles.RenameClips(committedSnapshot.Clips, directory, source, target);
+        foreach (var snapshot in undoHistory.Concat(redoHistory))
+            ChartAssetFiles.RenameClips(snapshot.Clips, directory, source, target);
+        if (copiedClip != null) ChartAssetFiles.RenameClips(new[] { copiedClip }, directory, source, target);
+        RenderTimeline(); SelectedClipChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     public async Task ConfigureAsync(
         string directory,
@@ -127,51 +142,60 @@ public partial class MediaTimelineEditor : UserControl
         double? trimStart,
         double? trimEnd)
     {
-        var normalizedDirectory = Path.GetFullPath(directory)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var sameChart = normalizedDirectory.Equals(loadedChartDirectory, StringComparison.OrdinalIgnoreCase);
-        chartDirectory = directory;
-        songDuration = Math.Max(0d, chartDuration);
-        SetBeatGrid(measureBeats, subdivisionBeats);
-        fallbackBeatDuration = double.IsFinite(beatDuration) && beatDuration > 0d ? beatDuration : 0.5d;
-        startMarker = trimStart;
-        endMarker = trimEnd;
-        if (!sameChart)
-            playhead = 0d;
-        selectedClip = null;
-        SelectedClipChanged?.Invoke(this, EventArgs.Empty);
-        if (sameChart)
+        await configureGate.WaitAsync();
+        try
         {
-            RenderTimeline();
-            ProjectChanged?.Invoke(this, EventArgs.Empty);
-            return;
-        }
+            var normalizedDirectory = Path.GetFullPath(directory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var sameChart = normalizedDirectory.Equals(loadedChartDirectory, StringComparison.OrdinalIgnoreCase);
+            chartDirectory = directory;
+            songDuration = Math.Max(0d, chartDuration);
+            SetBeatGrid(measureBeats, subdivisionBeats);
+            fallbackBeatDuration = double.IsFinite(beatDuration) && beatDuration > 0d ? beatDuration : 0.5d;
+            startMarker = trimStart;
+            endMarker = trimEnd;
+            if (!sameChart)
+                playhead = 0d;
+            selectedClip = null;
+            SelectedClipChanged?.Invoke(this, EventArgs.Empty);
+            if (sameChart)
+            {
+                RenderTimeline();
+                ProjectChanged?.Invoke(this, EventArgs.Empty);
+                return;
+            }
 
-        loadedChartDirectory = normalizedDirectory;
-        copiedClip = null;
-        undoHistory.Clear();
-        redoHistory.Clear();
-        project = MediaTimelineProject.Load(directory);
-        hasPendingChanges = false;
-        var hadTemporaryProject = MediaTimelineProject.HasTemporaryFile(directory);
+            loadedChartDirectory = "";
+            copiedClip = null;
+            undoHistory.Clear();
+            redoHistory.Clear();
+            project = MediaTimelineProject.Load(directory);
+            hasPendingChanges = false;
+            var hadTemporaryProject = MediaTimelineProject.HasTemporaryFile(directory);
 
-        if (project.Clips.Count == 0)
-            await AddDefaultChartMediaAsync();
-        committedSnapshot = CaptureSnapshot();
-
-        if (hadTemporaryProject)
-        {
-            project = MediaTimelineProject.LoadWorking(directory);
-            hasPendingChanges = true;
-        }
-        var metadataChanged = await RefreshSourceMetadataAsync();
-        if (metadataChanged && hasPendingChanges)
-            project.SaveTemporary(chartDirectory);
-        else if (metadataChanged)
+            if (project.Clips.Count == 0)
+                await AddDefaultChartMediaAsync();
             committedSnapshot = CaptureSnapshot();
 
-        RenderTimeline();
-        ProjectChanged?.Invoke(this, EventArgs.Empty);
+            if (hadTemporaryProject)
+            {
+                project = MediaTimelineProject.LoadWorking(directory);
+                hasPendingChanges = true;
+            }
+            var metadataChanged = await RefreshSourceMetadataAsync();
+            if (metadataChanged && hasPendingChanges)
+                project.SaveTemporary(chartDirectory);
+            else if (metadataChanged)
+            {
+                if (File.Exists(Path.Combine(chartDirectory, MediaTimelineProject.FileName))) project.Save(chartDirectory);
+                committedSnapshot = CaptureSnapshot();
+            }
+
+            loadedChartDirectory = normalizedDirectory;
+            RenderTimeline();
+            ProjectChanged?.Invoke(this, EventArgs.Empty);
+        }
+        finally { configureGate.Release(); }
     }
 
     public void RefreshChartState(
@@ -248,9 +272,10 @@ public partial class MediaTimelineEditor : UserControl
 
     private async Task AddDefaultChartMediaAsync()
     {
+        var background = MajdataCore.ChartCover.FindBackground(chartDirectory);
         var candidates = new[]
         {
-            ("pv.mp4", MediaTrackKind.Video),
+            (background == null ? "" : Path.GetFileName(background), MediaTrackKind.Video),
             ("track.ogg", MediaTrackKind.Audio),
             ("track.mp3", MediaTrackKind.Audio)
         };
@@ -261,7 +286,9 @@ public partial class MediaTimelineEditor : UserControl
             var path = Path.Combine(chartDirectory, name);
             if (!File.Exists(path))
                 continue;
-            project.Clips.Add(await CreateClipAsync(path, track, 0d));
+            var clip = await CreateClipAsync(path, track, 0d);
+            if (clip.IsStillImage) clip.Duration = clip.SourceDuration = Math.Max(DefaultImageDuration, songDuration);
+            project.Clips.Add(clip);
         }
     }
 
@@ -329,8 +356,9 @@ public partial class MediaTimelineEditor : UserControl
             var sourceDuration = await ProbeDurationAsync(sourcePath);
             var oldSourceDuration = clip.SourceDuration;
             var oldDuration = clip.Duration;
+            var wholeSource = clip.SourceOffset <= 0.0001d && clip.Duration + 0.02d >= clip.SourceDuration;
             clip.SourceDuration = sourceDuration;
-            clip.Duration = Math.Min(
+            clip.Duration = wholeSource ? sourceDuration : Math.Min(
                 clip.Duration,
                 Math.Max(MinimumClipDuration, sourceDuration - clip.SourceOffset));
             changed |= Math.Abs(oldSourceDuration - clip.SourceDuration) > 0.001d ||
@@ -339,7 +367,7 @@ public partial class MediaTimelineEditor : UserControl
         return changed;
     }
 
-    private static Task<double> ProbeDurationAsync(string path) => Task.Run(() =>
+    private static Task<double> ProbeDurationAsync(string path) => Task.Run(async () =>
     {
         if (IsAudioPath(path))
         {
@@ -368,18 +396,19 @@ public partial class MediaTimelineEditor : UserControl
         {
             using var file = TagFile.Create(path);
             var seconds = file.Properties.Duration.TotalSeconds;
-            return double.IsFinite(seconds) && seconds > 0d ? seconds : 10d;
+            if (double.IsFinite(seconds) && seconds > 0d) return seconds;
         }
-        catch
+        catch (Exception error) when (error is TagLib.UnsupportedFormatException or TagLib.CorruptFileException)
         {
-            return 10d;
+            System.Diagnostics.Trace.TraceWarning("媒体时长需要进一步探测：" + error.Message);
         }
+        return await MediaTools.ProbeVideoDurationAsync(path).ConfigureAwait(false);
     });
 
     private static bool IsImagePath(string path)
     {
         var extension = Path.GetExtension(path).ToLowerInvariant();
-        return extension is ".png" or ".jpg" or ".jpeg" or ".bmp" or ".webp";
+        return extension is ".png" or ".apng" or ".jpg" or ".jpeg" or ".bmp" or ".webp";
     }
 
     private static bool IsAudioPath(string path)
@@ -775,28 +804,6 @@ public partial class MediaTimelineEditor : UserControl
         return menu;
     }
 
-    private ContextMenu BuildTimelineContextMenu()
-    {
-        var menu = new ContextMenu
-        {
-            Background = ResourceBrush("WindowBackground", Colors.Black),
-            Foreground = ResourceBrush("ButtonForeground", Colors.White),
-            BorderBrush = ResourceBrush("MenuSeparator", Colors.DimGray),
-            BorderThickness = new Thickness(1d)
-        };
-        menu.Items.Add(MenuItem("在此设置 @start", (_, _) => RequestMarker("start", playhead)));
-        menu.Items.Add(MenuItem("在此设置 @end", (_, _) => RequestMarker("end", playhead)));
-        menu.Items.Add(new Separator());
-        menu.Items.Add(MenuItem("清除 @start", (_, _) => RequestMarker("start", null)));
-        menu.Items.Add(MenuItem("清除 @end", (_, _) => RequestMarker("end", null)));
-        return menu;
-    }
-
-    private void RequestMarker(string name, double? time)
-    {
-        MarkerRequested?.Invoke(this, new MediaMarkerRequest(name, time));
-    }
-
     private static MenuItem MenuItem(string header, RoutedEventHandler action)
     {
         var item = new MenuItem { Header = header };
@@ -1037,7 +1044,7 @@ public partial class MediaTimelineEditor : UserControl
     {
         var extension = Path.GetExtension(path).ToLowerInvariant();
         if (extension is ".mp4" or ".mov" or ".mkv" or ".webm" or ".avi" or
-            ".png" or ".jpg" or ".jpeg" or ".bmp" or ".webp")
+            ".png" or ".apng" or ".jpg" or ".jpeg" or ".bmp" or ".webp")
         {
             track = MediaTrackKind.Video;
             return true;

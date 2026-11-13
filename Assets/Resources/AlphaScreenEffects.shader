@@ -16,6 +16,7 @@ Shader "Hidden/AlphaScreenEffects"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 3.0
+            #pragma multi_compile_local _ ALPHA_SHATTER
             #include "UnityCG.cginc"
 
             struct appdata
@@ -55,6 +56,7 @@ Shader "Hidden/AlphaScreenEffects"
             float _OffsetX;    // Camera shift as screen-width ratio, including shake
             float _OffsetY;
             float _Rotate;     // Screen rotation in radians
+            float4 _FlipAxis;
             #include "AlphaExtraFilters.cginc"
 
             v2f vert(appdata input)
@@ -68,6 +70,14 @@ Shader "Hidden/AlphaScreenEffects"
             fixed4 frag(v2f input) : SV_Target
             {
                 float2 uv = input.uv;
+                [branch]
+                if (dot(_FlipAxis.xy, _FlipAxis.xy) > 0.5)
+                {
+                    float2 pixelAspect = float2(_MainTex_TexelSize.z / _MainTex_TexelSize.w, 1.0);
+                    float2 p = (uv - 0.5) * pixelAspect;
+                    p = 2.0 * dot(p, _FlipAxis.xy) * _FlipAxis.xy - p;
+                    uv = p / pixelAspect + 0.5;
+                }
                 [branch]
                 if (abs(_Zoom) > 0.0001)
                 {
@@ -115,8 +125,9 @@ Shader "Hidden/AlphaScreenEffects"
                         sin(_EffectTime * 71.0) * 0.006) * glitchBand * _Glitch;
                 }
 
-                float shardVisible, shardLight; float3 shardGlass;
-                uv = ExtraFilterUV(uv, shardVisible, shardLight, shardGlass);
+                float shardVisible, shardLight;
+                float4 shardOptics;
+                uv = ExtraFilterUV(uv, shardVisible, shardLight, shardOptics);
                 float insideFrame =
                     step(0.0, uv.x) * step(uv.x, 1.0) *
                     step(0.0, uv.y) * step(uv.y, 1.0);
@@ -169,6 +180,7 @@ Shader "Hidden/AlphaScreenEffects"
                 // Sampling filters run before color grading so they cannot restore
                 // raw RGB over Saturation, Brightness or Contrast.
                 color.rgb = ExtraFilterSample(uv, color.rgb);
+                color.rgb = ExtraGlassSample(uv,color.rgb,shardOptics);
                 [branch]
                 if (_Neon > 0.0001)
                 {
@@ -238,7 +250,7 @@ Shader "Hidden/AlphaScreenEffects"
                     color.rgb *= 1.0 - horizontalLine * _TVNoise * 0.38;
                 }
 
-                color.rgb = ExtraFilterColor(color.rgb, shardVisible, shardLight, shardGlass);
+                color.rgb = ExtraFilterColor(color.rgb, shardVisible, shardLight);
                 // Circular iris. Vignette only changes the visible radius;
                 // Zoom remains the separate rectangular scaling effect.
                 [branch]

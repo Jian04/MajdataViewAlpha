@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -228,7 +228,8 @@ public class MediaTimelineController : MonoBehaviour
 
         var hasActiveVisual = activeVideo != null ||
                               imageRenderer != null && imageRenderer.enabled && imageRenderer.sprite != null;
-        if (!hasActiveVisual && events.Any(item => item.kind == "pvOverlay" && item.time <= time))
+        if ((!hasActiveVisual && events.Any(item => item.kind == "pvOverlay" && item.time <= time)) ||
+            (activeAudio == null && events.Any(item => item.kind == "audio" && item.time <= time)))
         {
             RebuildAt(time);
             lastTime = time;
@@ -308,7 +309,11 @@ public class MediaTimelineController : MonoBehaviour
             else if (item.kind == "pvOverlay" && extension == ".mp4" &&
                       !videoPlayers.ContainsKey(item))
             {
-                videoPlayers[item] = CreateVideoPlayer(item.path, fullPath);
+                var source = VideoSourceCompatibility.Prepare(fullPath);
+                while (!source.IsCompleted) yield return null;
+                if (generation != prepareGeneration) yield break;
+                if (source.IsFaulted) SetPreparationError("PV 读取失败：" + source.Exception.GetBaseException().Message);
+                else videoPlayers[item] = CreateVideoPlayer(item.path, source.Result);
             }
             else if (item.kind == "pvOverlay" && extension != ".mp4" &&
                      !imageSprites.ContainsKey(item.path))
@@ -346,7 +351,7 @@ public class MediaTimelineController : MonoBehaviour
         while (generation == prepareGeneration && Time.realtimeSinceStartup < decodeDeadline &&
                videoPlayers.Values.Any(player => player != null && player.isPrepared &&
                    player.frame < 0 && (player.texture == null || player.texture.width <= 0)))
-            yield return new WaitForEndOfFrame();
+            yield return null;
         foreach (var player in videoPlayers.Values)
         {
             if (player == null)
@@ -857,6 +862,7 @@ public class MediaTimelineController : MonoBehaviour
         audioSource = GetComponent<AudioSource>();
         if (audioSource == null)
             audioSource = gameObject.AddComponent<AudioSource>();
+        audioSource.enabled = true;
         audioSource.playOnAwake = false;
         audioSource.loop = false;
 

@@ -18,6 +18,9 @@
     <Compile Include="../../Assets/MajdataCore/ChartBracketTracker.cs" />
     <Compile Include="../../Assets/MajdataCore/ChartTokens.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaCommandGrammar.cs" />
+    <Compile Include="../../Assets/MajdataCore/NoteValueTransition.cs" />
+    <Compile Include="../../Assets/MajdataCore/FontFiles.cs" />
+    <Compile Include="../../Assets/MajdataCore/AlphaSession.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaCommandExamples.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaExtraFilters.cs" />
     <Compile Include="../../Assets/MajdataCore/NoiseZoneTimeline.cs" />
@@ -59,8 +62,13 @@
     <Compile Include="../../MajdataEdit/Mirror.cs" />
     <Compile Include="../../MajdataEdit/NotePreviewModule.cs" />
     <Compile Include="../../MajdataEdit/SimaiProcess.cs" />
+    <Compile Include="../../MajdataEdit/SimaiProcess.NoteTransitions.cs" />
     <Compile Include="../../MajdataEdit/SubWindow/MuriDetector.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="Reported061Regression.cs" />
+    <Compile Include="NoteTransitionRegression.cs" />
+    <Compile Include="WikiExport.cs" />
+    <Compile Include="Wiki095Audit.cs" />
     <Compile Include="baseline/SimaiProcess_v042.cs" />
     <Compile Include="baseline/Majson_v042.cs" />
     <Compile Include="baseline/Shims.cs" />

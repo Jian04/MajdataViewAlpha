@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <root>
   <!-- 
     Microsoft ResX Schema 
@@ -853,7 +853,7 @@ Shake     <Shake*(True,强度,频率[,角度,过渡时间])> 画面抖动（Hz�
   <data name="InvalidEditorSettings" xml:space="preserve"><value>亮度、速度和刷新延迟必须是有效数字。</value></data>
   <data name="NoteSpeed" xml:space="preserve"><value>音符速度</value></data>
   <data name="StarSpeed" xml:space="preserve"><value>星星速度</value></data>
-  <data name="StarColor" xml:space="preserve"><value>星星颜色</value></data>
+  <data name="StarColor" xml:space="preserve"><value>Star 颜色</value></data>
   <data name="Pink" xml:space="preserve"><value>粉色</value></data>
   <data name="Original" xml:space="preserve"><value>原色</value></data>
   <data name="SoundBgmTip" xml:space="preserve"><value>影响 BGM、录制启动音、节拍提示音和 AP 音效。</value></data>
@@ -924,7 +924,8 @@ Shake     <Shake*(True,强度,频率[,角度,过渡时间])> 画面抖动（Hz�
 - 命令必须写在本拍音符之前；写在音符后会报错且不会执行。
 - True / False 控制开关；NULL 用于清除支持重置的音符属性。
 - 时间参数可写秒数（0.5、2）或拍长（8:1、16:3）。拍长使用命令前最近一次 BPM。
-- 可分类型设置的键：tap、each、hold、slide、star、break、mine、touch、touchhold；SV/HS 和视觉类命令支持 noise，视觉类另支持运动星 slidestar。全局 SV/HS 默认控制 noise，不控制 Slide 轨迹。全局 COLOR/SIZE/ALPHA 及 V 版本默认不控制 noise，需显式 noise=。
+- 可分类型设置的键：tap、each、hold、slide、star、break、mine、touch、touchhold；SV/HS 和视觉类命令支持 blockarea（noise 为兼容别名），视觉类另支持运动星 slidestar。全局 SV/HS 默认控制 blockarea，不控制 Slide 轨迹。全局 COLOR/SIZE/ALPHA 及 V 版本默认不控制 noise，需显式 blockarea=。
+- 语法错误会显示诊断但不阻止播放。无法读取的音符不进入预览，后续槽位仍按原时间轴播放；不能配对的括号可能导致解析器无法确定后续槽位边界。
 - 输入“<”可打开分类补全；在同一参数内重复按 Tab 切换候选值：True / False / Instant，或 8:1 / 16:1 / 2:1 等；使用逗号进入下一参数。
 ! 灰色斜体的参数表示可以省略，例如灰色斜体的 ,时间 表示最后的逗号和时间都可以不写。正常显示的方括号属于语法本身，例如 h[时长] 就要照着写。
 E (120){4}<SV*1.5>1,2,<TEXT*("副歌开始",2)>3,4,
@@ -942,7 +943,6 @@ E @4/4
 E @7/8
 - 分子和分母必须是正整数。标记从当前时间起改变波形强弱拍网格，不改变 View 的谱面速度或音频。
 - 标记必须位于时间格开头、尚未出现音符字符的位置，推荐独占一行。
-- 拍号请使用“@”；旧版“&”拍号在重新读取 maidata 时可能被当成文件字段，不应继续使用。
 ### 可重叠音符流
 S @{分拍}音符流,
 E @{4}1h,2h,3h,
@@ -960,7 +960,18 @@ E {8}1,2,3,4,5,6,7,8,
 S @RRGGBB
 E @3A587A
 S @NULL
-- 颜色标记建议独占一行，仅改变后续编辑区底色；@NULL 恢复主题背景。旧版“&RRGGBB / &NULL”仍兼容。
+- 颜色标记必须独占一行，仅改变后续编辑区底色；@NULL 恢复主题背景。
+### 导出区间：@start / @end
+S @start
+S @end
+E (120){4},,,,
+E @start
+E 1,2,3,4,
+E @end
+E 5,6,7,8,
+- 两个标记分别独占一行，名字不区分大小写，本身不占槽位。两者齐全时，用主谱时间初始化“导出视频”和“导出 GIF”的区间。
+- 在导出页面拖动两端可修改选区，默认吸附小节；点击时间轴可在 View 预览，也可输入精确秒数。修改选区不会改写谱面中的标记。
+- 启用区间时，只导出选定范围，不加入开头封面和结尾 All Perfect；关闭区间则导出完整播放。标记不替代谱面结束符 E。
 ## 3  补充音符语法
 ### 非 C 区 TouchHold
 S A/B/D/E 区键位 + h[时长]
@@ -983,14 +994,13 @@ E 1f / 1hf[8:1] / 1f-5[8:1] / Cf / Chf[8:1]
 S 键位$ / 键位$$
 E 1$ / 2$$
 - $ 将普通 TAP 改为不旋转的星形 TAP；$$ 使用相同星形并按固定速度旋转。
-### Touch Slide（兼容 AstroDX 圆弧方向）
+### Touch Slide
 S 起点[-|<|>|<<|>>|^|v|p|q|pp|qq]终点[时长]
 S 起点V转折点终点[时长]
-S 起点P绕行编号终点[时长] / 起点Q绕行编号终点[时长]
 E A1-A3[8:1] / A1<A3<A5[8:1] / 1d-E5[8:1]
 E A1VCE2[8:1]
 E A1pE5[8:1] / B1ppB5[8:1]
-E A1-E5[8:1] / 1P3E5Q0A5[8:1]
+E A1-E5[8:1]
 E A1b-A2b[8:1] / A1!-A2[8:1] / A1?-A2[8:1]
 E A1<<E5[8:1] / A1<<<E5[8:1] / A1>>>E5[8:1]
 - > 向绝对右侧绕行，< 向绝对左侧绕行。起点 1/2/7/8 的 > 为顺时针，3/4/5/6 的 > 为逆时针；< 相反。正右侧 E3/D3 沿用键位 3 的方向。
@@ -999,13 +1009,26 @@ E A1<<E5[8:1] / A1<<<E5[8:1] / A1>>>E5[8:1]
 - 起点 b 是绝赞头，轨迹终点后的 b 是绝赞轨迹。? 和 ! 都表示无头：? 保留等待期移动星淡入，! 则让移动星在 Slide 开始运动时才直接出现。Touch Slide 的时长不可省略。
 - 连接 Touch Slide 只能填写一个总时长。View 暂时无法保持逐段时长边界，因此逐段时长会直接报错，不再静默按整条匀速处理。
 - 连续同向的 < 或 > 生成一条连续的等距螺旋线：两个符号绕一圈后进入终点，三个符号绕两圈后进入终点，以此类推。多圈仅用于 Touch Slide，不支持普通数字 Slide 或混合方向符号。
-- 大 P / Q 可自由选择绕行圆并以切线进入和离开：0 是中央圈，1-8 是侧边圈，9 是最外圈；P 逆时针、Q 顺时针，可继续连接下一段。
-### SlideCode（兼容 MajdataPlay 判定区与结束特效）
+### 大 P / Q — Alpha 自定义绕行圆
+S 起点P绕行圆编号终点[时长]
+S 起点Q绕行圆编号终点[时长]
+E 1P35[8:1] / 1Q95[8:1] / 1P0E5[8:1]
+E A1P9A5[8:1] / 1P5A8-B4[8:1] / 1dQ05d[8:1]
+- 这是 Alpha 新增的可选圆绕行写法，可用于普通 Slide、D 区 Slide 和 TouchSlide；TouchSlide 的大 P/Q 同样属于 Alpha 扩展。
+- P 逆时针、Q 顺时针；0 为中央圆、1–8 为对应侧边圆、9 为最外圆。可接普通键、D 区键或 Touch 区。
+- 不带 K 时，A1、B4 等表示触控分区，例如 1P5A8-B4 表示从 1 绕 5 号圆到 A8，再直线到 B4。带 K 才按 SlideCode 解析，其中 A/B 是几何节点。
+### SlideCode
 S 起点 + A/B/C/P/Q 指令 + K终点[时长]
 E 5Q9A1P98CQ49K5[8:1] / 1A3571P0K1[4:1]
-E 2B4K6[4:1] / 1Q8K5[8:1] / 1P99K1[4:1]
-- 根据实际路径生成 A/B/C 判定区队列，包含可二选一的判定区；末段直线或圆弧决定结束判定文字的位置与朝向。预览、FAKE 与切谱清理不会播放判定特效。
-- 首位 1-8 是起点；A 前往外键，B 前往内侧交点，C 前往中心；P/Q 分别逆/顺时针绕圈；K1-K8 结束整条轨迹。
+E 1A3B5K7[8:1] / 2B4K6[4:1] / 1Q8K5[8:1] / 1P99K1[4:1]
+E 1dA3K5d[8:1] / A1A3KB4[8:1] / B1CKE5[8:1]
+E 1>5K4[8:1] / 1^4K5[8:1] / 1P93K5-7[8:1]
+- 可与普通 Slide／FES 分段连接，前一段的终点就是后一段的起点。整条共用时长时写在末尾；普通形状仍遵循原有起终点限制，^ 不支持同键或对键。
+- 判定区使用 MajdataPlay 原版的采样阈值和分区转移表，包括可二选一的判定区；不使用 TouchSlide 的几何相交算法。末段形状决定结束判定的位置与朝向。
+文档与官方实现：https://github.com/TeamMajdata/MajdataPlay/blob/dev/Assets/Scripts/Scenes/Game/Misc/Parsing/SlideCodeParser.cs
+判定表：https://github.com/TeamMajdata/MajdataPlay/blob/dev/Assets/Scripts/Scenes/Game/Misc/Parsing/SlideDataBuilder.cs
+- 起点和 K 后的终点支持普通键、1d–8d 及 A/B/C/D/E Touch 位置。A1–A8 前往外键节点，B1–B8 前往内侧几何交点，C 前往中心；中间 A/B 的几何含义不变。P/Q 分别逆/顺时针绕圈。
+- 扩展端点接入、离开原版 A/B/C 判定范围的连接段使用现有 Touch 分区，中间 A/B/C 路段保留原版表。
 - 同一指令可连续写参数，例如 A357 等于依次经过 A3、A5、A7，P98 等于从 9 号圈切换到 8 号圈。
 - P 与 Q 不能直接互接；0 号中央圈与 9 号最外圈不能直接互转，中间需经过 A、B 或 C 节点。
 - 不带 K 的 1Q85 是普通可选 PQ，并保留普通 pp/qq 的额外绕圈；带 K 的 1Q8K5 才是 SlideCode，按最短切线和圆弧连接。两套语法互相独立。
@@ -1014,6 +1037,7 @@ S m = 灰色 Mine；d = D 区位置
 E 1m / 2hm[8:1] / 3d / 4dh[8:1] / 5d-1d[8:1]
 - Slide 中 m 的位置有区别：1m-5 只改星星头，1-5m 只改 Slide 体和移动星，1m-5m 两者都改。
 - d 写在起点键后表示 D 区起点，写在 Slide 终点后表示 D 区终点。
+- Mine 不占 DJAuto 的手，也不参与 Each 染色：1m/1 中普通 1 仍为粉色。Mine 默认不主动击打；被其他操作蹭到时判 Miss。
 ### rp / rq 反向圆弧 Slide
 S 起点rp终点[时长] / 起点rq终点[时长]
 E 1rp3[8:1] / 1rq7[8:1]
@@ -1022,10 +1046,13 @@ E 1rp3[8:1] / 1rq7[8:1]
 S 音符~[完整的星星]
 E 1~[5-7[8:1]] / 1b~[5-7[8:1]] / 1$~[5-7[8:1]] / 1~[C1-A5[8:1]] / 1~[2P35[8:1]]
 - 音符不落在自己写的位置上，而是按方括号里那条星星的轨迹走：从那条星星自己的起点出发，用它自己的时长。
-- 只画这一个移动的音符：不画弧线，不落星星头，写它的位置上什么都不出现，全程不判定、不计数。
+- 只画这一个移动的音符与引导线，不生成借用轨迹的 Slide 条和星星头；写它的位置上不另外落下音符，全程不判定、不计数。
 - 移动的是 ~[] 前面的音符本身：1~[...] 是 Tap 沿轨迹走；只有写 1$~[...] 才是星星沿轨迹走。
 - 方括号里要写一条完整的星星（含时长），键位星星和 Touch 星星都可以；Wifi 星星是三颗星，不能借。
 - 借来的轨迹后面不能再接 slide；修饰（b、h、$、f 等）写在 ~[] 前后都可以。
+- 图片和轨迹可叠加，例如 1~[tap.png]~[B1-B4[8:3]]；Tap 保持水平朝向，1$$~[1-5[1:1]] 保留星形 Tap 自转。载体图片按原 Tap 的大小显示，再应用 SIZE。
+E 1xh[2:1]~[1<5[8:1]]
+- Hold 自身的时长决定长条长度，借用轨迹的时长决定移动时间；判定头贴合轨迹，朝向随路径切线连续变化，长条本身不弯曲。EX 保护套与原音符一起显示。
 ### 继承语法 — Touch 距离
 S 区域键位~[距离]
 E E1~[4.8]
@@ -1052,19 +1079,57 @@ S XD1[8:1] / XC[4:1] / XA1 / XE1[4:1]/XC[4:1]/XE2[4:1]/XE3[4:1]/XE4[4:1]
 E (120){4}XD1[8:1],D1,XE1[1:1]/XC[1:1]/XE2[1:1],,
 - X 后写完整触控区：A1–A8、B1–B8、C、D1–D8、E1–E8。每个区各加 X，用 / 同拍连接。
 - 时长复用 Hold：120 BPM 时 [8:1] 为 0.25 秒，也支持 [#秒数] 等 Hold 时长；不写时长为短噪域，与 1h 一样按一个判定帧处理。
-- 根据 Touch 速度提前显示外框，按 HS/SV 调整出现时间，外框出现后即以白光闪烁预警；预警期不禁用输入。短噪域直接显示完整 Glitch，最短画面脉冲为 0.1 秒，不延长判定禁用。
-E <COLOR*noise=00BBFF> / <SIZE*noise=(0.8,1.2)> / <ALPHA*noise=0.5>
-- 全局 SV/HS 默认影响 noise 的预警时间；显式 noise= 可单独控制，SV=2 时提前量减半。全局 COLOR/SIZE/ALPHA 与 V 版本默认不影响噪域，需显式 noise=；噪域参与全部画面滤镜。缩放与隐藏仅改变显示，输入禁用仍按原触控区和时长。
-- 到本拍时间后覆盖红色 Glitch 区域，持续期间对应触控区不能判定，键位 A 区同时屏蔽对应外键。噪域本身不计物量、分数和占手。
+- 根据 Touch 速度提前显示外框，按 HS/SV 调整出现时间，外框出现后即以白光闪烁预警；预警期不禁用输入。短噪域按真实时长显示 Glitch；[1:0] 只有预警，没有活动区，[384:1] 也按其真实时长结束。
+E <COLOR*blockarea=00BBFF> / <SIZE*blockarea=(0.8,1.2)> / <ALPHA*blockarea=0.5>
+- 全局 SV/HS 默认影响 noise 的预警时间；显式 blockarea= 可单独控制，SV=2 时提前量减半。全局 COLOR/SIZE/ALPHA 与 V 版本默认不影响噪域，需显式 blockarea=；噪域参与全部画面滤镜。缩放与隐藏仅改变显示，输入禁用仍按原触控区和时长。
+- 活动区间为 [出现时刻,结束时刻)：出现的那一刻立即禁用对应触控区，到结束的那一刻恢复；预警不禁用。[1:0] 从不禁用。A 区同时屏蔽对应外键。噪域本身不计物量、分数和占手。
 - 后出现的相邻活动区域从共享边长出；有相邻块存续时，结束前沿共享边缩回，到结束时完全消失。各块按各自结束时间退出，桥接块结束后恢复分块。仅合并真实相邻区，不覆盖空缺分区。活动效果参考 Phira-Pro 的溶解遮罩、外沿辉光及底图采样；预警仍为红框。同区重叠持续到最后一个事件结束，拖动预览可恢复。
 
 ## 4  音符类 Alpha 命令
+### 通用数值渐变
+所有音符数值命令都可用括号包住单个值，例如 <SV*(2)>、<HS*tap=(2)>。SIZE 的 (横向倍率,纵向倍率) 仍表示固定的二维尺寸。
+S (起始值,终止值,持续时间,函数[,幂次])
+E <SV*tap=(1,2,8:1,linear)>
+E <HS*(0.5,2,4:1,sineinout)>
+E <SIZE*tap=((1,1),(2,0.5),8:1,easeinout,3)>
+E <ALPHAV*touch=(0,1,8:1,easeout,2)>
+- 支持数值渐变的命令：SV、HS、COLOR、COLORV、SIZE、SIZEV、ALPHA、ALPHAV、ANGLE、ANGLEV。SPAWN、DESTROY 只接受固定半径或 NULL，不使用端点渐变。
+- 起始值和终止值使用对应命令的单位。SIZE 两端都可以用 (横向倍率,纵向倍率)；两个值都为数字时表示等比缩放。
+- 持续时间可写秒数或 8:1 等拍长，不能为负；0 表示立即到终止值。渐变结束后保持终止值，直到后面的同类指令覆盖。
+- SV 从指令所在槽位开始渐变，并按速度曲线积分；V 版本也从该槽位开始改变已经在场的音符。其他版本让后续每颗音符从自身出现时开始渐变。
+- BOUNCE 只接受往返时长、NULL 或 False，不使用端点渐变。FAKE 的布尔开关和 SPAWNMODE 的枚举可给单值加括号。COLOR / COLORV 的起始、终止值为六位 RGB，三个通道分别渐变。
+- linear：线性。
+- easein：幂函数，可调幂次，缓入。
+- easeout：幂函数，可调幂次，缓出。
+- easeinout：幂函数，可调幂次，缓入缓出。
+- sinein：正弦，缓入。
+- sineout：正弦，缓出。
+- sineinout：正弦，缓入缓出。
+- expoin：指数，缓入。
+- expoout：指数，缓出。
+- expoinout：指数，缓入缓出。
+- circin：圆弧，缓入。
+- circout：圆弧，缓出。
+- circinout：圆弧，缓入缓出。
+- smoothstep：平滑起停。
+- smootherstep：更柔和的平滑起停。
+- backin：回弹，有超调，缓入。
+- backout：回弹，有超调，缓出。
+- backinout：回弹，有超调，缓入缓出。
+- elasticin：弹性振荡，有超调，缓入。
+- elasticout：弹性振荡，有超调，缓出。
+- elasticinout：弹性振荡，有超调，缓入缓出。
+- bouncein：弹跳，缓入。
+- bounceout：弹跳，缓出。
+- bounceinout：弹跳，缓入缓出。
+- easein / easeout / easeinout 可选幂次，默认 2；范围 0.1–100。其他函数不接第五个参数。Back / Elastic 的中间值可能超出端点。
+
 ### SV — 真实滚动速度
 S <SV*倍率>
 S <SV*类型=倍率,类型=倍率>
 S <SV*类型=NULL>
 E <SV*1.5> / <SV*tap=2,hold=0.75> / <SV*tap=NULL>
-- 全局写法接受正数、0 和负数；类型 NULL 让该类型重新跟随全局 SV。
+- 全局写法接受正数、0 和负数；<SV*NULL> 恢复全局 1 倍；<SV*tap=NULL> 只清除 Tap 的覆盖，让它重新跟随全局 SV。
 - 全局 SV 影响 Tap、Hold、Star 头、Touch 与 TouchHold；`slide=` 在谱面标记时长内控制 Slide / Wifi / TouchSlide 轨迹：净积分为正时归一化到准时结束，0 或负数可暂停、倒退，但到标记结束时间会直接截断。未写 `slide=` 时 Slide 轨迹保持原时间进度。
 ### HS — 传统下落速度
 S <HS*倍率>
@@ -1077,7 +1142,7 @@ E <HS*1.2> / <HS*star=1.6,hold=0.8> / <HS*slide=999> / <HS*hold=NULL>
 ### SPAWN — 环形音符视觉出生半径
 S <SPAWN*半径>
 S <SPAWN*类型=半径,类型=半径>
-S <SPAWN*NULL> / <SPAWN*类型=NULL>
+S <SPAWN*NULL>
 E <SPAWN*1.225> / <SPAWN*0> / <SPAWN*4.8> / <SPAWN*-4.8>
 E <SPAWN*tap=-4.8,hold=0> / <SPAWN*tap=NULL>
 - 半径支持任意有限数值：1.225 是原始位置，0 是中心，4.8 是本侧判定线，-4.8 是对面判定线；可写到判定圈外。
@@ -1094,7 +1159,7 @@ E <SPAWNMODE*Once> / <SPAWNMODE*tap=Once,hold=Rewind>
 ### DESTROY — 环形音符视觉终点
 S <DESTROY*半径>
 S <DESTROY*类型=半径,类型=半径>
-S <DESTROY*NULL> / <DESTROY*类型=NULL>
+S <DESTROY*NULL>
 E <DESTROY*4.8> / <DESTROY*tap=1.225,hold=-4.8>
 - 仅修改 Tap、Star、Each、Hold 与 Break 环形音符的视觉终点，不改变判定时刻或判定键位。
 - 始终使用所写半径，包括小于 SPAWN、负数或外圈数值；NULL 恢复 4.8。
@@ -1145,57 +1210,82 @@ S <ALPHA*0..1>
 S <ALPHA*类型=0..1,类型=0..1>
 S <ALPHA*NULL> / <ALPHA*类型=NULL>
 E <ALPHA*0.5> / <ALPHA*star=0.4,slidestar=0.6,slide=0.8> / <ALPHA*slidestar=NULL>
+- Touch 的重叠白框与本体一起应用 ALPHA；ALPHAV 的实时变化同样覆盖白框。
 ### ALPHAV — 已加载音符透明度
 S <ALPHAV*0..1> / <ALPHAV*类型=0..1>
 E <ALPHAV*0.5> / <ALPHAV*star=0.4,slidestar=0.6,slide=0.8>
 - 立即修改已经加载的音符透明度，可分别指定 star、slidestar、slide。
+### ANGLE — 后续音符贴图朝向
+S <ANGLE*角度|NULL>
+S <ANGLE*类型=角度>
+E <ANGLE*30>
+E <ANGLE*tap=45,hold=-30>
+E <ANGLE*tap=(0,90,8:1,linear)>
+- 单位为度。绕音符自己的贴图中心旋转，正值逆时针、负值顺时针；不移动音符、不改判定区或判定时间。
+- 默认控制 Tap、Hold、星形头、Touch、TouchHold；默认不控制 slide、slidestar 或噪域。可显式 slide= 旋转各轨迹箭头朝向，slidestar= 旋转引导星；始终不影响噪域。
+- 作用于后续音符。给定渐变时，从各音符出现时开始；NULL 清除对应角度设置。原有星星自转仍保留，ANGLE 附加在原始朝向上。
+### ANGLEV — 在场音符贴图朝向
+S <ANGLEV*角度|NULL>
+S <ANGLEV*类型=角度>
+E <ANGLEV*45>
+E <ANGLEV*slidestar=(0,180,4:1,sineinout)>
+E <ANGLEV*NULL>
+- 目标规则与 ANGLE 相同，从本槽位开始作用于在场音符；渐变不会按帧累积角度，回拖按时间重新计算。NULL 恢复音符自身的 ANGLE 设置。
+
 ## 5  显示类 Alpha 命令
 ### JLINE — 判定线颜色
-S <JLINE*RRGGBB> / <JLINE*(RRGGBB[,过渡时间])> / <JLINE*NULL>
-E <JLINE*00FF00> / <JLINE*(FF6699,0.3)> / <JLINE*(FFFFFF,8:1)> / <JLINE*NULL>
-- NULL 恢复皮肤默认判定线色；颜色变化只影响播放中的显示。
+S <JLINE*(RRGGBB|RRGGBBAA|NULL[,过渡时间])>
+E <JLINE*(00BBFF,8:1)> / <JLINE*(NULL)>
+- 改变播放中的判定线颜色；NULL 恢复皮肤颜色。省略过渡时间立即改变，不改待机设置。
 ### TEXT — 字幕
-S <TEXT*("内容"[,持续时间][,x=0][,y=0][,size=32][,font=Default][,index=0][,style=Fade][,transition=0.3])>
-E <TEXT*("副歌开始")> / <TEXT*("注意双押",2,index=1)> / <TEXT*("逐字字幕",3,font=Allerta,index=2,style=Typewriter,transition=1)>
-- 内容必须写在双引号内；不写持续时间时保持到同 index 的下一条 TEXT。index 可写 0～4，不同 index 可同时显示。
-- font 可选 Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta。Default 使用原始字幕字体，不跟随播放器字体。
-- style=Fade 时 transition 是渐入时间；style=Typewriter 时 transition 是逐字显示完成时间。时长均可写秒数或 8:1。
-### 附加判定线 — JudgeLineExpand
-S <JUDGELINEEXPAND*(True[,过渡时间][,方向])>
-S <JUDGELINEEXPAND*(False)>
-E <JUDGELINEEXPAND*(True,0.5,1)> / <JUDGELINEEXPAND*(True,8:1,-1)> / <JUDGELINEEXPAND*(False)>
-- 保留当前判定线，True 附加白色原版判定线旋转22.5°；False 立即移除附加白线，不影响原判定线。
-- True 后的过渡时间默认0秒，支持秒数或拍数；方向默认1/CW顺时针，-1/CCW逆时针。
-- 拖动预览恢复对应角度；再次触发从原位置展开；停止后移除。
-### 恢复显示设置 — Default
-S <INNERBRIGHTNESS*(Default[,过渡时间])>
-S <OUTERBRIGHTNESS*(Default[,过渡时间])>
-S <COMBODISPLAY*(Default[,过渡时间])>
-S <SHOWJUDGETEXT*(Default[,过渡时间])> / <SHOWJUDGEINFO*(Default[,过渡时间])> / <SHOWCOMBOINFO*(Default[,过渡时间])>
-S <JUDGELINE*(Default[,过渡时间])>
-E <INNERBRIGHTNESS*(0.8)> / <INNERBRIGHTNESS*(Default,0.5)>
-E <COMBODISPLAY*(None)> / <COMBODISPLAY*(Default)>
-- Default 恢复当前 View 设置中的值，不是固定恢复成全亮、显示或 Combo。不会修改设置配置。
-- 参数1是 Default，大小写不限；参数2是可选过渡时间，可写秒数或拍数，省略立即恢复。中央显示模式立即切换，判定线样式立即切换、透明度按过渡时间恢复。
-- 拖动预览到指令前后会恢复对应状态。
-### 显示开关
-S <JUDGELINE*(0|1|2|3|4[,过渡时间])>
-S <ShowJudgeText*(True|False[,过渡时间])>
-S <ShowJudgeInfo*(True|False[,过渡时间])>
-S <ShowComboInfo*(True|False[,过渡时间])>
-E <JUDGELINE*(1)> / <JUDGELINE*(2)> / <JUDGELINE*3> / <JUDGELINE*(False,8:1)>
-E <ShowJudgeText*(False)> / <ShowJudgeInfo*(False,1)> / <ShowComboInfo*(True,1)>
-- 省略过渡时间时立即切换。JudgeText、JudgeInfo、ComboInfo 分别控制判定文字、左侧统计和右侧信息。
-- 判定线样式：1 默认；2 判定区；3 Magical；0 / False 关闭。4 及以后预留给新增样式，尚未实现的编号暂按样式 1 显示。
-### ComboDisplay — 中央数据显示
-S <ComboDisplay*(模式[,过渡时间])>
-E <ComboDisplay*(Combo,0)> / <ComboDisplay*(DxScore,8:1)> / <ComboDisplay*(None,0.5)>
-- 常用模式：None/Off、Combo、Score、Achievement/Acc、AccDown、DxAcc、DxAccDown、DxScore、CScore、CScoreDedxDown。
-### 亮度
-S <OuterBrightness*(0..1[,过渡时间])>
-S <InnerBrightness*(0..1[,过渡时间])>
-E <OuterBrightness*(0.8,8:1)> / <InnerBrightness*(0.45,1)>
-- 输入值会限制到 0–1：0 为全亮，1 为最暗。
+S <TEXT*("内容"[,持续时间][,x][,y][,字号][,字体][,index][,Fade|Typewriter][,过渡时间][,color][,TopLeft|Center])>
+E <TEXT*("副歌开始",2,0.2,0.3,44,Allerta,0,Fade,0.3)>
+E <TEXT*("自选字体",2,font=Allerta-Regular.ttf)>
+E <TEXT*("自选字体",2,font=myfonts/myfont.otf,index=1,style=Typewriter,transition=1)>
+- 内容必须写在双引号内。不写持续时间时，保持到同 index 的下一条 TEXT；index 为非负整数，各通道可同时显示。
+- x / y 控制位置，size 控制字号。font 可写内置字体名或相对程序根目录 Fonts 的字体路径，例如 Allerta-Regular.ttf、myfonts/myfont.otf。也保留谱面文件夹相对路径与绝对路径。Edit / View 设置每次打开时读取 Fonts，列表名称不显示扩展名；增加、删除和替换字体直接修改 Fonts 中的文件。
+- 内置名字：Default、CascadiaMono、CascadiaCode、MicrosoftYaHei、NotoSansSC、SimSun、DengXian、NotoSerifSC、GlobalMonospace、Aileron、Allerta。Default 使用原字幕字体。
+- style=Fade 时 transition 为渐入时间；Typewriter 时为逐字显示完成时间，省略时立即显示。持续时间和过渡时间都可写秒数或 8:1。
+E <TEXT*("RGB",2,color=00BBFF)>
+- color：6 位十六进制 RGB，默认白色；可写在第 10 个位置，或写 color=00BBFF。
+- origin：第 11 个参数或 origin=TopLeft/Center。默认 TopLeft，以屏幕左上角为原点并左上对齐；Center 以屏幕中心为原点并居中对齐。x/y 按屏幕宽高比例偏移，向右、向下为正，允许负值。
+E <TEXT*("居中字幕",2,origin=Center)>
+
+### JUDGELINEEXPAND — 附加判定线
+S <JUDGELINEEXPAND*(True|False[,过渡时间][,1|-1|CW|CCW])>
+E <JUDGELINEEXPAND*(True,8:1,-1)> / <JUDGELINEEXPAND*(False)>
+- True 在原判定线上附加一条白线，从原位置旋转到偏移 22.5°；过渡时间默认 0 秒，方向默认 1 / CW 顺时针，-1 / CCW 逆时针。
+- False 立即移除附加白线，保留原判定线。回拖恢复对应状态，停止时移除附加白线。
+### JUDGELINE — 判定线样式
+S <JUDGELINE*(0|1|2|3|4|Default[,过渡时间])>
+E <JUDGELINE*(3,8:1)> / <JUDGELINE*(False,0.2)> / <JUDGELINE*(Default)>
+- 1 默认，2 判定区，3 Magical；0 / False 关闭。4 为扩展预留，尚未实现的编号使用样式 1。
+- Default 恢复当前 View 设置的样式，不改设置。省略过渡时间立即切换；样式切换立即执行，透明度按过渡时间变化。
+### SHOWJUDGETEXT — 判定文字
+S <SHOWJUDGETEXT*(True|False|Default[,过渡时间])>
+E <SHOWJUDGETEXT*(False,8:1)> / <SHOWJUDGETEXT*(Default)>
+- 控制 Critical Perfect 等判定文字。Default 恢复 View 设置中的开关；省略过渡时间立即改变。
+### SHOWJUDGEINFO — 判定统计
+S <SHOWJUDGEINFO*(True|False|Default[,过渡时间])>
+E <SHOWJUDGEINFO*(True,8:1)> / <SHOWJUDGEINFO*(Default)>
+- 控制左侧判定统计。Default 恢复 View 设置中的开关；省略过渡时间立即改变。
+### SHOWCOMBOINFO — 右侧信息
+S <SHOWCOMBOINFO*(True|False|Default[,过渡时间])>
+E <SHOWCOMBOINFO*(False,8:1)> / <SHOWCOMBOINFO*(Default)>
+- 控制右侧 Combo / 达成率等信息。Default 恢复 View 设置中的开关；省略过渡时间立即改变。
+### COMBODISPLAY — 中央数据显示
+S <COMBODISPLAY*(模式|Default[,过渡时间])>
+E <COMBODISPLAY*(DxScore,8:1)> / <COMBODISPLAY*(None)> / <COMBODISPLAY*(Default)>
+- 模式可用 None/Off、Combo、Score、Achievement/Acc、AccDown、DxAcc、DxAccDown、DxScore、CScore、CScoreDedxDown。
+- Default 恢复当前 View 设置的模式。模式立即切换，显示透明度按过渡时间变化；省略时间立即改变。
+### OUTERBRIGHTNESS — 外圈亮度
+S <OUTERBRIGHTNESS*(遮暗值|Default[,过渡时间])>
+E <OUTERBRIGHTNESS*(0.8,8:1)> / <OUTERBRIGHTNESS*(Default)>
+- 遮暗值 0 全亮、1 最暗，输入限制为 0–1。Default 恢复 View 的外圈亮度设置；省略过渡时间立即改变。
+### INNERBRIGHTNESS — 内圈亮度
+S <INNERBRIGHTNESS*(遮暗值|Default[,过渡时间])>
+E <INNERBRIGHTNESS*(0.45,8:1)> / <INNERBRIGHTNESS*(Default)>
+- 遮暗值 0 全亮、1 最暗，输入限制为 0–1。Default 恢复 View 的内圈亮度设置；省略过渡时间立即改变。
 ## 6  滤镜类 Alpha 命令
 > 统一规则：True 开启并保持，False 关闭；最后的过渡时间可省略。Instant 会立即达到目标值，保持指定持续时间后立即恢复。不同滤镜可叠加，同名 True 会从当前实际值过渡到新目标。
 S <效果*(False[,过渡时间])>
@@ -1284,6 +1374,9 @@ S <Hue*(True,角度[,过渡时间])>
 S <Tint*(True,RRGGBB,强度[,过渡时间])>
 E <Hue*(True,180,1)> / <Tint*(True,000000,1,0.5)> / <Tint*(False,8:1)>
 - Hue 以度旋转色相；Tint 强度 0 保留原画面，1 完全混合到目标色。
+### FLIP
+S <FLIP*(Instant,45,0.5)>
+- 画面沿经过中心的轴翻转。0 度是水平轴，90 度是垂直轴。Instant 的时长可写秒数或拍数，开关立即生效，判定坐标保持原样。
 ### Move / Rotate / Shake
 S <Move*(True,dx,dy[,过渡时间])>
 S <Rotate*(True,角度[,过渡时间])>
@@ -1327,4 +1420,10 @@ E <Fade*(False,8:1)><PVOVERLAY*(False)><COLOR*star=NULL><SIZE*star=NULL>,E
   <data name="StarDisplayModeLegacy" xml:space="preserve"><value>旧版</value></data>
   <data name="StarDisplayModeModern" xml:space="preserve"><value>新版</value></data>
   <data name="DisableAutomaticSongDetailRefresh" xml:space="preserve"><value>关闭自动刷新封面</value></data>
+  <data name="ViewTopLeftDisplay" xml:space="preserve"><value>左上角显示</value></data>
+  <data name="ViewTopLeftOff" xml:space="preserve"><value>关闭</value></data>
+  <data name="ViewTopLeftFps" xml:space="preserve"><value>帧率 (FPS)</value></data>
+  <data name="ViewTopLeftBpm" xml:space="preserve"><value>当前 BPM</value></data>
+  <data name="ViewTopLeftMeter" xml:space="preserve"><value>当前拍号</value></data>
+  <data name="ViewTopLeftSubdivision" xml:space="preserve"><value>当前分音</value></data>
 </root>

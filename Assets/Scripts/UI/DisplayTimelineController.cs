@@ -4,11 +4,13 @@ using System.Globalization;
 using System.Linq;
 using UnityEngine;
 
-public class DisplayTimelineController : MonoBehaviour
+public partial class DisplayTimelineController : MonoBehaviour
 {
     private readonly List<DisplayChange> events = new();
+    private string chartDirectory;
     private readonly Dictionary<string, List<DisplayChange>> eventsByProperty = new();
     private readonly List<SubtitleChange> subtitles = new();
+    private readonly Dictionary<SubtitleChange,Color> subtitleColors = new();
     private readonly Dictionary<string, DisplayTrack> tracks = new();
     private AudioTimeProvider timeProvider;
     private BGManager bgManager;
@@ -30,6 +32,7 @@ public class DisplayTimelineController : MonoBehaviour
     // defaults the request carries (visible) instead of zero.
     private float initialJudgeLine = 1f;
     private int initialJudgeLineStyle = 3;
+    private bool hasDisplayDefaults;
     private static Sprite magicalJudgeLine;
     private SpriteRenderer fadingJudgeLine;
     private float judgeStyleTransitionStart = -1f;
@@ -83,12 +86,17 @@ public class DisplayTimelineController : MonoBehaviour
         float outerBrightness,
         int comboDisplay,
         List<ColorChange> colorTable = null,
-        bool showSongDetail = true)
+        bool showSongDetail = true,
+        string chartDirectory = null)
     {
         CancelJudgeLineTransition();
         timeProvider = GameObject.Find("AudioTimeProvider")?.GetComponent<AudioTimeProvider>();
         bgManager = GameObject.Find("Background")?.GetComponent<BGManager>();
         objectCounter = GameObject.Find("ObjectCounter")?.GetComponent<ObjectCounter>();
+        this.chartDirectory = chartDirectory;
+        subtitleFontCache.Clear();
+        captionFileFonts.Clear();
+        if (fileCaptionCanvas != null) fileCaptionCanvas.gameObject.SetActive(false);
         noteEffectManager = GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
 
         // Bind the persistent gameplay outline instead of the scene's debug outline.
@@ -150,6 +158,7 @@ public class DisplayTimelineController : MonoBehaviour
         }
 
         initialJudgeLineStyle = MajdataCore.JudgeLineStyles.Supported(judgeLineStyle);
+        hasDisplayDefaults = true;
         initialJudgeLine = judgeLineStyle == 0 ? 0f : 1f;
         initialStyleOverlay = judgeLineStyle == 2 ? 1f : 0f;
         initialJudgeInfo = showJudgeInfo ? 1f : 0f;
@@ -194,11 +203,18 @@ public class DisplayTimelineController : MonoBehaviour
         tracks["InnerBrightness"] = CreateTrack("InnerBrightness", initialInnerBrightness);
         tracks["OuterBrightness"] = CreateTrack("OuterBrightness", initialOuterBrightness);
         subtitles.Clear();
+        subtitleColors.Clear();
         if (subtitleEvents != null)
         {
             subtitles.AddRange(subtitleEvents);
+            foreach(var subtitle in subtitles)
+            {
+                ColorUtility.TryParseHtmlString("#" + subtitle.color.TrimStart('#'),out var color);
+                subtitleColors[subtitle]=color;
+            }
             subtitles.Sort((left, right) => left.time.CompareTo(right.time));
         }
+        hasFileCaptions = subtitles.Any(item => CaptionFontFile(item.font) != null);
         EnsureSubtitleStyles();
         WarmupSubtitleGlyphs();
         subtitleGuiWarmupPending = subtitles.Count > 0;
@@ -212,7 +228,7 @@ public class DisplayTimelineController : MonoBehaviour
 
     public void SetPlaybackActive(bool active)
     {
-        var keepStandbyTransition = !active && !playbackActive && judgeStyleTransitionStart >= 0f;
+        var keepStandbyTransition = !active && !playbackActive && timeProvider != null && timeProvider.IsPaused && judgeStyleTransitionStart >= 0f;
         if (!keepStandbyTransition) CancelJudgeLineTransition();
         if (active && !HasRequiredTracks())
         {
@@ -222,6 +238,7 @@ public class DisplayTimelineController : MonoBehaviour
         }
 
         playbackActive = active;
+        if (fileCaptionCanvas != null) fileCaptionCanvas.gameObject.SetActive(active);
         if (active)
         {
             SetJudgeLinePlaybackScale();
@@ -271,8 +288,11 @@ public class DisplayTimelineController : MonoBehaviour
         bgManager ??= GameObject.Find("Background")?.GetComponent<BGManager>();
         objectCounter ??= GameObject.Find("ObjectCounter")?.GetComponent<ObjectCounter>();
         noteEffectManager ??= GameObject.Find("NoteEffects")?.GetComponent<NoteEffectManager>();
+        timeProvider ??= GameObject.Find("AudioTimeProvider")?.GetComponent<AudioTimeProvider>();
         var nextStyle = MajdataCore.JudgeLineStyles.Supported(judgeLineStyle);
-        var styleChanged = initialJudgeLineStyle != nextStyle;
+        var styleChanged = hasDisplayDefaults && initialJudgeLineStyle != nextStyle &&
+                           (playbackActive || timeProvider != null && timeProvider.IsPaused);
+        hasDisplayDefaults = true;
         if (styleChanged) BeginJudgeLineTransition(nextStyle);
         else CancelJudgeLineTransition();
         var now = timeProvider != null ? timeProvider.AudioTime : 0f;
@@ -320,7 +340,10 @@ public class DisplayTimelineController : MonoBehaviour
     private void Update()
     {
         if (playbackActive && timeProvider != null)
+        {
             ApplyAt(timeProvider.AudioTime);
+            UpdateFileCaptions(timeProvider.AudioTime);
+        }
         if (judgeStyleTransitionStart >= 0f)
             ApplyJudgeLineTransition(Time.unscaledTime);
     }
@@ -352,8 +375,10 @@ public class DisplayTimelineController : MonoBehaviour
         // A caption asking for nothing keeps the corner and the size captions have
         // always had; x and y move it by a fraction of the screen so the same
         // chart lands in the same place whatever the window size is.
+        if (CaptionFontFile(subtitle.font) != null) return;
         var size = subtitle.size > 0f ? Mathf.RoundToInt(subtitle.size) : 32;
         var font = ResolveSubtitleFont(subtitle.font);
+        if (font == null) return;
         var fontStyle = UsesDefaultSubtitleFont(subtitle.font)
             ? FontStyle.Bold
             : FontStyle.Normal;
@@ -375,18 +400,24 @@ public class DisplayTimelineController : MonoBehaviour
             : subtitle.text;
         if (text.Length == 0)
             return;
-        subtitleStyle.normal.textColor = new Color(1f, 1f, 1f, alpha);
+        var color=subtitleColors[subtitle]; color.a*=alpha;
+        subtitleStyle.normal.textColor = color;
         subtitleShadowStyle.normal.textColor = new Color(0f, 0f, 0f, 0.85f * alpha);
-        var left = 28f + Mathf.Clamp01(subtitle.x) * Screen.width;
-        var top = 22f + Mathf.Clamp01(subtitle.y) * Screen.height;
-        var rect = new Rect(
-            left,
-            top,
-            Mathf.Max(size * 2f, Screen.width - 28f - left),
-            Mathf.Max(size * 2f, Screen.height - 22f - top));
+        var centered = string.Equals(subtitle.origin, "Center", StringComparison.OrdinalIgnoreCase);
+        subtitleStyle.alignment = subtitleShadowStyle.alignment = centered ? TextAnchor.MiddleCenter : TextAnchor.UpperLeft;
+        var rect = GetSubtitleRect(subtitle, size, Screen.width, Screen.height);
         var shadowRect = new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height);
         GUI.Label(shadowRect, text, subtitleShadowStyle);
         GUI.Label(rect, text, subtitleStyle);
+    }
+
+    private static Rect GetSubtitleRect(SubtitleChange subtitle, float size, float width, float height)
+    {
+        var left = subtitle.x * width;
+        var top = subtitle.y * height;
+        var centered = string.Equals(subtitle.origin, "Center", StringComparison.OrdinalIgnoreCase);
+        return new Rect(left, top, centered ? width : Mathf.Max(size * 2f, width - left),
+            centered ? height : Mathf.Max(size * 2f, height - top));
     }
 
     private void AdvanceSubtitleCursor(float time)
@@ -452,7 +483,7 @@ public class DisplayTimelineController : MonoBehaviour
         if (UsesDefaultSubtitleFont(requested))
             return subtitleFont;
 
-        if (subtitleFontCache.TryGetValue(requested, out var cached) && cached != null)
+        if (subtitleFontCache.TryGetValue(requested, out var cached))
             return cached;
 
         var font = requested switch
@@ -516,6 +547,11 @@ public class DisplayTimelineController : MonoBehaviour
                          : FontStyle.Normal
                  }))
         {
+            if (CaptionFontFile(group.Key.Font) != null)
+            {
+                ResolveFileCaptionFont(group.Key.Font)?.TryAddCharacters(string.Concat(group.Select(item => item.text)));
+                continue;
+            }
             var font = ResolveSubtitleFont(group.Key.Font);
             if (font == null)
                 continue;
@@ -545,12 +581,15 @@ public class DisplayTimelineController : MonoBehaviour
                          : FontStyle.Normal
                  }))
         {
+            if (CaptionFontFile(group.Key.Font) != null) continue;
             var text = string.Concat(group.Select(item => item.text));
             if (text.Length == 0)
                 continue;
+            var font = ResolveSubtitleFont(group.Key.Font);
+            if (font == null) continue;
             var style = new GUIStyle(subtitleStyle)
             {
-                font = ResolveSubtitleFont(group.Key.Font),
+                font = font,
                 fontSize = group.Key.Size,
                 fontStyle = group.Key.Style,
                 wordWrap = false
@@ -945,6 +984,7 @@ public class DisplayTimelineController : MonoBehaviour
 
     private void RestoreStandby()
     {
+        var paused = timeProvider != null && timeProvider.IsPaused;
         if (expandedJudgeLine != null) expandedJudgeLine.forceRenderingOff = true;
         SetJudgeLinePlaybackScale();
         ApplyJudgeLineStyle(initialJudgeLineStyle);
@@ -968,14 +1008,14 @@ public class DisplayTimelineController : MonoBehaviour
         if (styleOverlay != null)
         {
             var ac = styleOverlay.color;
-            ac.a = initialJudgeLineStyle == 2 ? 1f : 0f;
+            ac.a = paused && initialJudgeLineStyle == 2 ? 1f : 0f;
             styleOverlay.color = ac;
-            styleOverlay.forceRenderingOff = initialJudgeLineStyle != 2;
+            styleOverlay.forceRenderingOff = !paused || initialJudgeLineStyle != 2;
         }
 
         objectCounter?.SetSideDisplays(false, false);
         objectCounter?.ComboSetActive((EditorComboIndicator)0);
-        bgManager?.SetCoverAlpha(initialInnerBrightness, initialOuterBrightness);
+        bgManager?.SetCoverAlpha(paused ? initialInnerBrightness : 0f, paused ? initialOuterBrightness : 1f);
         noteEffectManager?.ApplyJudgeTextAlpha(initialJudgeText);
         InvalidateAppliedValues();
     }

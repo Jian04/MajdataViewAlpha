@@ -8,6 +8,7 @@ public partial class MainWindow
 {
     private List<ChartDiagnostic> staticDiagnostics = new();
     private List<ChartDiagnostic> dynamicDiagnostics = new();
+    private string[] shownDynamicDetails = Array.Empty<string>();
     private DiagnosticsPanel? diagnosticsPanel;
     private void SyntaxDiagnostics_Click(object sender, System.Windows.Input.MouseButtonEventArgs e) => ShowDiagnostics(0);
     private void StaticDiagnostics_Click(object sender, System.Windows.Input.MouseButtonEventArgs e) => ShowDiagnostics(1);
@@ -17,7 +18,7 @@ public partial class MainWindow
         if (diagnosticsPanel == null)
         {
             diagnosticsPanel = new DiagnosticsPanel(index => index switch {
-                0 => latestParseErrors.Select(x => new ChartDiagnostic(x.PositionX, x.PositionY, x.Message)),
+                0 => latestParseErrors.Select(x => new ChartDiagnostic(x.PositionX, x.PositionY, x.Message, x.Category)),
                 1 => StaticMuriCount.Content is int count && count > 0 ? staticDiagnostics : Enumerable.Empty<ChartDiagnostic>(),
                 _ => dynamicDiagnostics
             }, ScrollToFumenContentSelection);
@@ -39,18 +40,23 @@ public partial class MainWindow
         {
             if (isPlaying && !wasMuriPlaying) playedMuriSource = GetRawFumenText();
             wasMuriPlaying = isPlaying;
-            int count = editorSetting?.editorPlayMethod == EditorPlayMethod.DJAuto && playedMuriSource == GetRawFumenText()
-                ? MajdataCore.AlphaSession.Current?.ReadDynamicMuri() ?? 0 : 0;
-            DynamicMuriCount.Content = count;
-            dynamicDiagnostics.Clear();
-            if (count > 0)
-                foreach (var detail in MajdataCore.AlphaSession.Current?.ReadDynamicMuriDetails() ?? Array.Empty<string>())
+            var count = 0;
+            var details = editorSetting?.editorPlayMethod == EditorPlayMethod.DJAuto && playedMuriSource == GetRawFumenText()
+                ? MajdataCore.AlphaSession.Current?.ReadDynamicMuriDetails(out count) ?? Array.Empty<string>()
+                : Array.Empty<string>();
+            if (!Equals(DynamicMuriCount.Content, count)) DynamicMuriCount.Content = count;
+            if (!details.SequenceEqual(shownDynamicDetails))
+            {
+                shownDynamicDetails = details;
+                dynamicDiagnostics.Clear();
+                foreach (var detail in details)
                 {
                     var parts = detail.Split('\t');
                     if (parts.Length != 3 || !int.TryParse(parts[0], out var line) || !int.TryParse(parts[1], out var column)) continue;
                     try { dynamicDiagnostics.Add(new ChartDiagnostic(column, line, System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(parts[2])))); }
                     catch (FormatException) { }
                 }
+            }
             diagnosticsPanel?.Refresh();
             DynamicMuriRow.Visibility = Visibility.Visible;
         };
@@ -67,6 +73,7 @@ public partial class MainWindow
         StaticMuriCount.Content = 0;
         staticDiagnostics.Clear();
         dynamicDiagnostics.Clear();
+        shownDynamicDetails = Array.Empty<string>();
         DynamicMuriCount.Content = 0;
         try
         {

@@ -20,14 +20,14 @@ internal sealed class EditorSongAudio : IDisposable
     public void Dispose() { if (stream != 0) { Bass.BASS_StreamFree(stream); stream = 0; } }
 
     internal static EditorSongAudio Prepare(string path, int device, bool decodeOnly,
-        CancellationToken cancellation = default)
+        CancellationToken cancellation = default, short[][]? cachedWaveforms = null, double cachedLength = 0)
     {
         cancellation.ThrowIfCancellationRequested();
         if (!Bass.BASS_SetDevice(device)) throw Failure(path, "选择音频设备");
         var playback = OpenPlayback(path, decodeOnly, out var actualDecodeOnly);
         try
         {
-            var waveform = ReadWaveform(path, cancellation);
+            var waveform = cachedWaveforms == null ? ReadWaveform(path, cancellation) : (Samples: cachedWaveforms, Length: cachedLength);
             var info = Bass.BASS_ChannelGetInfo(playback) ?? throw Failure(path, "读取音频信息");
             return new EditorSongAudio(playback, waveform.Samples, waveform.Length, info.freq, actualDecodeOnly);
         }

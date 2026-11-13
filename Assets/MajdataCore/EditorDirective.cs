@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace MajdataCore
 {
@@ -47,9 +47,8 @@ namespace MajdataCore
         public readonly int start;
 
         /// <summary>
-        /// How much text the directive owns. Meter and the clip marks own the rest
-        /// of their line, because that is what the chart parser consumes; a section
-        /// tint owns only its own characters, because notes may follow it.
+        /// How much text the directive owns. Section tints, meters and clip marks
+        /// own their line; an overlay head leaves its note text to the chart parser.
         /// </summary>
         public readonly int length;
 
@@ -90,7 +89,10 @@ namespace MajdataCore
                 return true;
             }
 
-            if (text[index] == '@' &&
+            var ownsLine = true;
+            for (var before = text.LastIndexOf('\n', index) + 1; before < index; before++)
+                if (!char.IsWhiteSpace(text[before])) { ownsLine = false; break; }
+            if (ownsLine && text[index] == '@' &&
                 string.Equals(body, "start", StringComparison.OrdinalIgnoreCase))
             {
                 directive = new EditorDirective(
@@ -98,7 +100,7 @@ namespace MajdataCore
                 return true;
             }
 
-            if (text[index] == '@' &&
+            if (ownsLine && text[index] == '@' &&
                 string.Equals(body, "end", StringComparison.OrdinalIgnoreCase))
             {
                 directive = new EditorDirective(
@@ -118,25 +120,28 @@ namespace MajdataCore
                 return true;
             }
 
-            // A tint marks the section that follows it, so notes may share its line
-            // and it owns only its own characters.
-            if (index + 5 <= lineEnd &&
-                string.Equals(
-                    text.Substring(index + 1, 4), "NULL",
-                    StringComparison.OrdinalIgnoreCase))
+            // Section colors are line directives, not note-slot prefixes.
+            if (!ownsLine) return false;
+            var comment = text.IndexOf("||", index + 1, lineLength - 1, StringComparison.Ordinal);
+            if (comment >= 0)
+            {
+                lineLength = comment - index;
+                body = text.Substring(index + 1, lineLength - 1).Trim();
+            }
+            if (string.Equals(body, "NULL", StringComparison.OrdinalIgnoreCase))
             {
                 directive = new EditorDirective(
-                    EditorDirectiveKind.SectionReset, index, 5);
+                    EditorDirectiveKind.SectionReset, index, lineLength);
                 return true;
             }
 
-            if (index + 7 <= lineEnd)
+            if (body.Length == 6)
             {
-                var candidate = text.Substring(index + 1, 6);
+                var candidate = body;
                 if (IsHex(candidate))
                 {
                     directive = new EditorDirective(
-                        EditorDirectiveKind.SectionColor, index, 7,
+                        EditorDirectiveKind.SectionColor, index, lineLength,
                         color: candidate);
                     return true;
                 }
@@ -156,8 +161,7 @@ namespace MajdataCore
             headLength = 0;
             if (index + 1 < text.Length && text[index + 1] == '*')
             {
-                var blockEnd = text.IndexOf("*@", index + 2,
-                    StringComparison.Ordinal);
+                var blockEnd = FindOverlayClose(text, index + 2);
                 if (blockEnd < 0)
                     return false;
                 headLength = blockEnd + 2 - index;
@@ -176,6 +180,29 @@ namespace MajdataCore
 
             headLength = closeBrace - index + 1;
             return true;
+        }
+
+        public static int FindOverlayClose(string text, int start)
+        {
+            for (var index = start; index + 1 < text.Length; index++)
+            {
+                if (text[index] == '|' && text[index + 1] == '|')
+                {
+                    index = text.IndexOf('\n', index + 2);
+                    if (index < 0) return -1;
+                }
+                else if (text[index] == '|' && text[index + 1] == '*')
+                {
+                    index = text.IndexOf("*|", index + 2, StringComparison.Ordinal);
+                    if (index < 0) return -1;
+                    index++;
+                }
+                else if (text[index] == '<' && AlphaCommandBoundary.TryGetCommand(text, index, out var close))
+                    index = close;
+                else if (text[index] == '*' && text[index + 1] == '@')
+                    return index;
+            }
+            return -1;
         }
 
         private static bool IsHex(string value)

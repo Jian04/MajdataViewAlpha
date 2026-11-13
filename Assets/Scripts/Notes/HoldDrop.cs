@@ -1,4 +1,4 @@
-using Assets.Scripts.Types;
+﻿using Assets.Scripts.Types;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -61,6 +61,7 @@ public class HoldDrop : NoteLongDrop
     private SpriteRenderer spriteRenderer;
     private MaterialPropertyBlock brightnessProperties;
     private bool? holdOnOppositeSide;
+    private bool? holdBodyReversed;
 
     protected override IEnumerable<SpriteRenderer> GetLiveVisualRenderers()
     {
@@ -167,12 +168,11 @@ public class HoldDrop : NoteLongDrop
             holdEndRender.sharedMaterial  = colorOverrideMaterial;
             lineSpriteRender.sharedMaterial = colorOverrideMaterial;
         }
+        InitializeTapLineAlpha(lineSpriteRender);
         if (isEX && colorOverrideMaterial != null &&
             colorOverrideMaterial.HasProperty("_NoteAlpha"))
         {
-            var exColor = exSpriteRender.color;
-            exColor.a *= colorOverrideMaterial.GetFloat("_NoteAlpha");
-            exSpriteRender.color = exColor;
+            SetInitialRendererAlpha(exSpriteRender, colorOverrideMaterial.GetFloat("_NoteAlpha"));
         }
 
         spriteRenderer.forceRenderingOff = true;
@@ -444,7 +444,7 @@ public class HoldDrop : NoteLongDrop
                 SvController.GetCumulativeScroll(tailTravelFrom, scrollType));
             var bodyLength = Mathf.Clamp(remainingBody, -visibleBodyLimit, visibleBodyLimit);
             var tailDistance = headDistance - bodyLength;
-            var bodyCenter = (headDistance + tailDistance) * 0.5f;
+            var bodyCenter = headDistance - (headDistance - tailDistance) * noteScale * noteScaleY * 0.5f;
             var bodySize = Mathf.Abs(headDistance - tailDistance) + 1.4f;
             holdEndRender.enabled = Mathf.Abs(bodyLength) > 0.001f;
             spriteRenderer.size = new Vector2(1.22f, bodySize);
@@ -464,12 +464,14 @@ public class HoldDrop : NoteLongDrop
             // The bounce branch returns before the ordinary Hold visual path,
             // which normally places this detached particle system at the key.
             holdEffect.transform.localPosition = getPositionFromDistance(destroyRadius);
-            UpdateVisualRotation(headDistance);
+            UpdateVisualRotation(headDistance, tailDistance);
             return;
         }
 
         var headPresentation = GetSpawnPresentation(
             distance, noteScrollPos, ref spawnCrossingMemo);
+        if (GetJudgeTiming() >= 0f && GetRemainingTime() > 0f)
+            headPresentation = new SpawnPresentation(true, true, destroyRadius, 1f);
         if (!headPresentation.Visible)
         {
             State = NoteStatus.Initialized;
@@ -559,7 +561,8 @@ public class HoldDrop : NoteLongDrop
                 holdDistance = spawnRadius;
             }
 
-            var dis = (distance - holdDistance) / 2 + holdDistance;
+            // Scale the body back from the head, keeping the judgement point fixed.
+            var dis = distance - (distance - holdDistance) * noteScale * noteScaleY * 0.5f;
             transform.position = getPositionFromDistance(dis);
             var size = Mathf.Abs(distance - holdDistance) + 1.4f;
             spriteRenderer.size = new Vector2(1.22f, size);
@@ -573,28 +576,35 @@ public class HoldDrop : NoteLongDrop
         var lineScale = Mathf.Abs(distance / DefaultDestroyRadius);
         tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
         UpdateVisualRotation(
-            headPresentation.Running ? distance : spawnRadius);
+            headPresentation.Running ? distance : spawnRadius,
+            headPresentation.Running ? holdDistance : null);
         exSpriteRender.size = spriteRenderer.size;
     }
 
     private void ApplyBaseRotation()
     {
         holdOnOppositeSide = null;
+        holdBodyReversed = null;
         UpdateVisualRotation(spawnRadius);
     }
 
-    private void UpdateVisualRotation(float visualDistance)
+    internal override float AngleHeadOffset => Mathf.Max(0f, spriteRenderer.size.y - 1.4f) * .5f;
+
+    private void UpdateVisualRotation(float visualDistance, float? tailDistance = null)
     {
         var opposite = visualDistance < 0f;
-        if (holdOnOppositeSide == opposite)
+        var reversePath = SvController.GetPathDirection(spawnRadius, destroyRadius) < 0f;
+        // SV can put the tail ahead of the head. Keep the sprite's head at
+        // headDistance rather than swapping its two ends as the body shrinks.
+        var reversed = tailDistance.HasValue ? visualDistance < tailDistance.Value : opposite != reversePath;
+        if (holdOnOppositeSide == opposite && holdBodyReversed == reversed)
             return;
         holdOnOppositeSide = opposite;
+        holdBodyReversed = reversed;
         var dZoneOffset = isDZone ? 22.5f : 0f;
         var baseAngle = -22.5f + -45f * (startPosition - 1) + dZoneOffset;
-        var reversePath = SvController.GetPathDirection(
-            spawnRadius, destroyRadius) < 0f;
         transform.rotation = Quaternion.Euler(
-            0f, 0f, baseAngle + (opposite != reversePath ? 180f : 0f));
+            0f, 0f, baseAngle + (reversed ? 180f : 0f));
         tapLine.transform.rotation = Quaternion.Euler(
             0f, 0f, baseAngle + (opposite ? 180f : 0f));
     }

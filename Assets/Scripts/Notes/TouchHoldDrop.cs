@@ -1,4 +1,4 @@
-using Assets.Scripts.Types;
+﻿using Assets.Scripts.Types;
 using System;
 using MajdataCore;
 using UnityEngine;
@@ -6,6 +6,8 @@ using UnityEngine.Rendering;
 #nullable enable
 public class TouchHoldDrop : NoteLongDrop
 {
+    internal const float FullProgressCutoff = 0.91f;
+
     private bool noiseInterrupted;
     public bool isFirework;
     public char touchArea = 'C';
@@ -18,20 +20,18 @@ public class TouchHoldDrop : NoteLongDrop
     public float noteScaleX = 1f;
     public float noteScaleY = 1f;
     private Vector2? liveScaleDefault;
+    private Vector3 authoredRootScale;
     private Vector3 authoredCenterPointScale;
     private bool centerPointScaleCaptured;
 
     public override void ApplyLiveScale(Vector2? scale)
     {
         liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
-        var previous = new Vector2(noteScaleX, noteScaleY);
         var value = scale ?? liveScaleDefault.Value;
         noteScaleX = value.x;
         noteScaleY = value.y;
-        if (previous.x != 0f && previous.y != 0f)
-            transform.localScale = Vector3.Scale(
-                transform.localScale,
-                new Vector3(value.x / previous.x, value.y / previous.y, 1f));
+        transform.localScale = Vector3.Scale(authoredRootScale,
+            new Vector3(noteScale*value.x,noteScale*value.y,1f));
         KeepCenterPointSize();
     }
     public GameObject tapEffect;
@@ -53,6 +53,12 @@ public class TouchHoldDrop : NoteLongDrop
     private float moveDuration;
 
     private float wholeDuration;
+    internal void RefreshMotionDuration()
+    {
+        wholeDuration = AlphaVisualTiming.GetTouchMotionDuration(speed);
+        moveDuration = .8f * wholeDuration;
+        displayDuration = .2f * wholeDuration;
+    }
     private NoteEffectManager noteEffectManager;
 
     Sprite[] judgeText;
@@ -60,7 +66,11 @@ public class TouchHoldDrop : NoteLongDrop
 
     // See NoteDrop.HideSpriteUntilInitialized: Start clears the fans a frame after
     // they have already been drawn opaque.
-    private void Awake() => HideFansUntilInitialized(fans);
+    private void Awake()
+    {
+        authoredRootScale = transform.localScale;
+        HideFansUntilInitialized(fans);
+    }
 
     // Start is called before the first frame update
     internal override void RestoreTimelineState(float at)
@@ -79,9 +89,7 @@ public class TouchHoldDrop : NoteLongDrop
 
     private void Start()
     {
-        wholeDuration = AlphaVisualTiming.GetTouchMotionDuration(speed);
-        moveDuration = 0.8f * wholeDuration;
-        displayDuration = 0.2f * wholeDuration;
+        RefreshMotionDuration();
 
         if (objectCounter == null) objectCounter = GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>();
         noteEffectManager = GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>();
@@ -109,11 +117,7 @@ public class TouchHoldDrop : NoteLongDrop
         if (sortingGroup == null) sortingGroup = gameObject.AddComponent<SortingGroup>();
         sortingGroup.sortingLayerID = fansSprite[0].sortingLayerID;
         sortingGroup.sortingOrder = noteSortOrder;
-        mask.isCustomRangeActive = true;
-        mask.backSortingLayerID = fansSprite[0].sortingLayerID;
-        mask.frontSortingLayerID = fansSprite[0].sortingLayerID;
-        mask.backSortingOrder = 0;
-        mask.frontSortingOrder = 5;
+        ConfigureProgressMask(mask, sortingGroup.sortingLayerID);
 
         for (var i = 0; i < 4; i++)
             fansSprite[i].sprite = ResolveCustomSkin(TouchHoldSprite[i]) ?? TouchHoldSprite[i];
@@ -365,7 +369,6 @@ public class TouchHoldDrop : NoteLongDrop
         // missed does not puff back open on its way out.
         if (timeProvider.AudioTime < time)
             timing = -Mathf.Abs(timing);
-        var judgeTiming = GetJudgeTiming();
         var pow = -Mathf.Exp(8 * (timing * 0.4f / moveDuration) - 0.85f) + 0.42f;
         var distance = Mathf.Clamp(pow, 0f, 0.4f);
 
@@ -383,7 +386,7 @@ public class TouchHoldDrop : NoteLongDrop
             mask.enabled = true;
             SetfanColor(Color.white);
             mask.alphaCutoff = Mathf.Clamp(
-                0.91f * (1 - (LastFor - judgeTiming) / LastFor),
+                LastFor > 0f ? FullProgressCutoff * GetTouchVisualTiming() / LastFor : 0f,
                 0f,
                 1f);
         }
@@ -601,6 +604,15 @@ public class TouchHoldDrop : NoteLongDrop
     }
     private Vector3 LeafPosition(int index, float distance) =>
         (0.226f + distance) * GetAngle(index);
+
+    internal static void ConfigureProgressMask(SpriteMask progressMask, int layerId)
+    {
+        progressMask.isCustomRangeActive = true;
+        progressMask.backSortingLayerID = layerId;
+        progressMask.frontSortingLayerID = layerId;
+        progressMask.backSortingOrder = 0;
+        progressMask.frontSortingOrder = 5;
+    }
 
     private void KeepCenterPointSize()
     {

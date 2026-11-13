@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -6,14 +6,19 @@ using System.Windows.Media.Imaging;
 
 namespace MajdataEdit;
 
-// A single layout for visual appearance choices, matching the note-skin cards.
+// Visual choices share one label/value column and one joined preview control.
 public sealed class VisualStylePicker : Grid
 {
     private readonly Border preview = new() { Height = 100, ClipToBounds = true, CornerRadius = new CornerRadius(4) };
-    private readonly TextBlock caption = new() { TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 4, 0, 0) };
+    private readonly TextBlock caption = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 4, 8, 0) };
+    public static readonly DependencyProperty TitleProperty = DependencyProperty.Register(nameof(Title), typeof(string), typeof(VisualStylePicker),
+        new PropertyMetadata("", (sender, _) => ((VisualStylePicker)sender).UpdateTitle()));
+    public string Title { get => (string)GetValue(TitleProperty); set => SetValue(TitleProperty, value); }
+    private readonly TextBlock title = new() { TextWrapping = TextWrapping.Wrap };
     private int selectedIndex;
     private string kind = "Background";
     private int transitionDirection;
+    private readonly Dictionary<string, (DateTime Modified, BitmapSource Image)> images = new();
     private static readonly string[] Themes = { "default", "circleplus", "circle", "chunithm-xversex", "chunithm-mate", "magical" };
     private static readonly string[] Names = { "OriginalStyle", "CiRCLE PLUS", "CiRCLE", "X-VERSE-X", "Mate", "MAGiCAL" };
     public event SelectionChangedEventHandler? SelectionChanged;
@@ -31,30 +36,57 @@ public sealed class VisualStylePicker : Grid
     }
     public VisualStylePicker()
     {
-        Margin = new Thickness(0, 0, 0, 7);
-        ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-        ColumnDefinitions.Add(new ColumnDefinition());
-        ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-        RowDefinitions.Add(new RowDefinition());
-        RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        preview.SetResourceReference(Border.BackgroundProperty, "ButtonsBackground");
-        caption.SetResourceReference(TextBlock.ForegroundProperty, "HelperForeground");
-        SetColumn(preview, 1); Children.Add(preview);
-        SetRow(caption, 1); SetColumnSpan(caption, 3); Children.Add(caption);
-        AddArrow("‹", -1, 0); AddArrow("›", 1, 2);
+        Children.Add(CreateRow(title, caption, CreatePicker(preview, AddArrow("‹", -1), AddArrow("›", 1))));
         Loaded += (_, _) => Refresh();
     }
-    private void AddArrow(string glyph, int delta, int column)
+    private void UpdateTitle() => title.Text = Title;
+
+    internal static Grid CreateRow(TextBlock title, TextBlock value, FrameworkElement picker)
     {
-        var button = new Button { Content = glyph, FontSize = 18, Padding = new Thickness(0), Margin = new Thickness(3) };
-        button.SetResourceReference(Control.TemplateProperty, "DarkButton");
-        button.SetResourceReference(Control.ForegroundProperty, "ButtonForeground");
-        button.SetResourceReference(Control.BackgroundProperty, "ButtonsBackground");
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 8), Tag = "AppearancePicker" };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(105) });
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 8, 0) };
+        title.TextWrapping = value.TextWrapping = TextWrapping.Wrap;
+        title.SetResourceReference(TextBlock.ForegroundProperty, "ButtonForeground");
+        value.FontSize = 12; value.Margin = new Thickness(0, 4, 0, 0);
+        value.SetResourceReference(TextBlock.ForegroundProperty, "MutedForeground");
+        labels.Children.Add(title); labels.Children.Add(value); row.Children.Add(labels);
+        SetColumn(picker, 1); row.Children.Add(picker);
+        return row;
+    }
+
+    internal static Border CreatePicker(FrameworkElement preview, Button previous, Button next)
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+        foreach (var arrow in new[] { previous, next })
+        {
+            arrow.Background = Brushes.Transparent; arrow.BorderThickness = new Thickness(0);
+            arrow.Padding = arrow.Margin = new Thickness(0); arrow.FontSize = 18;
+            arrow.FocusVisualStyle = null;
+            arrow.SetResourceReference(Control.TemplateProperty, "AppearanceArrow");
+            arrow.SetResourceReference(Control.ForegroundProperty, "ButtonForeground");
+        }
+        SetColumn(preview, 1); SetColumn(next, 2);
+        grid.Children.Add(previous); grid.Children.Add(preview); grid.Children.Add(next);
+        var field = new Border { Child = grid, CornerRadius = new CornerRadius(4), ClipToBounds = true,
+            BorderThickness = new Thickness(0) };
+        field.Background = Brushes.Transparent;
+        field.SetResourceReference(Border.BorderBrushProperty, "MenuSeparator");
+        return field;
+    }
+
+    private Button AddArrow(string glyph, int delta)
+    {
+        var button = new Button { Content = glyph };
         button.Click += (_, _) => { var count = kind == "JudgeLine" ? MajdataCore.JudgeLineStyles.Available.Length : Themes.Length;
             transitionDirection = delta;
             SelectedIndex = (selectedIndex + delta + count) % count;
             transitionDirection = 0; };
-        SetColumn(button, column); Children.Add(button);
+        return button;
     }
     private void Refresh()
     {
@@ -85,9 +117,12 @@ public sealed class VisualStylePicker : Grid
             CarouselTransition.Replace(preview, new Viewbox { Child = host, Stretch = Stretch.Uniform }, transitionDirection);
         }
     }
-    private static BitmapSource ReadImage(string path)
+    private BitmapSource ReadImage(string path)
     {
+        var modified = File.GetLastWriteTimeUtc(path);
+        if (images.TryGetValue(path, out var cached) && cached.Modified == modified) return cached.Image;
         var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad;
-        image.UriSource = new Uri(path); image.EndInit(); image.Freeze(); return image;
+        image.UriSource = new Uri(path); image.EndInit(); image.Freeze();
+        images[path] = (modified, image); return image;
     }
 }

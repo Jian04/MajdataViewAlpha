@@ -23,6 +23,24 @@
             <TextBox x:Name="ArtistTextbox" Margin="0,5,0,10"/>
             <TextBlock Text="Designer" Foreground="{DynamicResource ButtonForeground}"/>
             <TextBox x:Name="DesignTextbox" Margin="0,5,0,10"/>
+            <TextBlock Text="Cover 封面" Foreground="{DynamicResource ButtonForeground}"/>
+            <Grid Margin="0,5,0,10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBox x:Name="CoverTextbox" IsReadOnly="True"/>
+                <Button Grid.Column="1" Content="选择" Tag="Cover" Click="SelectAsset_Click" Margin="6,0,0,0"/>
+            </Grid>
+            <TextBlock Text="Background 背景" Foreground="{DynamicResource ButtonForeground}"/>
+            <Grid Margin="0,5,0,10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBox x:Name="BackgroundTextbox" IsReadOnly="True"/>
+                <Button Grid.Column="1" Content="选择" Tag="Background" Click="SelectAsset_Click" Margin="6,0,0,0"/>
+            </Grid>
+            <TextBlock Text="Audio 音频" Foreground="{DynamicResource ButtonForeground}"/>
+            <Grid Margin="0,5,0,10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBox x:Name="AudioTextbox" IsReadOnly="True"/>
+                <Button Grid.Column="1" Content="选择" Tag="Audio" Click="SelectAsset_Click" Margin="6,0,0,0"/>
+            </Grid>
             <TextBlock Text="BPM" Foreground="{DynamicResource ButtonForeground}"/>
             <TextBox x:Name="BpmTextbox" Margin="0,5,0,10"/>
             <TextBlock Text="Clock" Foreground="{DynamicResource ButtonForeground}"/>

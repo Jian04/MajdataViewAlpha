@@ -1,4 +1,4 @@
-﻿<Window
+<Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -15,6 +15,7 @@
     Closing="Window_Closing"
     PreviewKeyDown="SidebarKeyDown"
     MinHeight="517"
+    FontFamily="{DynamicResource UiFontFamily}" FontSize="13" UseLayoutRounding="True"
     WindowStartupLocation="CenterScreen">
 
     <Grid Margin="0" DragEnter="Grid_DragEnter" AllowDrop="True" Drop="Grid_Drop">
@@ -41,7 +42,7 @@
         <Border x:Name="DecorationBgHost" Grid.Row="0" Grid.RowSpan="3" Grid.Column="0" Grid.ColumnSpan="3"
                 IsHitTestVisible="False" ClipToBounds="True" Visibility="Collapsed" />
 
-        <StackPanel Grid.Column="1" Grid.Row="1" Margin="2,202,0,0" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <StackPanel x:Name="DiagnosticsSummary" Grid.Column="1" Grid.Row="1" Margin="2,202,0,0" HorizontalAlignment="Left" VerticalAlignment="Top">
             <StackPanel.Resources>
                 <Style TargetType="Label">
                     <Setter Property="Height" Value="25" />
@@ -69,6 +70,7 @@
                HorizontalAlignment="Stretch" MouseWheel="MusicWave_MouseWheel"
                PreviewMouseLeftButtonDown="MusicWave_PreviewMouseLeftButtonDown"
                PreviewMouseLeftButtonUp="MusicWave_PreviewMouseLeftButtonUp"
+               PreviewMouseRightButtonDown="MusicWave_PreviewMouseRightButtonDown"
                LostMouseCapture="MusicWave_LostMouseCapture"
                MouseMove="MusicWave_MouseMove"
                Grid.ColumnSpan="3" SizeChanged="MusicWave_SizeChanged" Grid.RowSpan="2" Grid.Row="1" />
@@ -79,7 +81,7 @@
         <Line Visibility="Collapsed" x:Name="MusicWaveCursor" StrokeThickness="3" Y2="62" Height="80" VerticalAlignment="Bottom" Stroke="Red" Y1="15"
               HorizontalAlignment="Center" Width="1" Grid.ColumnSpan="3" Grid.RowSpan="2" Grid.Row="1" />
 
-        <Menu x:Name="MainMenu" Height="24" Margin="0" Padding="0,0,60,0" VerticalAlignment="Top" Background="{DynamicResource ButtonsBackground}"
+        <Menu x:Name="MainMenu" Height="24" Margin="0" Padding="0,0,60,0" VerticalAlignment="Top" Background="{DynamicResource WindowBackground}"
               Panel.ZIndex="50"
               Foreground="{DynamicResource ButtonForeground}" Grid.ColumnSpan="3" Grid.RowSpan="2">
             <Menu.Resources>
@@ -103,16 +105,21 @@
                 </MenuItem>
                 <MenuItem x:Name="Menu_Open" Header="{lex:Loc Open}" Click="Menu_Open_Click" />
                 <MenuItem x:Name="Menu_Save" Header="{lex:Loc Save}" Click="Menu_Save_Click" />
-                <MenuItem x:Name="Menu_ExportNoAlpha" Header="{lex:Loc ExportNoAlpha}" Click="Menu_ExportNoAlpha_Click"
-                          IsEnabled="False" />
-                <MenuItem x:Name="Menu_SaveAs" Header="{lex:Loc SaveAs}" Click="Menu_SaveAs_Click" IsEnabled="False"
-                          Visibility="Collapsed" />
+                <MenuItem Header="{lex:Loc SaveAs}" Click="Menu_SaveAs_Click"
+                          IsEnabled="{Binding IsEnabled, ElementName=Menu_Save}" />
+                <MenuItem Header="导出" IsEnabled="{Binding IsEnabled, ElementName=Menu_Save}">
+                    <MenuItem x:Name="Menu_ExportRender" Header="视频…" Click="Menu_ExportRender_Click"
+                              IsEnabled="False" />
+                    <MenuItem Header="GIF…" Click="Menu_ExportGif_Click"
+                              IsEnabled="{Binding IsEnabled, ElementName=Menu_ExportRender}" />
+                    <Separator />
+                    <MenuItem Header="压缩包" Click="ExportChartPackage_Click" />
+                    <MenuItem x:Name="Menu_ExportNoAlpha" Header="无特效谱" Click="Menu_ExportNoAlpha_Click"
+                              IsEnabled="False" />
+                </MenuItem>
                 <Separator />
                 <MenuItem x:Name="Menu_AutosaveRecover" Header="{lex:Loc AutosaveRecoverWindowTitle}"
                           Click="Menu_AutosaveRecover_Click" />
-                <Separator />
-                <MenuItem x:Name="Menu_ExportRender" Header="{lex:Loc RecordVideo}" Click="Menu_ExportRender_Click"
-                          IsEnabled="False" />
 
             </MenuItem>
             <MenuItem x:Name="MenuEdit" Header="{lex:Loc Edit}" IsEnabled="False"
@@ -136,7 +143,8 @@
                       Template="{DynamicResource DarkMenuItem}" SubmenuOpened="ToolsMenu_Opened">
                 <MenuItem Header="{lex:Loc BPMtap}" Click="BPMtap_MenuItem_Click" />
                 <MenuItem Header="语法帮助" Click="AlphaSyntaxHelp_MenuItem_Click" />
-                <MenuItem Header="{lex:Loc NoteDensity}" Click="NoteDensity_MenuItem_Click" />
+                <MenuItem Header="调色盘" Click="ColorPalette_MenuItem_Click" />
+                <MenuItem Header="音符监控" Click="NoteMonitor_MenuItem_Click" />
                 <MenuItem x:Name="MenuMuriCheck" Header="{lex:Loc MapMuriDetc}" Click="MuriCheck_Click_1"
                           IsEnabled="False" />
                 <MenuItem x:Name="SyntaxCheckButton" Header="{lex:Loc SyntaxDisplay}" Click="SyntaxCheckButton_Click"
@@ -162,6 +170,8 @@
                 <MenuItem Header="格式刷" Template="{DynamicResource DarkMenuItem}">
                     <MenuItem Header="一键保护套" Tag="x" Click="ModifierBrush_Click" />
                     <MenuItem Header="一键绝赞" Tag="b" Click="ModifierBrush_Click" />
+                    <MenuItem Header="一键地雷" Tag="m" Click="ModifierBrush_Click" />
+                    <MenuItem Header="一键噪域" Tag="X" Click="ModifierBrush_Click" />
                     <Separator />
                     <MenuItem Header="{lex:Loc HighestDivision}" Click="FormatBrushAuto_MenuItem_Click" /><Separator />
                     <MenuItem Header="{lex:Loc Division8}" Click="FormatBrush8_MenuItem_Click" />
@@ -191,45 +201,25 @@
             <MenuItem Header="Majnet" Click="MenuItem_Majnet_Click" Template="{DynamicResource DarkMenuItem}" />
         </Menu>
         <Button x:Name="SidebarExpandButton" Width="30" Height="24" Margin="0,0,30,0" HorizontalAlignment="Right" VerticalAlignment="Top"
+                Visibility="Collapsed"
                 Grid.ColumnSpan="3" Grid.RowSpan="2" Panel.ZIndex="52" Click="SidebarExpand_Click"
                 ToolTip="侧边栏占满编辑器" AutomationProperties.Name="放大或还原侧边栏"
                 Background="Transparent" Foreground="{DynamicResource ButtonForeground}"
-                FocusVisualStyle="{x:Null}" BorderThickness="0" Padding="6,4">
-            <Button.Template>
-                <ControlTemplate TargetType="Button">
-                    <Border x:Name="BackgroundBorder" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="3">
-                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="Tag" Value="True"><Setter TargetName="BackgroundBorder" Property="Background" Value="{DynamicResource EditorBackground}"/></Trigger>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="BackgroundBorder" Property="Background" Value="{DynamicResource MenuSeparator}"/></Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
-            </Button.Template>
-            <Path x:Name="SidebarExpandIcon" Stroke="{Binding Foreground, ElementName=SidebarExpandButton}" StrokeThickness="1.3"
-                  Width="16" Height="14" Stretch="Uniform" Data="M2,2 L14,2 L14,12 L2,12 Z M2,4 L14,4"/>
+                FocusVisualStyle="{x:Null}" BorderThickness="0" Padding="6,4" Template="{DynamicResource SidebarButton}">
+            <Viewbox Width="16" Height="16"><Canvas Width="24" Height="24">
+                <Path x:Name="SidebarExpandIcon" Stroke="{Binding Foreground, ElementName=SidebarExpandButton}" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                      Data="M15,3 L21,3 L21,9 M21,3 L14,10 M9,21 L3,21 L3,15 M3,21 L10,14" />
+            </Canvas></Viewbox>
         </Button>
         <Button x:Name="SidebarToggleButton" Width="30" Height="24" HorizontalAlignment="Right" VerticalAlignment="Top"
                 Grid.ColumnSpan="3" Grid.RowSpan="2" Panel.ZIndex="51" Click="SidebarToggle_Click"
                 ToolTip="显示／隐藏工具侧栏（Ctrl+Alt+B）" AutomationProperties.Name="显示或隐藏工具侧栏"
                 Background="Transparent" Foreground="{DynamicResource ButtonForeground}"
-                FocusVisualStyle="{x:Null}" BorderThickness="0" Padding="6,4">
-            <Button.Template>
-                <ControlTemplate TargetType="Button">
-                    <Border x:Name="BackgroundBorder" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="3">
-                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="Tag" Value="True"><Setter TargetName="BackgroundBorder" Property="Background" Value="{DynamicResource EditorBackground}"/></Trigger><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="BackgroundBorder" Property="Background" Value="{DynamicResource MenuSeparator}"/></Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
-            </Button.Template>
-            <Grid Width="16" Height="14">
-                <Path Stroke="{Binding Foreground, ElementName=SidebarToggleButton}" StrokeThickness="1.2"
-                      Data="M1,1 L15,1 L15,13 L1,13 Z M10,1 L10,13"/>
-                <Rectangle x:Name="SidebarIconFill" Width="3" Height="10" HorizontalAlignment="Right" Margin="0,0,2,0"
-                           Fill="{DynamicResource ButtonForeground}" Opacity="0.25"/>
-            </Grid>
+                FocusVisualStyle="{x:Null}" BorderThickness="0" Padding="6,4" Template="{DynamicResource SidebarButton}">
+            <Viewbox Width="16" Height="16"><Canvas Width="24" Height="24">
+                <Path Stroke="{Binding Foreground, ElementName=SidebarToggleButton}" StrokeThickness="1.6" StrokeLineJoin="Round"
+                      Data="M5,3 L19,3 Q21,3 21,5 L21,19 Q21,21 19,21 L5,21 Q3,21 3,19 L3,5 Q3,3 5,3 Z M15,3 L15,21" />
+            </Canvas></Viewbox>
         </Button>
 
         <local:MediaTimelineEditor x:Name="MediaTimelinePanel"
@@ -263,16 +253,20 @@
                   HorizontalAlignment="Left" Height="21" Margin="6,0,0,151" VerticalAlignment="Bottom" Width="100"
                   Foreground="{DynamicResource ButtonForeground}" Background="{DynamicResource ButtonsBackground}"
                   Click="DragPreviewCheck_Click" Template="{DynamicResource DarkCheck}" Grid.Row="1" Grid.Column="1" />
+        <CheckBox x:Name="WordWrapCheck" Content="自动换行" Click="WordWrapCheck_Click"
+                  Foreground="{DynamicResource ButtonForeground}" Template="{DynamicResource DarkCheck}" />
+        <CheckBox x:Name="PausedJudgeAreasCheck" Content="暂停判定区" IsChecked="True" Click="PausedJudgeAreasCheck_Click"
+                  Foreground="{DynamicResource ButtonForeground}" Template="{DynamicResource DarkCheck}" />
         <avalonEdit:TextEditor x:Name="FumenContent"
-                     Padding="1,5,6,5" FontFamily="Cascadia Mono, JetBrains Mono, Cascadia Code, Consolas" FontWeight="Normal"
+                     Padding="1,0,1,0" FontFamily="Cascadia Mono, JetBrains Mono, Cascadia Code, Consolas" FontWeight="Normal"
                      Foreground="{DynamicResource ButtonForeground}" TextChanged="FumenContent_TextChanged"
-                     Margin="102,29,10,96" HorizontalScrollBarVisibility="Auto"
+                     Margin="102,29,7.5,90" HorizontalScrollBarVisibility="Auto"
                      VerticalScrollBarVisibility="Visible"
                      Grid.ColumnSpan="2"
                      InputMethod.IsInputMethodEnabled="True"
                      ShowLineNumbers="True"
-                     WordWrap="False"
-                     Background="#FF3A4049"
+                     WordWrap="False" TextOptions.TextFormattingMode="Ideal"
+                     Background="{DynamicResource EditorBackground}"
                      PreviewKeyDown="FumenContent_OnPreviewKeyDown" Grid.Row="1" Grid.Column="1">
             <avalonEdit:TextEditor.ContextMenu>
                 <ContextMenu Style="{StaticResource AlphaContextMenu}" Opened="FumenContextMenu_Opened">
@@ -306,9 +300,11 @@
                         <MenuItem Header="最大" Tag="max" Click="DurationBrush_Click" />
                         <MenuItem Header="最小" Tag="min" Click="DurationBrush_Click" />
                     </MenuItem>
-                    <MenuItem Header="{lex:Loc FormatSelection}" Template="{DynamicResource DarkMenuItem}">
+                    <MenuItem Header="格式刷" Template="{DynamicResource DarkMenuItem}">
                         <MenuItem Header="一键保护套" Tag="x" Click="ModifierBrush_Click" />
                         <MenuItem Header="一键绝赞" Tag="b" Click="ModifierBrush_Click" />
+                        <MenuItem Header="一键地雷" Tag="m" Click="ModifierBrush_Click" />
+                        <MenuItem Header="一键噪域" Tag="X" Click="ModifierBrush_Click" />
                         <Separator />
                         <MenuItem Header="{lex:Loc HighestDivision}" Click="FormatBrushAuto_MenuItem_Click" /><Separator />
                         <MenuItem Header="{lex:Loc Division8}" Click="FormatBrush8_MenuItem_Click" />
@@ -404,7 +400,7 @@
                 VerticalAlignment="Bottom" Width="24" Click="WaveViewZoomOut_Click"
                 Background="Transparent" Foreground="{DynamicResource ButtonForeground}"
                 Template="{DynamicResource DarkButton}" Grid.Row="1" Grid.Column="1" />
-        <Button Content="剪辑" HorizontalAlignment="Left" Height="24" Margin="36,0,0,9"
+        <Button x:Name="MediaTimelineButton" Content="剪辑" HorizontalAlignment="Left" Height="24" Margin="36,0,0,9"
                 VerticalAlignment="Bottom" Width="57" Click="MediaTimeline_MenuItem_Click"
                 Background="Transparent" Foreground="{DynamicResource ButtonForeground}"
                 Template="{DynamicResource DarkButton}" Grid.Row="1" Grid.Column="1" />
@@ -420,13 +416,13 @@
                 Padding="1,0,0,0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                 Background="Transparent" Foreground="{DynamicResource ButtonForeground}"
                 Template="{DynamicResource DarkButton}" Grid.Row="1" Grid.Column="1" Panel.ZIndex="40" />
-        <Label Content="{lex:Loc Difficulty}" HorizontalAlignment="Left" Height="25" Margin="2,142,0,0"
+        <Label x:Name="DifficultyLabel" Content="{lex:Loc Difficulty}" HorizontalAlignment="Left" Height="25" Margin="2,142,0,0"
                VerticalAlignment="Top" Width="45" Foreground="{DynamicResource ButtonForeground}" Grid.Row="1" Grid.Column="1" />
         <TextBox x:Name="LevelTextBox" HorizontalAlignment="Left" Height="25" Margin="47,142,0,0" TextWrapping="Wrap"
                  VerticalAlignment="Top" Width="46" VerticalContentAlignment="Center"
                  TextChanged="LevelTextBox_TextChanged" Background="{DynamicResource ButtonsBackground}"
                  Foreground="{DynamicResource ButtonForeground}" HorizontalContentAlignment="Center" Grid.Row="1" Grid.Column="1" />
-        <Label Content="{lex:Loc Offset}" HorizontalAlignment="Left" Height="25" Margin="2,172,0,0"
+        <Label x:Name="OffsetLabel" Content="{lex:Loc Offset}" HorizontalAlignment="Left" Height="25" Margin="2,172,0,0"
                VerticalAlignment="Top" Width="45" Foreground="{DynamicResource ButtonForeground}" Grid.Row="1" Grid.Column="1" />
         <TextBox x:Name="OffsetTextBox" HorizontalAlignment="Left" Height="25" Margin="47,172,0,0" TextWrapping="Wrap"
                  VerticalAlignment="Top" Width="46" VerticalContentAlignment="Center"
@@ -441,7 +437,7 @@
                 VerticalAlignment="Bottom" Width="38" Click="StopButton_Click"
                 Background="Transparent" Foreground="{DynamicResource ButtonForeground}"
                 Template="{DynamicResource DarkButton}" Grid.Row="1" Grid.Column="1" />
-        <Label x:Name="NoteNowText" Content="{lex:Loc Key=EditorLine}" HorizontalAlignment="Left" Margin="0,73,0,0" VerticalAlignment="Top"
+        <Label x:Name="NoteNowText" Content=".0000" HorizontalAlignment="Left" Margin="0,73,0,0" VerticalAlignment="Top"
                Foreground="{DynamicResource ButtonForeground}" Width="105" HorizontalContentAlignment="Center" Height="25" Grid.Row="1" Grid.ColumnSpan="2" />
         <Button x:Name="Op_Button" Content="{lex:Loc RecMode}" Height="30" Margin="6,0,0,165"
                 VerticalAlignment="Bottom" RenderTransformOrigin="1.1,0.25" Click="Op_Button_Click"
@@ -466,39 +462,17 @@
                VerticalContentAlignment="Center" Foreground="{DynamicResource ButtonForeground}"
                HorizontalContentAlignment="Center" ToolTip="{lex:Loc SpeedSettingTooltip}" Grid.Row="1" Grid.Column="1"
                Visibility="Collapsed" />
-        <Grid x:Name="PlbSpdAdjGrid" HorizontalAlignment="Left" Height="105" Margin="102,289,0,0"
-              VerticalAlignment="Top" Width="148" Visibility="Hidden" Grid.Row="1" Grid.Column="1">
-            <Grid.Background>
-                <SolidColorBrush Color="#FF303030" Opacity="0.8" />
-            </Grid.Background>
-            <Label Content="{lex:Loc PlayBackSpeed}" Height="26" Margin="44,20,44,0" VerticalAlignment="Top"
-                   Foreground="{DynamicResource ButtonForeground}" HorizontalContentAlignment="Center" />
-            <Label x:Name="PlbSpdLabel" Content="100%" Margin="34,46,34,20" Foreground="{DynamicResource ButtonForeground}" FontWeight="Bold"
-                   FontSize="22" HorizontalContentAlignment="Center" />
-        </Grid>
-        <Grid x:Name="FindGrid" Margin="0,29,28,0" Grid.Column="2" HorizontalAlignment="Right" Width="272" Height="69"
-              VerticalAlignment="Top" Visibility="Collapsed" Grid.Row="1">
-            <Grid.Background>
-                <SolidColorBrush Color="Black" Opacity="0.2" />
-            </Grid.Background>
-            <TextBox x:Name="InputText" HorizontalAlignment="Left" Height="22" Margin="10,10,0,0" TextWrapping="Wrap"
-                     VerticalAlignment="Top" Width="231" VerticalContentAlignment="Center" />
-            <Image x:Name="Find_icon" HorizontalAlignment="Left" Height="22" Margin="246,10,0,0"
-                   VerticalAlignment="Top" Width="26" Source="Image/outline_search_white_24dp.png"
-                   MouseDown="Find_icon_MouseDown" ToolTip="{lex:Loc FindNext}" />
-            <Image x:Name="Replace_icon" HorizontalAlignment="Left" Height="22" Margin="246,37,0,0"
-                   VerticalAlignment="Top" Width="26" Source="Image/outline_find_replace_white_24dp.png"
-                   MouseDown="Replace_icon_MouseDown" ToolTip="{lex:Loc ReplaceNext}" />
-            <Label x:Name="FindClose" Content="^" Height="19" Margin="127,53,127,-3" VerticalAlignment="Top"
-                   FontSize="11" FontWeight="Bold" Foreground="{DynamicResource ButtonForeground}" MouseDown="FindClose_MouseDown" />
-            <TextBox x:Name="ReplaceText" HorizontalAlignment="Left" Height="22" Margin="10,37,0,0" TextWrapping="Wrap"
-                     VerticalAlignment="Top" Width="231" VerticalContentAlignment="Center" />
+        <Grid x:Name="PlbSpdAdjGrid" HorizontalAlignment="Center" Height="76" Margin="0,0,0,16"
+              VerticalAlignment="Bottom" Width="160" Visibility="Hidden" Grid.Row="1" Grid.ColumnSpan="3" Panel.ZIndex="20" IsHitTestVisible="False">
+            <Border Background="{DynamicResource PanelBackground}" BorderBrush="{DynamicResource MenuSeparator}" BorderThickness="1" CornerRadius="6" />
+            <StackPanel VerticalAlignment="Center">
+                <Label Content="{lex:Loc PlayBackSpeed}" Padding="0" FontSize="11" Foreground="{DynamicResource MutedForeground}" HorizontalContentAlignment="Center" />
+                <Label x:Name="PlbSpdLabel" Content="1.00×" Padding="0,3,0,0" Foreground="{DynamicResource ButtonForeground}" FontFamily="{DynamicResource UiFontFamily}" FontSize="22" HorizontalContentAlignment="Center" />
+            </StackPanel>
         </Grid>
         <StackPanel x:Name="OverrideModeTipsPopup" Margin="102,29,0,0" HorizontalAlignment="Left"
                     VerticalAlignment="Top" Orientation="Horizontal" Visibility="Collapsed" Grid.Row="1" Height="0" Width="0" Grid.Column="1">
-            <StackPanel.Background>
-                <SolidColorBrush Color="Black" Opacity="0.8" />
-            </StackPanel.Background>
+            <StackPanel.Background><DynamicResource ResourceKey="PreviewBackground" /></StackPanel.Background>
             <Label Content="{lex:Loc OverwriteMode}" Foreground="{DynamicResource ButtonForeground}" />
             <Label Foreground="{DynamicResource HelperForeground}" Margin="3,0,0,0">
                 <Label.ToolTip>
@@ -511,7 +485,7 @@
                 <TextBlock TextDecorations="Underline" FontSize="10" Text="{lex:Loc Key=WhatsThis}" />
             </Label>
         </StackPanel>
-        <Rectangle x:Name="Cover" Fill="#FF1F1F1F" Margin="0,18,0,0" Stroke="Black" Grid.ColumnSpan="3"
+        <Rectangle x:Name="Cover" Fill="{DynamicResource WindowBackground}" Margin="0,18,0,0" Stroke="{DynamicResource MenuSeparator}" Grid.ColumnSpan="3"
                    d:IsHidden="True" Grid.RowSpan="2" Grid.Row="1" />
     </Grid>
 </Window>

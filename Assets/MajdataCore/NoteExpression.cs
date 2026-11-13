@@ -70,7 +70,19 @@ namespace MajdataCore
                 return parts;
             }
 
-            parts.AddRange(slot.Split('/'));
+            var start = 0;
+            var depth = 0;
+            for (var index = 0; index < slot.Length; index++)
+            {
+                if (slot[index] == '[') depth++;
+                else if (slot[index] == ']') depth--;
+                else if (slot[index] == '/' && depth == 0)
+                {
+                    parts.Add(slot.Substring(start, index - start));
+                    start = index + 1;
+                }
+            }
+            parts.Add(slot.Substring(start));
             return parts;
         }
 

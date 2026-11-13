@@ -52,6 +52,7 @@ public partial class NoteDensityWindow : Window
     private int renderedWidth;
     private int renderedHeight;
     private double dragStartX, dragStartOffset;
+    private double plotWidth;
 
     private static string L(string key, params object[] args)
     {
@@ -66,6 +67,7 @@ public partial class NoteDensityWindow : Window
         this.audioIntensity = audioIntensity;
         this.length = length;
         this.audioLength = audioLength;
+        plotWidth = Math.Min(16000, length * 7);
         if (!string.IsNullOrWhiteSpace(title))
             Title = L("NoteDensityWindowTitle", title);
 
@@ -95,10 +97,21 @@ public partial class NoteDensityWindow : Window
         }
 
         SummaryText.Text = L("NoteDensitySummary", pink + blue + yellow, FormatTime(length));
-        Loaded += (_, _) => QueueRender();
+        Loaded += (_, _) => UpdatePlotWidth();
         ContentRendered += (_, _) => QueueRender();
         DensityImage.SizeChanged += (_, _) => QueueRender();
         DensityScroller.SizeChanged += (_, _) => UpdatePlotWidth();
+        DensityScroller.ScrollChanged += (_, e) =>
+        {
+            if (e.ViewportWidthChange != 0 || e.ViewportHeightChange != 0)
+                UpdatePlotWidth();
+        };
+        DensityScroller.PreviewMouseWheel += (_, e) =>
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+            ZoomPlot(Math.Pow(1.2, e.Delta / 120d), e.GetPosition(DensityScroller).X);
+            e.Handled = true;
+        };
         DensityImage.PreviewMouseLeftButtonDown += (_, e) =>
         {
             dragStartX = e.GetPosition(DensityScroller).X;
@@ -127,9 +140,18 @@ public partial class NoteDensityWindow : Window
         var viewport = Math.Max(1, DensityScroller.ViewportWidth);
         // Keep a few seconds per bar on a long song; the scrollbar and direct
         // drag expose the rest of the timeline without shrinking every peak.
-        DensityImage.Width = Math.Max(viewport, Math.Min(16000, length * 7));
+        DensityImage.Width = Math.Max(viewport, plotWidth);
         DensityImage.Height = Math.Max(1, DensityScroller.ViewportHeight);
         QueueRender();
+    }
+
+    private void ZoomPlot(double factor, double pointerX)
+    {
+        var viewport = DensityScroller.ViewportWidth;
+        var position = (DensityScroller.HorizontalOffset + pointerX) / DensityImage.Width;
+        plotWidth = Math.Clamp(DensityImage.Width * factor, viewport, Math.Max(viewport, 16000));
+        UpdatePlotWidth();
+        DensityScroller.ScrollToHorizontalOffset(position * plotWidth - pointerX);
     }
 
     private void QueueRender()

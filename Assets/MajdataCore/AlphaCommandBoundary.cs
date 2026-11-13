@@ -8,8 +8,7 @@ namespace MajdataCore
     /// editor with three looser copies next to it (the colorizer, the beat
     /// formatter and the preview each had their own '&lt;' scan), so the same text
     /// could be treated as a command by one layer and as note text by another.
-    /// The scan is line bounded: a command never spans a newline, which is what
-    /// kept the old copies from swallowing later lines while looking for '&gt;'.
+    /// Unquoted newlines end a command scan; quoted TEXT content can span lines.
     /// </summary>
     public static class AlphaCommandBoundary
     {
@@ -38,9 +37,8 @@ namespace MajdataCore
             if (!IsPotentialStart(text, openIndex))
                 return false;
 
-            var close = text.IndexOf('>', openIndex + 1);
-            var newline = text.IndexOfAny(new[] { '\r', '\n' }, openIndex + 1);
-            if (close < 0 || newline >= 0 && newline < close)
+            var close = FindClose(text, openIndex);
+            if (close < 0)
                 return false;
 
             var star = text.IndexOf('*', openIndex + 1, close - openIndex - 1);
@@ -52,6 +50,27 @@ namespace MajdataCore
 
             closeIndex = close;
             return true;
+        }
+
+        public static int FindClose(string text, int openIndex)
+        {
+            var quoted = false;
+            for (var i = openIndex + 1; i < text.Length; i++)
+            {
+                var character = text[i];
+                if (quoted && character == '\\')
+                {
+                    i++;
+                    continue;
+                }
+                if (character == '"')
+                    quoted = !quoted;
+                else if (!quoted && character == '>')
+                    return i;
+                else if (!quoted && (character == '\r' || character == '\n'))
+                    return -1;
+            }
+            return -1;
         }
 
         /// <summary>

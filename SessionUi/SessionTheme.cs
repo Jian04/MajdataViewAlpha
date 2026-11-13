@@ -7,23 +7,52 @@ namespace MajdataSessionUi;
 // Use Edit's live theme resources; the pet uses the same palette as its dark panels.
 public static class SessionTheme
 {
+    private static bool wheelSelectionDisabled;
+    public static void DisableWheelSelection()
+    {
+        if (wheelSelectionDisabled) return;
+        wheelSelectionDisabled = true;
+        void OnWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        {
+            if (sender is ComboBox { IsDropDownOpen: true }) return;
+            e.Handled = true;
+            var parent = VisualTreeHelper.GetParent((DependencyObject)sender);
+            while (parent != null && parent is not ScrollViewer) parent = VisualTreeHelper.GetParent(parent);
+            if (parent is ScrollViewer scroll)
+                scroll.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+                    { RoutedEvent = UIElement.MouseWheelEvent });
+        }
+        EventManager.RegisterClassHandler(typeof(ComboBox), UIElement.PreviewMouseWheelEvent,
+            new System.Windows.Input.MouseWheelEventHandler(OnWheel));
+        EventManager.RegisterClassHandler(typeof(Slider), UIElement.PreviewMouseWheelEvent,
+            new System.Windows.Input.MouseWheelEventHandler(OnWheel));
+    }
     public static Brush Brush(string key, string fallback) =>
         Application.Current.TryFindResource(key) as Brush ?? (Brush)new BrushConverter().ConvertFromString(fallback)!;
+    public static void BindBrush(FrameworkElement element, DependencyProperty property, string key, string fallback)
+    {
+        // Launcher does not provide Edit's theme keys; retain its existing palette.
+        if (Application.Current.TryFindResource(key) is Brush) element.SetResourceReference(property, key);
+        else element.SetValue(property, Brush(key, fallback));
+    }
     public static void Apply(Window window, double width, double height)
     {
         window.Width = width; window.Height = height;
-        window.FontFamily = new FontFamily("Microsoft YaHei UI"); window.FontSize = 13;
-        window.Background = Brush("WindowBackground", "#20242B");
-        window.Foreground = Brush("ButtonForeground", "#F4F7FA");
+        window.FontFamily = Application.Current.TryFindResource("UiFontFamily") as FontFamily ?? new FontFamily("Microsoft YaHei UI"); window.FontSize = 13;
+        BindBrush(window, Control.BackgroundProperty, "WindowBackground", "#20242B");
+        BindBrush(window, Control.ForegroundProperty, "ButtonForeground", "#F4F7FA");
         window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
         window.UseLayoutRounding = true;
     }
-    public static TextBlock Text(string value, bool muted = false, double size = 13) => new()
+    public static TextBlock Text(string value, bool muted = false, double size = 13)
     {
+        var text = new TextBlock {
         Text = value, TextWrapping = TextWrapping.Wrap, FontSize = size,
-        Foreground = Brush(muted ? "HelperForeground" : "ButtonForeground", muted ? "#ADB4C0" : "#F4F7FA"),
         LineHeight = size * 1.4
-    };
+        };
+        BindBrush(text, TextBlock.ForegroundProperty, muted ? "HelperForeground" : "ButtonForeground", muted ? "#ADB4C0" : "#F4F7FA");
+        return text;
+    }
     public static StackPanel Heading(string title, string description)
     {
         var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
@@ -32,12 +61,15 @@ public static class SessionTheme
         var subtitle = Text(description, true); subtitle.Margin = new Thickness(0, 6, 0, 0);
         panel.Children.Add(subtitle); return panel;
     }
-    public static Border Card(UIElement child) => new()
+    public static Border Card(UIElement child)
     {
-        Background = Brush("EditorBackground", "#272C34"),
-        BorderBrush = Brush("MenuSeparator", "#414752"), BorderThickness = new Thickness(1),
+        var card = new Border { BorderThickness = new Thickness(1),
         CornerRadius = new CornerRadius(5), Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 10), Child = child
-    };
+        };
+        BindBrush(card, Border.BackgroundProperty, "PreviewBackground", "#272C34");
+        BindBrush(card, Border.BorderBrushProperty, "MenuSeparator", "#414752");
+        return card;
+    }
     public static Slider PlaybackSlider()
     {
         var slider = new Slider { Minimum = 0, Maximum = 1, Height = 22, IsMoveToPointEnabled = true,
@@ -84,18 +116,22 @@ public static class SessionTheme
         control.HorizontalAlignment = double.IsNaN(control.Width) ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
         if (control is TextBox textBox) textBox.TextAlignment = TextAlignment.Left;
         control.Padding = new Thickness(8, 0, 8, 0);
-        control.Background = Brush("ButtonsBackground", "#343A43");
-        control.Foreground = Brush("ButtonForeground", "#F4F7FA");
-        control.BorderBrush = Brush("MenuSeparator", "#525966"); control.BorderThickness = new Thickness(1);
+        BindBrush(control, Control.BackgroundProperty, "ButtonsBackground", "#343A43");
+        BindBrush(control, Control.ForegroundProperty, "ButtonForeground", "#F4F7FA");
+        BindBrush(control, Control.BorderBrushProperty, "MenuSeparator", "#525966"); control.BorderThickness = new Thickness(1);
         if (control is ComboBox combo)
         {
             var items = new Style(typeof(ComboBoxItem), Application.Current.TryFindResource(typeof(ComboBoxItem)) as Style);
-            items.Setters.Add(new Setter(Control.BackgroundProperty, control.Background));
-            items.Setters.Add(new Setter(Control.ForegroundProperty, control.Foreground));
+            items.Setters.Add(new Setter(Control.BackgroundProperty, Application.Current.TryFindResource("ButtonsBackground") is Brush
+                ? new DynamicResourceExtension("ButtonsBackground") : control.Background));
+            items.Setters.Add(new Setter(Control.ForegroundProperty, Application.Current.TryFindResource("ButtonForeground") is Brush
+                ? new DynamicResourceExtension("ButtonForeground") : control.Foreground));
             items.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 7, 10, 7)));
             var selected = new Trigger { Property = ComboBoxItem.IsSelectedProperty, Value = true };
-            selected.Setters.Add(new Setter(Control.BackgroundProperty, Brush("AccentBrush", "#376F91")));
-            selected.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+            selected.Setters.Add(new Setter(Control.BackgroundProperty, Application.Current.TryFindResource("SelectionBackground") is Brush
+                ? new DynamicResourceExtension("SelectionBackground") : Brush("AccentBrush", "#376F91")));
+            selected.Setters.Add(new Setter(Control.ForegroundProperty, Application.Current.TryFindResource("ButtonForeground") is Brush
+                ? new DynamicResourceExtension("ButtonForeground") : Brushes.White));
             items.Triggers.Add(selected);
             combo.ItemContainerStyle = items;
             if (!combo.IsEditable) combo.Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(@"
@@ -137,7 +173,8 @@ public static class SessionTheme
             content.SetValue(Control.PaddingProperty, new Thickness(0));
             var template = new ControlTemplate(control.GetType()) { VisualTree = border };
             var focus = new Trigger { Property = UIElement.IsKeyboardFocusWithinProperty, Value = true };
-            focus.Setters.Add(new Setter(Control.BorderBrushProperty, Brush("AccentBrush", "#72B4D4")));
+            focus.Setters.Add(new Setter(Control.BorderBrushProperty, Application.Current.TryFindResource("AccentBrush") is Brush
+                ? new DynamicResourceExtension("AccentBrush") : Brush("AccentBrush", "#72B4D4")));
             template.Triggers.Add(focus); control.Template = template;
         }
     }
@@ -146,9 +183,12 @@ public static class SessionTheme
         var button = new Button { Content = title, Height = 30, MinHeight = 30, FontSize = 13, FontFamily = new FontFamily("Microsoft YaHei UI"), Padding = new Thickness(10, 0, 10, 0),
             HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 0), Cursor = System.Windows.Input.Cursors.Hand };
+        if (Application.Current.TryFindResource("UiFontFamily") is FontFamily font) button.FontFamily = font;
         var style = new Style(typeof(Button), Application.Current.TryFindResource(typeof(Button)) as Style);
-        button.Background = Brush("ButtonsBackground", "#343A43"); button.Foreground = Brush("ButtonForeground", "#F4F7FA");
-        button.BorderBrush = Brush("MenuSeparator", "#525966"); button.BorderThickness = new Thickness(1);
+        button.BorderThickness = new Thickness(1);
+        BindBrush(button, Control.BackgroundProperty, "ButtonsBackground", "#343A43");
+        BindBrush(button, Control.ForegroundProperty, "ButtonForeground", "#F4F7FA");
+        BindBrush(button, Control.BorderBrushProperty, "MenuSeparator", "#525966");
         button.Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(@"
 <ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='Button'>
  <Border Name='frame' Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}' BorderThickness='{TemplateBinding BorderThickness}' CornerRadius='4' Padding='{TemplateBinding Padding}'>
@@ -158,7 +198,8 @@ public static class SessionTheme
 </ControlTemplate>");
         var disabled = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
         disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.45)); style.Triggers.Add(disabled); button.Style = style;
-        if (primary) { button.FontWeight = FontWeights.SemiBold; button.BorderBrush = Brush("AccentBrush", "#72B4D4"); button.BorderThickness = new Thickness(1); }
+        if (primary) { button.FontWeight = FontWeights.SemiBold;
+            BindBrush(button, Control.BorderBrushProperty, "AccentBrush", "#72B4D4"); button.BorderThickness = new Thickness(1); }
         return button;
     }
 }

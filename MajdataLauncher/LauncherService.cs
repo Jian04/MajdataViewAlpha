@@ -18,23 +18,25 @@ internal sealed class LauncherService
         Settings = LoadSettings();
     }
 
-    public void LaunchIndependent()
+    public void LaunchIndependent() => LaunchIndependent(null);
+
+    public void LaunchIndependent(string? startupOrigin)
     {
         var editPath = ResolveExecutable(Settings.EditPath, EditCandidates());
         var viewPath = ResolveExecutable(Settings.ViewPath, ViewCandidates());
         if (editPath == null) throw new FileNotFoundException(L("MissingEdit"));
         if (viewPath == null) throw new FileNotFoundException(L("MissingView"));
         var session = MajdataCore.AlphaSession.Create();
-        using var view = session.StartProcess(viewPath, true);
-        try { using var edit = session.StartProcess(editPath, false); }
+        using var view = session.StartProcess(viewPath, true, startupOrigin: startupOrigin);
+        try { using var edit = session.StartProcess(editPath, false, startupOrigin: startupOrigin); }
         catch { view.CloseMainWindow(); throw; }
     }
 
-    public async Task LaunchAsync(IProgress<string> progress, CancellationToken cancellationToken)
+    public async Task LaunchAsync(IProgress<string> progress, CancellationToken cancellationToken, string? startupOrigin = null)
     {
         if (!IsUsableEditorRunning())
         {
-            LaunchIndependent();
+            LaunchIndependent(startupOrigin);
             progress.Report(L("ReadyAll"));
             return;
         }
@@ -44,7 +46,7 @@ internal sealed class LauncherService
             throw new FileNotFoundException(L("MissingEdit"));
 
         var waitForView = false;
-        var viewRunning = IsAnyProcessRunning("MajdataView", "MajdataViewAlpha");
+        var viewRunning = viewPath != null && IsAnyProcessRunning(viewPath, "MajdataView", "MajdataViewAlpha");
         if (viewRunning)
         {
             progress.Report(L("ViewAlreadyRunning"));
@@ -97,10 +99,19 @@ internal sealed class LauncherService
             var settings = JsonSerializer.Deserialize<LauncherSettings>(File.ReadAllText(path), JsonOptions()) ?? new();
             // Port 8014 belongs to Edit's visual-note bridge. Migrate early launcher
             // configurations so the pet can never consume View click requests.
+            var changed = false;
             if (settings.PetControlPort == 8014)
             {
                 settings.PetControlPort = 8015;
-                File.WriteAllText(path, JsonSerializer.Serialize(settings, JsonOptions()));
+                changed = true;
+            }
+            if (settings.Pet == "03") { settings.Pet = "乙姬"; changed = true; }
+            if (changed)
+            {
+                var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+                json["pet"] = settings.Pet;
+                json["petControlPort"] = settings.PetControlPort;
+                File.WriteAllText(path, json.ToJsonString(JsonOptions()));
             }
             return settings;
         }
@@ -159,16 +170,27 @@ internal sealed class LauncherService
         });
     }
 
-    private static bool IsAnyProcessRunning(params string[] names) =>
-        names.Any(name => Process.GetProcessesByName(name).Any(p => !MajdataCore.AlphaSession.IsRegisteredProcess(p.Id, true)));
-
-    private static bool IsUsableEditorRunning()
+    private static bool IsAnyProcessRunning(string expectedPath, params string[] names)
     {
+        foreach (var name in names)
+        foreach (var process in Process.GetProcessesByName(name))
+        {
+            using (process)
+                if (string.Equals(process.MainModule?.FileName, expectedPath, StringComparison.OrdinalIgnoreCase) &&
+                    !MajdataCore.AlphaSession.IsRegisteredProcess(process.Id, true)) return true;
+        }
+        return false;
+    }
+
+    private bool IsUsableEditorRunning()
+    {
+        var expectedPath = ResolveExecutable(Settings.EditPath, EditCandidates());
         foreach (var name in new[] { "MajdataEdit", "MajdataEditAlpha" })
         foreach (var process in Process.GetProcessesByName(name))
         {
             try
             {
+                if (!string.Equals(process.MainModule?.FileName, expectedPath, StringComparison.OrdinalIgnoreCase)) continue;
                 if (!MajdataCore.AlphaSession.IsRegisteredProcess(process.Id, false) && !process.HasExited &&
                     (process.MainWindowHandle != IntPtr.Zero ||
                      DateTime.Now - process.StartTime < TimeSpan.FromSeconds(15)))

@@ -3,6 +3,7 @@ using System.Collections;
 using System.Linq;
 using System.Text;
 using Assets.Scripts.Types;
+using MajdataCore;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -20,6 +21,7 @@ public class VisualChartEditor : MonoBehaviour
     private SensorType? dragStart;
     private float dragStartedAt;
     private bool dragStartsAsTap;
+    private bool pointerGestureActive;
     private readonly System.Collections.Generic.List<SensorType> dragPath = new();
     private readonly System.Collections.Generic.List<SensorType> dragJudgePath = new();
     private readonly System.Collections.Generic.List<Vector2> dragScreenPath = new();
@@ -58,8 +60,12 @@ public class VisualChartEditor : MonoBehaviour
         }
 #endif
         if (timeProvider == null || dataLoader == null || sensorRoot == null || mainCamera == null ||
+            !Application.isFocused ||
             (timeProvider.isStart && !timeProvider.IsPreview) || HttpHandler.IsReloding)
+        {
+            ResetPointerGesture();
             return;
+        }
 
         if (Input.GetMouseButtonDown(1))
         {
@@ -72,6 +78,10 @@ public class VisualChartEditor : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
+            var pointer = Input.mousePosition;
+            if (pointer.x < 0 || pointer.x >= Screen.width || pointer.y < 0 || pointer.y >= Screen.height)
+                return;
+            pointerGestureActive = true;
             FlushPendingTouches();
             dragStartsAsTap = IsOutsideTouchRing(Input.mousePosition);
             dragStart = dragStartsAsTap
@@ -86,7 +96,7 @@ public class VisualChartEditor : MonoBehaviour
             dragStartedAt = Time.unscaledTime;
         }
 
-        if (Input.GetMouseButton(0))
+        if (pointerGestureActive && Input.GetMouseButton(0))
         {
             if (dragStartsAsTap)
                 CollectDragKey(Input.mousePosition);
@@ -94,13 +104,14 @@ public class VisualChartEditor : MonoBehaviour
                 CollectTouch(Input.mousePosition);
         }
 
-        if (!Input.GetMouseButtonUp(0))
+        if (!pointerGestureActive || !Input.GetMouseButtonUp(0))
             return;
+        pointerGestureActive = false;
 
         var held = Time.unscaledTime - dragStartedAt;
         var target = FindNearestArea(Input.mousePosition, SensorGroup.A);
         if (dragStartsAsTap && dragStart.HasValue && target.HasValue && held >= DragSeconds &&
-            target.Value != dragStart.Value)
+            (target.Value != dragStart.Value || dragJudgePath.Any(sensor => sensor != dragStart.Value)))
         {
             SendNote(BuildSlideToken(dragStart.Value, target.Value));
             return;
@@ -132,6 +143,17 @@ public class VisualChartEditor : MonoBehaviour
 
     private void OnDisable()
     {
+        ResetPointerGesture();
+    }
+
+    private void OnApplicationFocus(bool focused)
+    {
+        if (!focused) ResetPointerGesture();
+    }
+
+    private void ResetPointerGesture()
+    {
+        pointerGestureActive = false;
         dragStart = null;
         dragPath.Clear();
         dragJudgePath.Clear();
@@ -192,24 +214,36 @@ public class VisualChartEditor : MonoBehaviour
         var startKey = ToKeyNumber(start);
         var endKey = ToKeyNumber(end);
         var observed = NormalizeSensorPath(dragJudgePath);
+        var observedScreen = dragScreenPath.Count <= 64 ? dragScreenPath :
+            Enumerable.Range(0, 64).Select(index => dragScreenPath[Mathf.RoundToInt(index * (dragScreenPath.Count - 1) / 63f)]).ToList();
         string bestToken = null;
         var bestScore = float.PositiveInfinity;
 
-        foreach (var candidate in EnumerateSlideCandidates(startKey, endKey))
+        var nodeCode = new StringBuilder(startKey.ToString());
+        for (var index = 0; index < observed.Count; index++)
         {
-            if (!dataLoader.TryGetSlideRoute(candidate, out var expected, out var routePositions))
+            if (index == 0 && observed[index] == start || index == observed.Count - 1 && observed[index] == end) continue;
+            nodeCode.Append(ToSimaiToken(observed[index]));
+        }
+        nodeCode.Append('K').Append(endKey);
+        foreach (var candidate in EnumerateSlideCandidates(startKey, endKey).Append(nodeCode.ToString()))
+        {
+            var codeAreas = new System.Collections.Generic.List<SlideAreaRawData>();
+            if (!dataLoader.TryGetSlideRoute(candidate, out var expected, out var routePositions, codeAreas))
                 continue;
-            var normalizedExpected = NormalizeSensorPath(expected);
-            var sensorScore = SensorPathDistance(observed, normalizedExpected);
-            var geometryScore = RouteGeometryDistance(dragScreenPath, routePositions);
+            var normalizedExpected = codeAreas.Count == 0 ? NormalizeSensorPath(expected) : expected;
+            var sensorScore = SensorPathDistance(observed, normalizedExpected, codeAreas);
+            if (sensorScore * 10f >= bestScore) continue;
+            var geometryScore = RouteGeometryDistance(observedScreen, routePositions);
             var score = sensorScore * 10f + geometryScore;
             if (score >= bestScore)
                 continue;
             bestScore = score;
             bestToken = candidate;
+            if (score == 0f) break;
         }
 
-        return bestToken ?? $"{startKey}-{endKey}";
+        return (bestToken ?? $"{startKey}-{endKey}") + "[8:1]";
     }
 
     private static System.Collections.Generic.IEnumerable<string> EnumerateSlideCandidates(int start, int end)
@@ -219,6 +253,14 @@ public class VisualChartEditor : MonoBehaviour
             yield return $"{start}{op}{end}";
         for (var middle = 1; middle <= 8; middle++)
             yield return $"{start}V{middle}{end}";
+        foreach (var direction in new[] { 'P', 'Q' })
+        for (var first = 0; first <= 9; first++)
+        {
+            yield return $"{start}{direction}{first}K{end}";
+            for (var second = 0; second <= 9; second++)
+                if (first != second)
+                    yield return $"{start}{direction}{first}{second}K{end}";
+        }
     }
 
     private static System.Collections.Generic.List<SensorType> NormalizeSensorPath(
@@ -238,7 +280,8 @@ public class VisualChartEditor : MonoBehaviour
 
     private static float SensorPathDistance(
         System.Collections.Generic.IReadOnlyList<SensorType> observed,
-        System.Collections.Generic.IReadOnlyList<SensorType> expected)
+        System.Collections.Generic.IReadOnlyList<SensorType> expected,
+        System.Collections.Generic.IReadOnlyList<SlideAreaRawData> codeAreas = null)
     {
         if (observed.Count == 0 || expected.Count == 0)
             return float.PositiveInfinity;
@@ -252,7 +295,9 @@ public class VisualChartEditor : MonoBehaviour
             current[0] = i;
             for (var j = 1; j <= expected.Count; j++)
             {
-                var replace = previous[j - 1] + (observed[i - 1] == expected[j - 1] ? 0 : 1);
+                var matches = observed[i - 1] == expected[j - 1] ||
+                    codeAreas is { Count: > 0 } && (int)observed[i - 1] == codeAreas[j - 1].SensorB;
+                var replace = previous[j - 1] + (matches ? 0 : 1);
                 current[j] = Math.Min(Math.Min(previous[j] + 1, current[j - 1] + 1), replace);
             }
             (previous, current) = (current, previous);
@@ -267,9 +312,12 @@ public class VisualChartEditor : MonoBehaviour
         if (observed.Count == 0 || expectedWorld.Count == 0)
             return float.PositiveInfinity;
 
-        var expected = expectedWorld
-            .Select(point => (Vector2)mainCamera.WorldToScreenPoint(point))
-            .ToList();
+        var expected = new Vector2[Math.Min(64, expectedWorld.Count)];
+        for (var index = 0; index < expected.Length; index++)
+        {
+            var sourceIndex = Mathf.RoundToInt(index * (expectedWorld.Count - 1f) / Math.Max(1, expected.Length - 1));
+            expected[index] = mainCamera.WorldToScreenPoint(expectedWorld[sourceIndex]);
+        }
         var diagonal = Mathf.Max(1f, Mathf.Sqrt(Screen.width * Screen.width + Screen.height * Screen.height));
 
         static float AverageNearest(
@@ -281,8 +329,8 @@ public class VisualChartEditor : MonoBehaviour
             {
                 var nearest = float.PositiveInfinity;
                 foreach (var candidate in target)
-                    nearest = Mathf.Min(nearest, Vector2.Distance(point, candidate));
-                sum += nearest;
+                    nearest = Mathf.Min(nearest, (point - candidate).sqrMagnitude);
+                sum += Mathf.Sqrt(nearest);
             }
             return sum / source.Count;
         }

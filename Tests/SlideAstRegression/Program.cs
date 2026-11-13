@@ -112,11 +112,14 @@ internal static class Program
                "A5pE1[8:1]/A5ppE1[8:1]",
             "Half rotation incorrectly changed p/pp chirality.");
         Assert(Apply("A1<E5[8:1]", Mirror.HandleType.UDMirror) ==
-               "A4>E1[8:1]",
-            "UD mirror did not reverse ring direction.");
+               "A4<E1[8:1]",
+            "UD mirror changed the original arc direction.");
+        Assert(Apply("1>6[8:1]", Mirror.HandleType.UDMirror) ==
+               "4>7[8:1]",
+            "UD mirror changed 1>6 into the wrong arc.");
         Assert(Apply("A1<E5[8:1]", Mirror.HandleType.HalfRotation) ==
-               "A5<E1[8:1]",
-            "Half rotation incorrectly changed ring direction.");
+               "A5>E1[8:1]",
+            "Half rotation did not preserve the original slide shape.");
         Assert(Apply(tangent, Mirror.HandleType.Rotation45) ==
                "A2pE6[8:1]/A2ppE6[8:1]",
             "45-degree rotation incorrectly changed tangent chirality.");
@@ -568,6 +571,12 @@ internal static class Program
             Editor.BeatFormatBrush.Transform("{16}1,\n{32},,1,,,,1,,,\n", null)
                 .Contains('\n'),
             "Beat brush collapsed the chart onto one line.");
+        Assert(
+            Editor.BeatFormatBrush.Transform("{8},,\n{8},,", 4) == "{4},\n{4},",
+            "Beat brush moved commas across a line break.");
+        Assert(
+            Editor.BeatFormatBrush.Transform("{16}1,1,1,\n1,1,1,", 32) == "{32}1,,1,,1,,\n{32}1,,1,,1,,",
+            "Beat brush did not restart its subdivision marker at the start of the next line.");
         foreach (var source in new[]
                  {
                      "{16}1,{32},,1,,,,1,,,",
@@ -1610,6 +1619,9 @@ internal static class Program
                      "1Q05[8:1]",
                      "1Q95[8:1]",
                      "1PE85[8:1]",
+                     "A1P9A5[8:1]",
+                     "1P5A8-B4[8:1]",
+                     "1dQ05d[8:1]",
                      "1P3E5Q0A5[8:1]"
                  })
         {
@@ -1803,6 +1815,18 @@ internal static class Program
             new SimaiTimingPoint(0d, _content: "A8/8-C-5[8:1]", bpm: 120f)
                 .getNotes().Count(n => !n.isSlideNoHead) == 2,
             "The same beat with a headed slide is two hits and stays each.");
+
+        foreach (var noHead in new[] { '?', '!' })
+        {
+            SimaiProcess.ClearData();
+            SimaiProcess.Serialize($"(120){{4}}1{noHead}-5[8:1]/4,E");
+            var headlessPair = SimaiProcess.notelist.FirstOrDefault(point =>
+                point.getNotes().Count == 2);
+            Assert(headlessPair != null && headlessPair.noteParseError == null &&
+                   headlessPair.getNotes().Count(note => !note.isSlideNoHead) == 1 &&
+                   !headlessPair.isEach && headlessPair.isEachInStream == false,
+                $"A {noHead} headless Slide beside 4 must leave 4 pink.");
+        }
 
         SimaiProcess.ClearData();
         SimaiProcess.Serialize("(120){4}1-5[8:1]*-3[8:1],E");
@@ -2474,7 +2498,7 @@ internal static class Program
                 "TEXT*(hello)", 120f, out _),
             "Unquoted TEXT must be rejected instead of being parsed differently by each layer.");
         ParserMessageLocale.SetCulture("zh-CN");
-        AlphaCommandGrammar.TryValidate("TEXT*(\"hello\",3,2,0.3,44)", 120f, out var chineseError);
+        AlphaCommandGrammar.TryValidate("TEXT*(\"hello\",3,NaN,0.3,44)", 120f, out var chineseError);
         Assert(
             chineseError.Contains("TEXT 位置参数格式", StringComparison.Ordinal),
             $"Chinese UI must receive a Chinese TEXT diagnostic, got '{chineseError}'.");
@@ -2742,6 +2766,13 @@ internal static class Program
             forcedStar.isForceStar,
             "The carrier stays a Tap by kind; only its explicit $ modifier tells " +
             "the View to draw the moving star sprite.");
+        SimaiProcess.ClearData();
+
+        SimaiProcess.Serialize("(120){4}1$$~[1-5[1:1]],\nE");
+        var rotatingCarrier = SimaiProcess.notelist[0].getNotes()[0];
+        Assert(rotatingCarrier.isTrajectoryOnly && rotatingCarrier.isForceStar &&
+               rotatingCarrier.isFakeRotate,
+            "A $$ borrowed star must retain its rotation flag in the View chart.");
         SimaiProcess.ClearData();
 
         // An ordinary slide is untouched by any of this.
@@ -3595,8 +3626,11 @@ internal static class Program
         switch (type)
         {
             case Mirror.HandleType.LRMirror:
-            case Mirror.HandleType.UDMirror:
                 return Flip(shape);
+            case Mirror.HandleType.UDMirror:
+                return shape is "<" or ">" ? shape : Flip(shape);
+            case Mirror.HandleType.HalfRotation:
+                return shape is "<" or ">" ? Flip(shape) : shape;
             case Mirror.HandleType.Rotation45 when startPosition is 2 or 6:
             case Mirror.HandleType.CcwRotation45 when startPosition is 3 or 7:
                 // Simai's > and < mean "clockwise" and "counter-clockwise" only
@@ -3646,6 +3680,8 @@ internal static class Program
             case "SIZEV": return "size";
             case "ALPHA":
             case "ALPHAV": return "alpha";
+            case "ANGLE":
+            case "ANGLEV": return "angle";
             case "TEXT": return "subtitle";
             case "AUDIO":
             case "PVOVERLAY": return "media";
@@ -3679,6 +3715,7 @@ internal static class Program
         Check(SimaiProcess.colorTable.Count, "color");
         Check(SimaiProcess.sizeTable.Count, "size");
         Check(SimaiProcess.alphaTable.Count, "alpha");
+        Check(SimaiProcess.angleTable.Count, "angle");
         Check(SimaiProcess.displayTable.Count, "display");
         Check(SimaiProcess.subtitleTable.Count, "subtitle");
         Check(SimaiProcess.effectTable.Count, "effect");
@@ -5296,11 +5333,13 @@ internal static class Program
         Assert(
             reset.kind == EditorDirectiveKind.SectionReset && reset.length == 5,
             "Section reset.");
-        var tint = Read("@FF0000,1,");
+        var tint = Read("@FF0000\n1,");
         Assert(
             tint.kind == EditorDirectiveKind.SectionColor &&
             tint.color == "FF0000" && tint.length == 7,
-            "A section tint owns only itself, because notes may follow it.");
+            "A section tint owns its complete line.");
+        Reject("@FF0000,1,");
+        Reject("@NULL1,");
         Reject("@FF00ZZ");
         Reject("@FF00");
 
@@ -5416,11 +5455,82 @@ internal static class Program
             "A multi-line @* block must remain one isolated note stream.");
         Assert(overlay[1].HSpeed == 0.5f,
             "Scoped commands must continue across lines in one overlay block.");
+        SimaiProcess.Serialize("(120){4}1,\n@*{4}2,|| overlay note\n3,*@\n4,");
+        Assert(SimaiProcess.notelist.Count(point => point.streamIndex != 0) == 2,
+            "Comments inside a multi-line overlay must not become note content.");
+        SimaiProcess.Serialize("(120){4}1,@3/4\n(180){8}2,");
+        var displays = SimaiProcess.beatDisplayTable;
+        Assert(displays.Count >= 2 && displays[0].bpm == 120 &&
+               displays[0].meterNumerator == 4 && displays[0].subdivision == 4 &&
+               displays[^1].bpm == 180 && displays[^1].meterNumerator == 3 &&
+               displays[^1].meterDenominator == 4 && displays[^1].subdivision == 8,
+            "BPM, meter, and subdivision HUD state must follow the authored slot.");
+        SimaiProcess.ClearData();
+    }
+
+    private static void CheckMultilineText()
+    {
+        foreach (var newline in new[] { "\n", "\r\n" })
+        {
+            var content = "第一行 > 0" + newline + "第二行 || 1,2";
+            var command = "<TEXT*(\"" + content + "\",2)>";
+            var chart = "(120){4}" + command + "1,\n<UNKNOWN*1>2,";
+            Assert(AlphaCommandBoundary.TryGetCommand(command, 0, out var end) && end == command.Length - 1,
+                "Quoted TEXT must keep newlines and > inside its command.");
+            var errors = SimaiProcess.ValidateAlphaCommands(chart);
+            Assert(errors.Count == 1 && errors[0].PositionY == 2 && errors[0].PositionX == 0,
+                "Multiline TEXT must not hide an error or shift its source line.");
+            SimaiProcess.ClearData();
+            SimaiProcess.Serialize("(120){4}" + command + "1,\n2,");
+            Assert(SimaiProcess.subtitleTable.Count == 1 && SimaiProcess.subtitleTable[0].text == content,
+                "TEXT must preserve quoted multiline content during playback serialization.");
+            Assert(SimaiProcess.notelist.Count == 2 && SimaiProcess.notelist[1].rawTextPositionY == 2,
+                "Notes after multiline TEXT must retain source positions.");
+            CheckSyntaxRaw("(120){4}" + command + "1,", true, "Multiline TEXT");
+        }
+        CheckSyntaxRaw("(120){4}<SV*2\n1,", false, "Unclosed single-line command");
+        CheckSyntaxRaw("(120){4}<TEXT*(\"unfinished\n1,", false, "Unclosed quoted TEXT");
         SimaiProcess.ClearData();
     }
 
     public static void Main(string[] args)
     {
+        if (args.Contains("--reported-061")) { Reported061Regression.Probe(); return; }
+        if (args.Contains("--inspect-061")) { Reported061Regression.Inspect(args[Array.IndexOf(args, "--inspect-061") + 1]); return; }
+        if (args.Contains("--export-061")) { var at = Array.IndexOf(args, "--export-061"); Reported061Regression.Export(args[at + 1], args[at + 2]); return; }
+        if (args.Contains("--multiline-text-only"))
+        {
+            CheckMultilineText();
+            Console.WriteLine($"MULTILINE TEXT PASS: {assertions} assertions");
+            return;
+        }
+        if(args.Contains("--export-wiki")) { WikiExport.Run(); return; }
+        if(args.Contains("--wiki-095")) { Wiki095Audit.Run(); return; }
+        NoteTransitionRegression.Run();
+        CheckMultilineText();
+        if(args.Contains("--transitions-only")) return;
+        if (args.Contains("--stress-10000"))
+        {
+            var chart = new System.Text.StringBuilder("(200){100}");
+            for (var line = 0; line < 5000; line++)
+                chart.Append("1,2,\n");
+            chart.Append('E');
+            SimaiProcess.ClearData();
+            var watch = Stopwatch.StartNew();
+            SimaiProcess.Serialize(chart.ToString());
+            watch.Stop();
+            Console.WriteLine($"5000 lines / 10000 notes / {SimaiProcess.notelist.Count} timings: parse {watch.ElapsedMilliseconds} ms");
+            Assert(SimaiProcess.notelist.Count == 10000, "Stress chart lost note slots.");
+            watch.Restart();
+            _ = SimaiProcess.ValidateAlphaCommands(chart.ToString());
+            Console.WriteLine($"Alpha command validation: {watch.ElapsedMilliseconds} ms");
+            watch.Restart();
+            var detector = new MuriDetector(SimaiProcess.notelist, MuriSlideTimeTable.Empty, allowPartial: true);
+            _ = detector.DetectStatic();
+            Console.WriteLine($"Static muri: {watch.ElapsedMilliseconds} ms");
+            SimaiProcess.ClearData();
+            return;
+        }
         if (args.Contains("--comma-only"))
         {
             CheckCommaTerminatedSlots();
@@ -5459,6 +5569,25 @@ internal static class Program
             Console.WriteLine($"VIEW FIXTURE PASS: {SimaiProcess.notelist.Count} timings; end {SimaiProcess.timinglist.Max(t=>t.time):F2}s"); return;
         }
         if (args.Contains("--noise-only")) { NoiseZoneRegression.Run(); return; }
+        SimaiProcess.Serialize("(120){4}<FLIP*(Instant,0,0.5)><ALPHA*tapline=0.25>1,<FLIP*(True,-45)><ALPHAV*tapline=NULL>2,<FLIP*(False)>3,");
+        Assert(SimaiProcess.effectTable.Count == 3 &&
+            SimaiProcess.effectTable[0] is { effect: "Flip", paramA: 0f, holdTime: .5f, attack: 0f, release: 0f } &&
+            SimaiProcess.effectTable[1] is { effect: "Flip", enabled: true, paramA: -45f, transition: 0f } &&
+            SimaiProcess.effectTable[2] is { effect: "Flip", enabled: false, transition: 0f },
+            "FLIP angle, enable/disable or immediate duration lost");
+        Assert(!AlphaCommandGrammar.TryValidate("FLIP*(True,45,0.5)", 120, out _) &&
+            !AlphaCommandGrammar.TryValidate("FLIP*(False,0.5)", 120, out _), "FLIP must not accept transitions");
+        Assert(SimaiProcess.alphaTable.Count == 2 &&
+            SimaiProcess.alphaTable[0] is { noteType: "tapline", alpha: .25f } &&
+            SimaiProcess.alphaTable[1] is { noteType: "tapline", live: true, reset: true } &&
+            !AlphaCommandGrammar.TryValidate("COLOR*tapline=00BBFF", 120, out _),
+            "tapline must be a separate ALPHA/ALPHAV target");
+        Assert(Mirror.NoteMirrorHandle("1m~[2-7[1:1]],", Mirror.HandleType.LRMirror) == "8m~[7-2[1:1]],",
+            "Left-right mirror left the borrowed route unchanged");
+        Assert(Mirror.NoteMirrorHandle("1m~[folder/B1A2.png]~[1P93K5[8:1]],", Mirror.HandleType.Rotation45) ==
+            "2m~[folder/B1A2.png]~[2P94K6[8:1]],", "Rotation must preserve skin and timing and rotate the inherited SlideCode");
+        Console.WriteLine("111 PARSER PASS: FLIP, tapline and mirrored trajectory inheritance.");
+        if (args.Contains("--flip-111")) return;
         foreach (var values in new[] { "True,0.5,True", "True,0.5,0.3,True", "Instant,0.5,8:1,True", "2,0.5,True", "0.2,1,0.2,0.5,True" })
         {
             var token = "VIGNETTE*(" + values + ")";
@@ -6662,8 +6791,8 @@ internal static class Program
             touchHoldDrop.Contains(
                 "sortingGroup.sortingOrder = noteSortOrder;",
                 StringComparison.Ordinal) &&
-            touchHoldDrop.Contains("mask.backSortingOrder = 0;", StringComparison.Ordinal) &&
-            touchHoldDrop.Contains("mask.frontSortingOrder = 5;", StringComparison.Ordinal),
+            touchHoldDrop.Contains("progressMask.backSortingOrder = 0;", StringComparison.Ordinal) &&
+            touchHoldDrop.Contains("progressMask.frontSortingOrder = 5;", StringComparison.Ordinal),
             "Each TouchHold needs an isolated sorting group so nearby fan masks cannot " +
             "cover one another.");
         Assert(
@@ -6718,7 +6847,7 @@ internal static class Program
                 "Lookup(\"break\") is { reset: false }",
                 StringComparison.Ordinal) &&
             runtimeLoader.Contains(
-                "value == null || value.reset ? null : value.radius",
+                "value == null || value.reset ? null : value.transition?.from ?? value.radius",
                 StringComparison.Ordinal),
             "Editor/View SPAWN or DESTROY reset inheritance diverged.");
 

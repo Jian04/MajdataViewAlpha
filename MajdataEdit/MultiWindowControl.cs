@@ -177,7 +177,6 @@ public partial class MainWindow
         if (command.Action.StartsWith("check-"))
         {
             if (command.Action == "check-play" && !RestoreAudioOutput()) throw new InvalidOperationException("音频输出设备不可用。");
-            if (editorSetting?.SyntaxCheckLevel == 2 && latestParseErrors.Count > 0) throw new InvalidOperationException("谱面存在语法错误，请先在 Edit 中修复。");
             if (command.Action == "check-record" && File.Exists(Path.Combine(maidataDir, command.FileName))) throw new IOException("录制文件已存在，请重新发起批次。");
             return MultiStatus(true, "检查通过");
         }
@@ -225,7 +224,9 @@ public partial class MainWindow
                 if (oldPreview != null) await oldPreview;
                 if (multiGeneration != viewControlGeneration) throw new InvalidOperationException("准备已取消。");
                 if (!await Task.Run(sendRequestStop)) throw new IOException("View 未能停止旧谱面。");
-                EnsureTimelineAudioReady(); SetTimelinePosition(multiPosition); SaveFumen();
+                if (!await EnsureTimelineAudioReadyAsync() || multiGeneration != viewControlGeneration)
+                    throw new InvalidOperationException("准备已取消，请重新发起。");
+                SetTimelinePosition(multiPosition); SaveFumen();
                 SimaiProcess.Serialize(GetRawFumenText());
                 if (!ValidateMediaFiles()) throw new IOException("请补齐本地媒体素材。");
                 multiFingerprint = MultiFingerprint();

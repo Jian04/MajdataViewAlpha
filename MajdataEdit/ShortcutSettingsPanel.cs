@@ -27,6 +27,7 @@ internal sealed class ShortcutSettingsPanel : Window
                 "OemPlus" => "=",
                 "OemTilde" => "`",
                 "Back" => "Backspace",
+                "Wheel" => "滚轮",
                 var other => other
             };
         }
@@ -43,6 +44,7 @@ internal sealed class ShortcutSettingsPanel : Window
         ("Mirror45Key", "顺时针旋转"), ("MirrorCcw45Key", "逆时针旋转"),
         ("SidebarKey", "显示／隐藏侧栏"), ("MoveCaretUpKey", "光标上移一行"),
         ("MoveCaretDownKey", "光标下移一行"), ("OverwriteKey", "切换覆盖输入"),
+        ("EditorZoomWheel", "编辑文字：缩放"), ("WaveZoomWheel", "波形图：缩放"),
         ("MediaDeleteKey", "剪辑：删除片段"), ("MediaDeleteAlternateKey", "剪辑：删除片段（备用）"),
         ("MediaCopyKey", "剪辑：复制片段"),
         ("MediaPasteKey", "剪辑：粘贴片段"), ("MediaUndoKey", "剪辑：撤销"),
@@ -64,6 +66,7 @@ internal sealed class ShortcutSettingsPanel : Window
         }
         foreach (var (fieldName, label) in Shortcuts)
         {
+            var wheelShortcut = fieldName.EndsWith("Wheel", StringComparison.Ordinal);
             var field = typeof(EditorSetting).GetField(fieldName, BindingFlags.Public | BindingFlags.Instance)!;
             var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
@@ -73,13 +76,13 @@ internal sealed class ShortcutSettingsPanel : Window
             caption.VerticalAlignment = VerticalAlignment.Center;
             row.Children.Add(caption);
             var input = new TextBox { Text = DisplayGesture((string?)field.GetValue(main.editorSetting) ?? ""), IsReadOnly = true,
-                Cursor = Cursors.Hand, ToolTip = "点击后按下新快捷键；Esc 取消" };
+                Cursor = Cursors.Hand, ToolTip = wheelShortcut ? "点击后按住修饰键并滚动滚轮；Esc 取消" : "点击后按下新快捷键；Esc 取消" };
             SessionTheme.Input(input);
             Grid.SetColumn(input, 1); row.Children.Add(input);
             inputs[fieldName] = input;
             input.GotKeyboardFocus += (_, _) =>
             {
-                input.Text = "按键…";
+                input.Text = wheelShortcut ? "滚动滚轮…" : "按键…";
                 input.BorderBrush = Brushes.DodgerBlue;
                 input.BorderThickness = new Thickness(2);
             };
@@ -95,6 +98,7 @@ internal sealed class ShortcutSettingsPanel : Window
                 args.Handled = true;
                 if (key == Key.Escape) { Keyboard.ClearFocus(); return; }
                 if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin) return;
+                if (wheelShortcut) return;
                 try
                 {
                     var value = Keyboard.Modifiers == ModifierKeys.None ? key.ToString() :
@@ -110,6 +114,15 @@ internal sealed class ShortcutSettingsPanel : Window
                 catch (Exception error) when (error is ArgumentException or NotSupportedException)
                 { MessageBox.Show(this, "这个快捷键不能使用，请换一个。", "快捷键无效"); }
             };
+            input.PreviewMouseWheel += (_, args) =>
+            {
+                if (!wheelShortcut || !input.IsKeyboardFocused) return;
+                // The two wheel gestures belong to separate hovered surfaces.
+                field.SetValue(main.editorSetting, MainWindow.FormatWheelShortcut(Keyboard.Modifiers));
+                Save();
+                Keyboard.ClearFocus();
+                args.Handled = true;
+            };
             var reset = new Button { Content = "重置", Width = 44, Margin = new Thickness(4, 0, 0, 0) };
             reset.SetResourceReference(Control.TemplateProperty, "DarkButton");
             reset.Click += (_, _) =>
@@ -117,7 +130,7 @@ internal sealed class ShortcutSettingsPanel : Window
                 var value = (string?)field.GetValue(defaults) ?? "";
                 foreach (var (otherField, _) in Shortcuts)
                 {
-                    if (otherField == fieldName) continue;
+                    if (otherField == fieldName || wheelShortcut) continue;
                     var other = typeof(EditorSetting).GetField(otherField)!;
                     if (!string.Equals((string?)other.GetValue(main.editorSetting), value, StringComparison.OrdinalIgnoreCase)) continue;
                     other.SetValue(main.editorSetting, (string?)field.GetValue(main.editorSetting) ?? "");

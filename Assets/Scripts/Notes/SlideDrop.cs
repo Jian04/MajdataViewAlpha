@@ -1,4 +1,4 @@
-using Assets.Scripts.Interfaces;
+﻿using Assets.Scripts.Interfaces;
 using Assets.Scripts.Types;
 using MajdataCore;
 using System;
@@ -62,6 +62,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
     public float guideStarScaleX = 1f;
     public float guideStarScaleY = 1f;
     private Vector2? liveScaleDefault;
+    private readonly Dictionary<Transform,Vector3> authoredBarScales = new();
     private Vector2? liveGuideStarScaleDefault;
 
     List<SensorType> boundSensors = new();
@@ -125,17 +126,13 @@ public class SlideDrop : NoteLongDrop, IFlasher
     public override void ApplyLiveScale(Vector2? scale)
     {
         liveScaleDefault ??= new Vector2(noteScaleX, noteScaleY);
-        var previous = new Vector2(noteScaleX, noteScaleY);
         var value = scale ?? liveScaleDefault.Value;
         noteScaleX = value.x;
         noteScaleY = value.y;
-        if (previous.x == 0f || previous.y == 0f)
-            return;
-
-        var ratio = new Vector3(value.x / previous.x, value.y / previous.y, 1f);
+        var ratio = new Vector3(value.x,value.y,1f);
         foreach (var bar in slideBars)
             if (bar != null)
-                bar.transform.localScale = Vector3.Scale(bar.transform.localScale, ratio);
+                bar.transform.localScale = Vector3.Scale(authoredBarScales[bar.transform], ratio);
     }
 
     // COLOR paints a slide's route and leaves the moving guide star to the "star"
@@ -151,6 +148,13 @@ public class SlideDrop : NoteLongDrop, IFlasher
         foreach (var renderer in slideBarRenderers)
             if (renderer != null)
                 yield return renderer;
+    }
+
+    internal override void CollectAngleTargets(List<Transform> body, List<Transform> guide)
+    {
+        foreach (var renderer in slideBarRenderers)
+            if (renderer != null) body.Add(renderer.transform);
+        if (spriteRenderer_star != null) guide.Add(spriteRenderer_star.transform);
     }
 
     public override void ApplyLiveGuideStarColor(Color? color) =>
@@ -239,6 +243,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
         BuildSlidePath();
         foreach (var gm in slideBars)
         {
+            authoredBarScales[gm.transform] = gm.transform.localScale;
             gm.transform.localScale = Vector3.Scale(
                 gm.transform.localScale, new Vector3(noteScaleX, noteScaleY, 1f));
             var sr = gm.GetComponent<SpriteRenderer>();
@@ -265,6 +270,8 @@ public class SlideDrop : NoteLongDrop, IFlasher
             if (isReverse)
                 sr.flipX = true;
         }
+
+        StarDisplayOrder.RegisterTrack(gameObject, slideBarRenderers);
 
         if (guideStarMaterial != null)
             spriteRenderer_star.sharedMaterial = guideStarMaterial;
@@ -1559,6 +1566,7 @@ public class SlideDrop : NoteLongDrop, IFlasher
             var alpha = fadeInTime >= -0.0001f
                 ? (startiming >= 0f ? 1f : 0f)
                 : Mathf.InverseLerp(fadeInTime, 0f, startiming);
+            alpha = propertyAnimation?.SlideFadeProgress(timeProvider.AudioTime) ?? alpha;
             setSlideBarAlpha(alpha);
             return;
         }

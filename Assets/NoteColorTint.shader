@@ -99,6 +99,7 @@ Shader "Sprites/NoteColorTint"
                 // quad — the "full-screen overlay" bug. Zero them out here.
                 if (a < 0.01) {
                     c.rgb = 0;
+                    c.a *= _NoteAlpha;
                     return c;
                 }
 
