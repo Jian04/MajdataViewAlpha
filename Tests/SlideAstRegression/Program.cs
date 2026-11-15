@@ -1491,18 +1491,16 @@ internal static class Program
         }
     }
 
-    // The build yields after every slice of work, so wall-clock time is the build's
-    // own cost multiplied by how many frames it is spread over. A paused preview has
-    // no audio to protect and someone waiting on it, so it gets a wider slice.
+    // Both loads finish before playback starts, so both use the wider preload
+    // slice instead of spreading playback preparation over 2ms batches.
     private static void CheckPreviewBuildsWithoutThrottling()
     {
         var source = File.ReadAllText("Assets/Scripts/JsonDataLoader.cs");
         Assert(
-            source.Contains("sw.ElapsedMilliseconds >= (previewOnly ? 12 : 2)",
+            source.Contains("sw.ElapsedMilliseconds >= 12",
                 StringComparison.Ordinal),
-            "A preview load must take a wider time slice than a playback load, " +
-            "otherwise the wait before a paused preview follows the drag is the " +
-            "build's cost stretched across eight times as many frames.");
+            "Preview and playback preloading must both use the 12ms slice; " +
+            "playback starts only after all notes are ready.");
     }
 
     // A hold's end cap lives on child 1 and ships enabled, so between Instantiate
