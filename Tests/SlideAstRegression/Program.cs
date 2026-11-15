@@ -156,7 +156,7 @@ internal static class Program
 
     private static void CheckScroll()
     {
-        SvController.Load(new List<SvPoint>
+        SvController.Load(new List<global::SvPoint>
         {
             new() { time = 0, multiplier = -1 },
             new() { time = 2, multiplier = 1 }
@@ -164,7 +164,7 @@ internal static class Program
         Require(Math.Abs(SvController.GetCumulativeScroll(1) + 1) < 1e-6 &&
                 Math.Abs(SvController.GetCumulativeScroll(3) + 1) < 1e-6,
             "Reversing SV must integrate without a position jump.");
-        SvController.Load(new List<SvPoint>());
+        SvController.Load(new List<global::SvPoint>());
     }
 
     private static void CheckNoiseLifetime()
