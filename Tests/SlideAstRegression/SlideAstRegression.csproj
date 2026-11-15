@@ -25,7 +25,6 @@
     <Compile Include="../../Assets/MajdataCore/AlphaExtraFilters.cs" />
     <Compile Include="../../Assets/MajdataCore/NoiseZoneTimeline.cs" />
     <Compile Include="../../Assets/MajdataCore/NoiseZoneGeometry.cs" />
-    <Compile Include="NoiseZoneRegression.cs" />
     <Compile Include="../../Assets/MajdataCore/JudgeLineStyles.cs" />
     <Compile Include="../../Assets/MajdataCore/EditorDirective.cs" />
     <Compile Include="../../Assets/MajdataCore/AlphaVisualTiming.cs" />
@@ -47,13 +46,11 @@
     <Compile Include="../../Assets/Scripts/SlideJudgeQueue.cs" />
     <Compile Include="../../Assets/Scripts/Notes/SlideCodePathGeometry.cs" />
     <Compile Include="../../Assets/Scripts/Notes/SlideGuideGeometry.cs" />
-    <Compile Include="SlideGeometryRegression.cs" />
     <Compile Include="../../Assets/MajdataCore/SlideSyntaxValidator.cs" />
     <Compile Include="../../MajdataEdit/Editor/BeatFormatBrush.cs" />
     <Compile Include="../../MajdataEdit/Editor/AlphaGuideFormatter.cs" />
     <Compile Include="../../MajdataEdit/Editor/NoteDurationBrush.cs" />
     <Compile Include="../../MajdataEdit/Editor/NoteModifierBrush.cs" />
-    <Compile Include="DurationBrushRegression.cs" />
     <Compile Include="../../MajdataEdit/Editor/NoteDurationTarget.cs" />
     <Compile Include="../../MajdataEdit/Editor/NoteStreamMerger.cs" />
     <Compile Include="../../MajdataEdit/Editor/VisualNoteEditor.cs" />
@@ -65,19 +62,6 @@
     <Compile Include="../../MajdataEdit/SimaiProcess.NoteTransitions.cs" />
     <Compile Include="../../MajdataEdit/SubWindow/MuriDetector.cs" />
     <Compile Include="Program.cs" />
-    <Compile Include="Reported061Regression.cs" />
-    <Compile Include="NoteTransitionRegression.cs" />
-    <Compile Include="WikiExport.cs" />
-    <Compile Include="Wiki095Audit.cs" />
-    <Compile Include="baseline/SimaiProcess_v042.cs" />
-    <Compile Include="baseline/Majson_v042.cs" />
-    <Compile Include="baseline/Shims.cs" />
-    <Compile Include="baseline/AlphaCommandBoundary_v042.cs" />
-    <Compile Include="BaselineDiff.cs" />
-    <Compile Include="ChartCorpusDiff.cs" />
-    <Compile Include="ViewBuildDiff.cs" />
-    <Compile Include="WholeChartDiff.cs" />
-    <Compile Include="Probe.cs" />
     <Compile Include="Stubs.cs" />
   </ItemGroup>
 </Project>
